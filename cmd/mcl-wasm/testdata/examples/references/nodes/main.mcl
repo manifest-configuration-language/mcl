@@ -1,0 +1,25 @@
+let port = node:
+  name: "http"
+  containerPort: 8080
+let deployment = node:
+  apiVersion: "apps/v1"
+  kind: "Deployment"
+  metadata:
+    name: "sample-api"
+    labels:
+      app: "sample-api"
+  spec:
+    selector:
+      matchLabels:
+        app: "sample-api"
+    template:
+      metadata:
+        labels:
+          app: "sample-api"
+      spec:
+        containers:
+          - name: "api"
+            image: "example.test.walnuts.dev/api:v1"
+            ports:
+              - port
+emit deployment

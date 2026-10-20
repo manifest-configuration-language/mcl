@@ -1,0 +1,14 @@
+let options =
+  kubeVersion: "1.36.0"
+  apiVersions:
+    - "apps/v1"
+  releaseName: "sample-api"
+  namespace: "default"
+  values:
+    replicaCount: 2
+    image:
+      repository: "example.test.walnuts.dev/api"
+      tag: "v1"
+
+let resources = helm.render("chart", options)
+emit resources

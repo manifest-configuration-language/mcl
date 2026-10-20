@@ -1,0 +1,43 @@
+let httpPort = node:
+  name: "http"
+  containerPort: 8080
+  protocol: "TCP"
+
+let deployment = node:
+  apiVersion: "apps/v1"
+  kind: "Deployment"
+  metadata:
+    name: "sample-api"
+    labels:
+      app: "sample-api"
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: "sample-api"
+    template:
+      metadata:
+        labels:
+          app: "sample-api"
+      spec:
+        containers:
+          - name: "api"
+            image: "example.test.walnuts.dev/api:v1"
+            ports:
+              - httpPort
+
+let service = node:
+  apiVersion: "v1"
+  kind: "Service"
+  metadata:
+    name: "sample-api"
+  spec:
+    selector:
+      app: "sample-api"
+    ports:
+      - name: "http"
+        port: 80
+        targetPort: ref(deployment, httpPort).name
+
+emit deployment
+emit service

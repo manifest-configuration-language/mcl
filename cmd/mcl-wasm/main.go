@@ -1,0 +1,265 @@
+//go:build js && wasm
+
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"syscall/js"
+	"time"
+
+	"github.com/manifest-configuration-language/mcl/internal/engine"
+)
+
+const (
+	maxSourceBytes  = 64 << 10
+	maxProjectFiles = 4096
+	maxProjectBytes = 64 << 20
+	maxOutputBytes  = 1 << 20
+	evaluationTime  = 4 * time.Second
+	projectRoot     = "/mcl-project"
+)
+
+type fileInput struct {
+	Encoding string `json:"encoding"`
+	Content  string `json:"content"`
+}
+
+type request struct {
+	RequestID json.RawMessage      `json:"requestId"`
+	Revision  uint64               `json:"revision"`
+	Operation string               `json:"operation"`
+	Source    string               `json:"source"`
+	Files     map[string]fileInput `json:"files,omitempty"`
+}
+
+type response struct {
+	RequestID json.RawMessage `json:"requestId"`
+	Revision  uint64          `json:"revision"`
+	OK        bool            `json:"ok"`
+	Result    any             `json:"result,omitempty"`
+	Error     *responseError  `json:"error,omitempty"`
+}
+
+type responseError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Line    int    `json:"line,omitempty"`
+	Column  int    `json:"column,omitempty"`
+}
+
+func main() {
+	api := js.Global().Get("Object").New()
+	run := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return marshal(response{OK: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "run expects one JSON string argument"}})
+		}
+
+		return handle(args[0].String())
+	})
+	api.Set("run", run)
+	js.Global().Set("mclWasm", api)
+	js.Global().Set("mclWasmReady", true)
+	select {}
+}
+
+func handle(raw string) string {
+	var input request
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return marshal(response{OK: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
+	}
+	result := response{RequestID: input.RequestID, Revision: input.Revision}
+	if len(input.RequestID) == 0 {
+		result.RequestID = json.RawMessage("null")
+	}
+	if len(input.Source) > maxSourceBytes {
+		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", maxSourceBytes)}
+		return marshal(result)
+	}
+	if input.Operation == "format" {
+		formatted, err := engine.FormatSource(input.Source)
+		if err != nil {
+			result.Error = diagnosticError(input.Source, err)
+		} else if len(formatted) > maxOutputBytes {
+			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("formatted output exceeds the %d-byte limit", maxOutputBytes)}
+		} else {
+			result.OK = true
+			result.Result = map[string]any{"source": formatted}
+		}
+		return marshal(result)
+	}
+
+	module, err := engine.ParseAST(input.Source)
+	if err != nil {
+		result.Error = diagnosticError(input.Source, err)
+		return marshal(result)
+	}
+	switch input.Operation {
+	case "parse":
+		result.OK = true
+		result.Result = map[string]any{"declarations": len(module.Nodes)}
+	case "lint":
+		result.OK = true
+		result.Result = diagnostics(module, input.Source)
+	case "check", "evaluate", "render":
+		bundle, evalErr := evaluate(input.Source, input.Files)
+		if evalErr != nil {
+			result.Error = diagnosticError(input.Source, evalErr)
+			return marshal(result)
+		}
+		if input.Operation == "check" || input.Operation == "render" {
+			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForFile(path.Join(browserProjectRoot(), "main.mcl"))
+			if catalogErr != nil {
+				result.Error = diagnosticError(input.Source, catalogErr)
+				return marshal(result)
+			}
+			if checkErr := engine.ValidateBundleOutputWithCatalog(bundle, catalog); checkErr != nil {
+				result.Error = diagnosticError(input.Source, checkErr)
+				return marshal(result)
+			}
+		}
+		output, renderErr := engine.Render(bundle)
+		if renderErr != nil {
+			result.Error = diagnosticError(input.Source, renderErr)
+			return marshal(result)
+		}
+		if len(output) > maxOutputBytes {
+			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("rendered output exceeds the %d-byte limit", maxOutputBytes)}
+			return marshal(result)
+		}
+		result.OK = true
+		if input.Operation == "render" {
+			result.Result = map[string]any{"yaml": string(output), "artifacts": len(bundle.Artifacts)}
+		} else if input.Operation == "check" {
+			result.Result = map[string]any{"valid": true, "artifacts": len(bundle.Artifacts)}
+		} else {
+			result.Result = map[string]any{"artifacts": len(bundle.Artifacts), "renderedBytes": len(output)}
+		}
+	default:
+		result.Error = &responseError{Code: "MCL-WASM-OPERATION", Message: "operation must be parse, lint, format, evaluate, check, or render"}
+	}
+
+	return marshal(result)
+}
+
+func evaluate(source string, files map[string]fileInput) (engine.Bundle, error) {
+	if err := mountProject(source, files); err != nil {
+		return engine.Bundle{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
+	defer cancel()
+
+	return engine.EvaluateSourceWithOverlaysContext(ctx, path.Join(browserProjectRoot(), "main.mcl"), source, nil)
+}
+
+func browserProjectRoot() string {
+	if configuredRoot := os.Getenv("MCL_WASM_PROJECT_ROOT"); path.IsAbs(configuredRoot) {
+		return path.Clean(configuredRoot)
+	}
+
+	return projectRoot
+}
+
+func mountProject(source string, files map[string]fileInput) error {
+	root := browserProjectRoot()
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("reset browser project filesystem: %w", err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return fmt.Errorf("create browser project filesystem: %w", err)
+	}
+	if err := os.WriteFile(path.Join(root, "main.mcl"), []byte(source), 0o600); err != nil {
+		return fmt.Errorf("write browser project entry: %w", err)
+	}
+	if len(files) > maxProjectFiles {
+		return fmt.Errorf("project has more than %d files", maxProjectFiles)
+	}
+	totalBytes := 0
+	for relativePath, input := range files {
+		if !filepath.IsLocal(relativePath) || path.Clean(relativePath) != relativePath || relativePath == "." || relativePath == "main.mcl" || strings.Contains(relativePath, "\\") {
+			return fmt.Errorf("invalid project file path %q", relativePath)
+		}
+		var content []byte
+		switch input.Encoding {
+		case "utf8":
+			content = []byte(input.Content)
+		case "base64":
+			decoded, err := base64.StdEncoding.DecodeString(input.Content)
+			if err != nil {
+				return fmt.Errorf("decode project file %q: invalid base64 content", relativePath)
+			}
+			content = decoded
+		default:
+			return fmt.Errorf("project file %q encoding must be utf8 or base64", relativePath)
+		}
+		totalBytes += len(content)
+		if totalBytes > maxProjectBytes {
+			return fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
+		}
+		absolutePath := path.Join(root, relativePath)
+		if err := os.MkdirAll(path.Dir(absolutePath), 0o700); err != nil {
+			return fmt.Errorf("create project directory for %q: %w", relativePath, err)
+		}
+		if err := os.WriteFile(absolutePath, content, 0o600); err != nil {
+			return fmt.Errorf("write project file %q: %w", relativePath, err)
+		}
+	}
+
+	return nil
+}
+
+func diagnostics(module engine.ModuleAST, source string) []map[string]any {
+	items := engine.LintAST(module)
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		line, column := sourcePosition(source, item.Span.Start)
+		result = append(result, map[string]any{
+			"code": item.Code, "message": item.Message, "severity": item.Severity,
+			"line": line, "column": column,
+		})
+	}
+
+	return result
+}
+
+func diagnosticError(source string, err error) *responseError {
+	code := "MCL-WASM-EVALUATION"
+	line, column := 0, 0
+	message := err.Error()
+	if diagnostic, ok := engine.SourceDiagnosticFromError(err); ok {
+		code = diagnostic.Code
+		line, column = sourcePosition(source, diagnostic.Span.Start)
+		message = diagnostic.DisplayMessage()
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = "MCL-WASM-TIMEOUT"
+		message = "evaluation exceeded the 4-second limit"
+	}
+	if errors.Is(err, syscall.ENOSYS) {
+		code = "MCL-WASM-NETWORK"
+		message = "remote dependency access is unavailable in this browser runtime; provide dependencies in the project files"
+	}
+
+	return &responseError{Code: code, Message: message, Line: line, Column: column}
+}
+
+func sourcePosition(source string, offset int) (int, int) {
+	return engine.SourcePositionUTF16(source, offset)
+}
+
+func marshal(value response) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return `{"ok":false,"error":{"code":"MCL-WASM-SERIALIZE","message":"failed to serialize response"}}`
+	}
+
+	return string(encoded)
+}

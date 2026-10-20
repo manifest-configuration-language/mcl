@@ -1,0 +1,19 @@
+type Container = {name: String, securityContext: {allowPrivilegeEscalation: Bool, seccompProfile: {type: String}, capabilities: {drop: List<String>}}}
+
+let container: Container =
+  name: "api"
+  securityContext:
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: "RuntimeDefault"
+    capabilities:
+      drop:
+        - "ALL"
+
+rule hardened(container: Container):
+  require container.securityContext.allowPrivilegeEscalation == false message "allowPrivilegeEscalation must be false"
+  require container.securityContext.seccompProfile.type == "RuntimeDefault" message "seccompProfile must use RuntimeDefault"
+  require contains(container.securityContext.capabilities.drop, "ALL") message "capabilities must drop ALL"
+
+emit container
+validate container using hardened

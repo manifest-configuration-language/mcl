@@ -1,0 +1,21 @@
+let configMap =
+  apiVersion: "v1"
+  kind: "ConfigMap"
+  metadata:
+    name: "api-settings"
+  data:
+    MODE: "production"
+let service =
+  apiVersion: "v1"
+  kind: "Service"
+  metadata:
+    name: "api"
+  spec:
+    selector:
+      app: "sample-api"
+    ports:
+      - port: 80
+        targetPort: 8080
+
+emit configMap
+emit service

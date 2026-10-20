@@ -1,0 +1,17 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+profile.cov
+/bin/
+/dist/
+go.work
+go.work.sum
+.mcl/cache/
+.env
+node_modules/
+.build/

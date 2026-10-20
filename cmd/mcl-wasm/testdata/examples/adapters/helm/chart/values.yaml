@@ -1,0 +1,4 @@
+replicaCount: 1
+image:
+  repository: example.test.walnuts.dev/api
+  tag: latest

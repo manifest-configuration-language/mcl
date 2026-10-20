@@ -1,0 +1,68 @@
+let baseManifest =
+  apiVersion: "apps/v1"
+  kind: "Deployment"
+  metadata:
+    name: "api"
+  spec:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: "api"
+    template:
+      metadata:
+        labels:
+          app: "api"
+      spec:
+        containers:
+          - name: "api"
+            image: "example.test.walnuts.dev/api:v1"
+
+let baseDeployment = node:
+  apiVersion: baseManifest.apiVersion
+  kind: baseManifest.kind
+  metadata: baseManifest.metadata
+  spec: baseManifest.spec
+let workerManifest = clone(baseManifest) with:
+  metadata:
+    name: "worker"
+  spec:
+    selector:
+      matchLabels:
+        app: "worker"
+    template:
+      metadata:
+        labels:
+          app: "worker"
+
+let workerDeployment = node:
+  apiVersion: workerManifest.apiVersion
+  kind: workerManifest.kind
+  metadata: workerManifest.metadata
+  spec: workerManifest.spec
+
+let apiService = node:
+  apiVersion: "v1"
+  kind: "Service"
+  metadata:
+    name: "api"
+  spec:
+    selector:
+      app: ref(baseDeployment).spec.selector.matchLabels.app
+    ports:
+      - port: 8080
+
+let workerService = node:
+  apiVersion: "v1"
+  kind: "Service"
+  metadata:
+    name: "worker"
+  spec:
+    selector:
+      app: ref(workerDeployment).spec.selector.matchLabels.app
+    ports:
+      - port: 8080
+
+emit baseDeployment
+emit workerDeployment
+emit apiService
+emit workerService
