@@ -25,4 +25,8 @@ jobs:
         with:
           install: true
           cache: true
-      - run: mise run quality:check
+      - parallel:
+          - name: Run project quality checks
+            run: mise run quality:check
+          - name: Lint GitHub Actions workflows
+            run: mise run actions:lint
