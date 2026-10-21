@@ -3,6 +3,8 @@ package dependency
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,17 +110,88 @@ func TestInjectedFilesystemDoesNotFallBackToOrWriteOSCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open injected lock filesystem: %v", err)
 	}
-	if err := lock.Save(); err == nil || !strings.Contains(err.Error(), "OS-backed filesystem") {
-		t.Fatalf("Save() error = %v, want OS-backed filesystem error", err)
+	if err := lock.Save(); err == nil || !strings.Contains(err.Error(), "atomic writes") {
+		t.Fatalf("Save() error = %v, want atomic writes error", err)
 	}
-	if err := lock.writeCache(digest, content); err == nil || !strings.Contains(err.Error(), "OS-backed filesystem") {
-		t.Fatalf("writeCache() error = %v, want OS-backed filesystem error", err)
+	if err := lock.writeCache(digest, content); err == nil || !strings.Contains(err.Error(), "atomic writes") {
+		t.Fatalf("writeCache() error = %v, want atomic writes error", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "mcl.lock")); !os.IsNotExist(err) {
 		t.Fatalf("mcl.lock stat error = %v, want file not to be created", err)
 	}
 	if _, err := os.Stat(cachePath); err != nil {
 		t.Fatalf("existing OS cache entry was unexpectedly changed or removed: %v", err)
+	}
+}
+
+type atomicMapFS struct {
+	files fstest.MapFS
+}
+
+func (filesystem *atomicMapFS) Open(name string) (fs.File, error) {
+	return filesystem.files.Open(name)
+}
+
+func (filesystem *atomicMapFS) WriteFileAtomic(name string, data []byte) error {
+	if !fs.ValidPath(name) || name == "." {
+		return fs.ErrInvalid
+	}
+	filesystem.files[name] = &fstest.MapFile{Data: append([]byte(nil), data...)}
+
+	return nil
+}
+
+func TestOpenWithAtomicFilesystemWritesLockAndCacheWithinRoot(t *testing.T) {
+	t.Parallel()
+	files := &atomicMapFS{files: make(fstest.MapFS)}
+	lock, err := OpenWithFS(t.Context(), "/virtual/project", true, testToolchainIdentity(), files)
+	if err != nil {
+		t.Fatalf("open writable filesystem: %v", err)
+	}
+	content := []byte("apiVersion: v1\nkind: ConfigMap\n")
+	digest := contentutil.SHA256(content)
+	lock.manifests["https://example.test/deployment.yaml"] = digest
+	if err := lock.writeCache(digest, content); err != nil {
+		t.Fatalf("write dependency cache: %v", err)
+	}
+	if err := lock.Save(); err != nil {
+		t.Fatalf("save dependency lock: %v", err)
+	}
+	if _, exists := files.files["mcl.lock"]; !exists {
+		t.Fatal("atomic filesystem did not receive mcl.lock")
+	}
+	if _, exists := files.files[".mcl/cache/sha256/"+digest]; !exists {
+		t.Fatal("atomic filesystem did not receive dependency cache content")
+	}
+	loaded, err := OpenWithFS(t.Context(), "/another/project", false, testToolchainIdentity(), files)
+	if err != nil {
+		t.Fatalf("reopen writable filesystem: %v", err)
+	}
+	read, err := loaded.LoadManifest("https://example.test/deployment.yaml")
+	if err != nil {
+		t.Fatalf("load dependency cache: %v", err)
+	}
+	if string(read) != string(content) {
+		t.Fatalf("loaded content = %q, want %q", read, content)
+	}
+}
+
+func TestOpenWithFSUpdateRequiresAtomicWriter(t *testing.T) {
+	t.Parallel()
+	if _, err := OpenWithFS(t.Context(), "/virtual/project", true, testToolchainIdentity(), fstest.MapFS{}); err == nil || !strings.Contains(err.Error(), "atomic writable filesystem") {
+		t.Fatalf("OpenWithFS() error = %v, want atomic writable filesystem error", err)
+	}
+}
+
+func TestRootFilesystemRejectsInvalidAtomicWritePath(t *testing.T) {
+	t.Parallel()
+	files := &atomicMapFS{files: make(fstest.MapFS)}
+	filesystem := newRootFilesystem("/virtual/project", files)
+	if err := filesystem.writeFileAtomic("../outside", []byte("data")); !errors.Is(err, fs.ErrInvalid) {
+		t.Fatalf("writeFileAtomic() error = %v, want fs.ErrInvalid", err)
+	}
+	if len(files.files) != 0 {
+		t.Fatalf("invalid path was passed to writer: %#v", files.files)
 	}
 }
 

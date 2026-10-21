@@ -9,13 +9,23 @@ import (
 	"path/filepath"
 	"strings"
 
+	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
 )
 
 type rootFilesystem struct {
 	root     string
 	files    fs.FS
+	writer   AtomicFileWriter
 	osBacked bool
+}
+
+// AtomicFileWriter creates missing parent directories and writes a root-relative
+// file atomically, replacing any existing file only after the complete new
+// content is available. Implementers must reject paths that are not valid
+// io/fs paths and must keep writes within the filesystem root.
+type AtomicFileWriter interface {
+	WriteFileAtomic(name string, data []byte) error
 }
 
 func newOSRootFilesystem(root string) *rootFilesystem {
@@ -23,7 +33,32 @@ func newOSRootFilesystem(root string) *rootFilesystem {
 }
 
 func newRootFilesystem(root string, files fs.FS) *rootFilesystem {
-	return &rootFilesystem{root: filepath.Clean(root), files: files}
+	filesystem := &rootFilesystem{root: filepath.Clean(root), files: files}
+	filesystem.writer, _ = files.(AtomicFileWriter)
+
+	return filesystem
+}
+
+func (filesystem *rootFilesystem) writeFileAtomic(name string, data []byte) error {
+	if !fs.ValidPath(name) || name == "." {
+		return fs.ErrInvalid
+	}
+	if filesystem.osBacked {
+		path := filepath.Join(filesystem.root, filepath.FromSlash(name))
+		if _, err := safepath.ResolveWithin(filesystem.root, path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if err := ensureDirectoryWithin(filesystem.root, filepath.Dir(path)); err != nil {
+			return err
+		}
+
+		return contentutil.WriteFileAtomic(path, data)
+	}
+	if filesystem.writer == nil {
+		return errors.New("dependency filesystem does not support atomic writes")
+	}
+
+	return filesystem.writer.WriteFileAtomic(name, data)
 }
 
 func (filesystem *rootFilesystem) stat(name string) (fs.FileInfo, error) {

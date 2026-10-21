@@ -95,13 +95,16 @@ func Open(ctx context.Context, root string, update bool, identity ToolchainIdent
 }
 
 // OpenWithFS loads the project lock and cached dependency content from a root-relative filesystem.
-// Lock and cache writes remain OS-backed because io/fs does not provide write operations.
+// Updates require files to implement AtomicFileWriter; read-only filesystems can
+// still be used to evaluate projects that have an existing lock and cache.
 func OpenWithFS(ctx context.Context, root string, update bool, identity ToolchainIdentity, files fs.FS) (*Lock, error) {
 	if files == nil {
 		return nil, errors.New("dependency filesystem is required")
 	}
 	if update {
-		return nil, errors.New("dependency updates require an OS-backed filesystem")
+		if _, ok := files.(AtomicFileWriter); !ok {
+			return nil, errors.New("dependency updates require an atomic writable filesystem")
+		}
 	}
 
 	return openWithFilesystem(ctx, root, update, identity, newRootFilesystem(root, files))
@@ -355,8 +358,8 @@ func (lock *Lock) loadRemote(source, category string, entries map[string]string)
 }
 
 func (lock *Lock) Save() error {
-	if lock.filesystem == nil || !lock.filesystem.osBacked {
-		return errors.New("dependency lock writes require an OS-backed filesystem")
+	if lock.filesystem == nil {
+		return errors.New("dependency filesystem is required")
 	}
 	content := lockFile{Version: 3, Toolchain: lock.identity.lock(), Manifests: lock.manifests, Schemas: lock.schemas, Charts: lock.charts, OCICharts: lock.ociCharts, GitSources: lock.gitSources}
 	data, err := json.Marshal(content, json.Deterministic(true))
@@ -368,7 +371,7 @@ func (lock *Lock) Save() error {
 		return fmt.Errorf("format dependency lock: %w", err)
 	}
 
-	return contentutil.WriteFileAtomic(filepath.Join(lock.root, "mcl.lock"), append(formatted, '\n'))
+	return lock.filesystem.writeFileAtomic("mcl.lock", append(formatted, '\n'))
 }
 
 func (identity ToolchainIdentity) lock() toolchainLock {
@@ -427,16 +430,20 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 }
 
 func (lock *Lock) writeCache(digest string, data []byte) error {
-	if lock.filesystem == nil || !lock.filesystem.osBacked {
-		return errors.New("dependency cache writes require an OS-backed filesystem")
+	if lock.filesystem == nil {
+		return errors.New("dependency filesystem is required")
 	}
 	path := lock.cachePath(digest)
-	directory := filepath.Dir(path)
-	if err := ensureDirectoryWithin(lock.root, directory); err != nil {
-		return fmt.Errorf("create dependency cache: %w", err)
+	relative, err := filepath.Rel(lock.root, path)
+	if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("dependency cache path escapes the project directory")
 	}
 
-	return contentutil.WriteFileAtomic(path, data)
+	if err := lock.filesystem.writeFileAtomic(filepath.ToSlash(relative), data); err != nil {
+		return fmt.Errorf("write dependency cache: %w", err)
+	}
+
+	return nil
 }
 
 func ensureDirectoryWithin(root, target string) error {
