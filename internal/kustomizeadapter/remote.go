@@ -143,12 +143,14 @@ func materializeSourceFS(source fs.FS) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
+
 		return os.WriteFile(target, data, 0o600)
 	})
 	if err != nil {
 		_ = os.RemoveAll(root)
 		return "", err
 	}
+
 	return root, nil
 }
 

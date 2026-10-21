@@ -261,6 +261,7 @@ func resolveSource(request Request) (buildSource, error) {
 			source.root, source.localRoot, source.sourceMapRoot = root, originalRoot, originalRoot
 			source.origin = "kustomize:" + filepath.ToSlash(filepath.Join(filepath.Dir(projectPath), filepath.FromSlash(request.Source), filepath.FromSlash(request.Directory)))
 			source.removeRoot = true
+
 			return source, nil
 		}
 		root, err := safepath.ResolveWithin(request.ProjectRoot, filepath.Join(filepath.Dir(request.SourcePath), filepath.FromSlash(request.Source)))

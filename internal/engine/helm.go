@@ -592,6 +592,7 @@ func helmLocalChartSourcePath(filename, chartRoot, localChartPath string, filesy
 		if _, err := fs.Stat(filesystem.files, projectRelative); err != nil {
 			return "", false
 		}
+
 		return joinedPath, true
 	}
 	sourcePath, err := filepath.EvalSymlinks(joinedPath)

@@ -272,6 +272,7 @@ func Load(request LoadRequest) (Chart, error) {
 			if err != nil {
 				return Chart{}, fmt.Errorf("load Helm chart: %w", err)
 			}
+
 			return validateLoadedChart(loaded)
 		}
 		chartPath, err := safepath.ResolveWithin(request.ProjectRoot, filepath.Join(filepath.Dir(request.SourcePath), filepath.FromSlash(request.Source)))
@@ -610,7 +611,7 @@ func materializeChartFS(source fs.FS) (string, error) {
 			return nil
 		}
 		if entry.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("Helm chart contains unsupported symlink %q", name)
+			return fmt.Errorf("helm chart contains unsupported symlink %q", name)
 		}
 		target := filepath.Join(root, filepath.FromSlash(name))
 		if entry.IsDir() {
@@ -621,7 +622,7 @@ func materializeChartFS(source fs.FS) (string, error) {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("Helm chart contains unsupported file %q", name)
+			return fmt.Errorf("helm chart contains unsupported file %q", name)
 		}
 		if info.Size() > maxChartBytes-totalBytes {
 			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
@@ -634,12 +635,14 @@ func materializeChartFS(source fs.FS) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
+
 		return os.WriteFile(target, data, 0o600)
 	})
 	if err != nil {
 		_ = os.RemoveAll(root)
 		return "", err
 	}
+
 	return root, nil
 }
 

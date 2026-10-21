@@ -38,7 +38,7 @@ func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 		switch entry.Key {
 		case "kind":
 			kind = entry.Value.TextValue()
-		case "metadata":
+		case metadataFieldName:
 			for _, metadataEntry := range entry.Value.Map {
 				if metadataEntry.Key == "name" {
 					name = metadataEntry.Value.TextValue()
