@@ -3,6 +3,7 @@ go = "1.27.3"
 golangci-lint = "2.15.0"
 node = "24.22.0"
 jactionlint = "2.2.0"
+goreleaser = "2.18.3"
 
 [tasks."actions:lint"]
 description = "Lint GitHub Actions workflows"
@@ -38,36 +39,11 @@ description = "Build and verify the browser WebAssembly runtime"
 run = "node ./cmd/mcl-wasm/check.mjs"
 
 [tasks."release:cli"]
-description = "Build CLI binaries for supported release platforms"
+description = "Build and archive release CLI binaries with GoReleaser"
 run = '''
 set -eu
-release_tag="${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || true)}"
-if [ -n "${MCL_VERSION:-}" ]; then
-  version="$MCL_VERSION"
-else
-  case "$release_tag" in
-    v*) version="${release_tag#v}" ;;
-    *) version="0.1.0-dev" ;;
-  esac
-fi
-case "$release_tag" in
-  v*)
-    if [ "${release_tag#v}" != "$version" ]; then
-      printf 'Release tag %s does not match MCL version %s\n' "$release_tag" "$version" >&2
-      exit 1
-    fi
-    ;;
-esac
-mkdir -p dist
-ldflags="-X=github.com/manifest-configuration-language/mcl/internal/engine.ToolchainVersion=$version"
-for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-  os="${target%/*}"
-  arch="${target#*/}"
-  extension=""
-  if [ "$os" = windows ]; then extension=".exe"; fi
-  name="mcl-${os}-${arch}${extension}"
-  GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "dist/$name" ./cmd/mcl
-done
+: "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+goreleaser release --snapshot --clean
 '''
 
 [tasks."release:wasm"]
@@ -82,21 +58,11 @@ cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/wasm_exec.js
 
 [tasks."release:package"]
 description = "Package CLI and WebAssembly release assets with checksums"
-depends = ["release:cli", "release:wasm"]
 run = '''
 set -eu
 version="${MCL_VERSION:?MCL_VERSION must be set to a release version}"
-for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-  os="${target%/*}"
-  arch="${target#*/}"
-  binary="dist/mcl-${os}-${arch}"
-  if [ "$os" = windows ]; then
-    binary="${binary}.exe"
-    (cd dist && zip -q "mcl_${version}_${os}_${arch}.zip" "$(basename "$binary")")
-  else
-    (cd dist && tar -czf "mcl_${version}_${os}_${arch}.tar.gz" "$(basename "$binary")")
-  fi
-done
+mise run release:cli
+mise run release:wasm
 (cd dist && tar -czf "mcl_${version}_wasm.tar.gz" mcl.wasm.gz wasm_exec.js)
 (cd dist && shasum -a 256 mcl_*.tar.gz mcl_*.zip > SHA256SUMS)
 '''

@@ -96,6 +96,9 @@ jobs:
       - name: Run release checks
         run: mise run quality:check
 
+      - name: Validate GoReleaser configuration
+        run: goreleaser check
+
       - name: Build release assets
         env:
           MCL_VERSION: ${{ steps.target.outputs.version }}
