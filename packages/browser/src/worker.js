@@ -1,20 +1,14 @@
-import { Buffer } from "buffer";
 import { Volume, constants } from "memfs";
 import path from "path-browserify";
 
 const projectRoot = "/mcl-project";
-const maxSourceBytes = 64 * 1024;
-const maxProjectFiles = 4096;
-const maxProjectFileBytes = 16 * 1024 * 1024;
-const maxProjectBytes = 64 * 1024 * 1024;
 let initialized;
 let runtimeAssets;
-let activeVolume;
+let activeVolume = new Volume();
 let workingDirectory = projectRoot;
 let networkAccessDenied = false;
 const runtimeFetch = globalThis.fetch.bind(globalThis);
 
-globalThis.Buffer = Buffer;
 globalThis.path = path.posix;
 globalThis.process = {
   argv: [],
@@ -60,47 +54,17 @@ function createFsAdapter() {
   });
 }
 
-function isSafeRelativePath(filePath) {
-  return typeof filePath === "string" && filePath.length > 0 && !filePath.startsWith("/") && !filePath.includes("\\") && filePath.split("/").every((part) => part && part !== "." && part !== "..");
-}
-
-function mountProject(source, files, entrypoint) {
-  if (!isSafeRelativePath(entrypoint)) throw new Error(`Invalid project entrypoint: ${entrypoint}`);
-  const sourceBytes = new TextEncoder().encode(source).byteLength;
-  if (sourceBytes > maxSourceBytes) throw new Error(`Source exceeds the ${maxSourceBytes}-byte limit`);
-  const entries = Object.entries(files ?? {});
-  if (entries.length + 1 > maxProjectFiles) throw new Error(`Project has more than ${maxProjectFiles} files`);
+function resetFilesystem() {
+  // Helm and Kustomize adapters still use os paths; keep their temporary files isolated per request.
   activeVolume = new Volume();
   activeVolume.mkdirSync(projectRoot, { recursive: true });
-  const entryPath = path.posix.join(projectRoot, entrypoint);
-  activeVolume.mkdirSync(path.posix.dirname(entryPath), { recursive: true });
-  activeVolume.writeFileSync(entryPath, source);
-  if (activeVolume.readFileSync(entryPath, "utf8") !== source) throw new Error(`Unable to mount project entrypoint: ${entrypoint}`);
-  let totalBytes = sourceBytes;
-  for (const [relativePath, content] of entries) {
-    if (!isSafeRelativePath(relativePath) || relativePath === entrypoint) {
-      throw new Error(`Invalid project file path: ${relativePath}`);
-    }
-    if (typeof content !== "string" && !(content instanceof Uint8Array)) {
-      throw new TypeError(`Project file ${relativePath} must be a string or Uint8Array`);
-    }
-    const fileBytes = typeof content === "string" ? new TextEncoder().encode(content).byteLength : content.byteLength;
-    if (fileBytes > maxProjectFileBytes) throw new RangeError(`Project file ${relativePath} exceeds the ${maxProjectFileBytes}-byte limit`);
-    totalBytes += fileBytes;
-    if (totalBytes > maxProjectBytes) throw new Error(`Project files exceed the ${maxProjectBytes}-byte limit`);
-    const absolutePath = path.posix.join(projectRoot, relativePath);
-    activeVolume.mkdirSync(path.posix.dirname(absolutePath), { recursive: true });
-    activeVolume.writeFileSync(absolutePath, content);
-  }
   workingDirectory = projectRoot;
-  globalThis.fs = createFsAdapter();
 }
 
 async function initialize() {
   if (initialized) return initialized;
   initialized = (async () => {
     if (!runtimeAssets?.wasmURL || !runtimeAssets?.wasmExecURL) throw new Error("MCL runtime assets were not configured");
-    activeVolume = new Volume();
     globalThis.fs = createFsAdapter();
     await import(runtimeAssets.wasmExecURL);
     const go = new Go();
@@ -163,7 +127,7 @@ self.addEventListener("message", async (event) => {
   if (message?.type !== "run") return;
   try {
     await initialize();
-    mountProject(message.source, message.files, message.entrypoint || "main.mcl");
+    resetFilesystem();
     const request = {
       requestId: message.requestId,
       revision: message.requestId,

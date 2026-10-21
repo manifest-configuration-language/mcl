@@ -11,6 +11,7 @@ import type {
 
 export type MclOperation = WasmRequest["operation"];
 
+/** Root-relative project files passed to MCL's per-request filesystem. */
 export type ProjectFile = string | Uint8Array;
 export type ProjectFiles = Readonly<Record<string, ProjectFile>>;
 
