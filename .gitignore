@@ -9,6 +9,7 @@ coverage.*
 profile.cov
 /bin/
 /dist/
+/packages/browser/dist/
 go.work
 go.work.sum
 .mcl/cache/
