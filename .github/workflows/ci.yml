@@ -44,3 +44,7 @@ jobs:
             run: mise run quality:check
           - name: Lint GitHub Actions workflows
             run: mise run actions:lint
+          - name: Build browser package assets
+            run: cd packages/browser && npm ci && npm run build:wasm
+          - name: Check language grammar parity
+            run: cd packages/language && npm ci && npm run check:parity
