@@ -272,24 +272,19 @@ func Load(request LoadRequest) (Chart, error) {
 		if err != nil {
 			return Chart{}, fmt.Errorf("resolve Helm chart: %w", err)
 		}
-		if err := validateTree(chartPath); err != nil {
-			return Chart{}, err
-		}
-		loaded.ContentDigest, err = digestTree(chartPath)
+		loadedChart, digest, err := loadChartFS(os.DirFS(chartPath))
 		if err != nil {
-			return Chart{}, err
+			return Chart{}, fmt.Errorf("load Helm chart: %w", err)
 		}
+		loaded.ContentDigest = digest
 		loaded.LocalPath = chartPath
 		relativeChartPath, err := filepath.Rel(request.ProjectRoot, chartPath)
 		if err != nil {
 			return Chart{}, fmt.Errorf("relativize Helm chart origin: %w", err)
 		}
 		loaded.Origin = "helm:" + filepath.ToSlash(relativeChartPath)
-		loaded.source, err = loader.Load(chartPath)
-		if err != nil {
-			return Chart{}, fmt.Errorf("load Helm chart: %w", err)
-		}
-		loadedDigest, digestErr := digestTree(chartPath)
+		loaded.source = loadedChart
+		loadedDigest, digestErr := digestSourceFS(os.DirFS(chartPath))
 		if digestErr != nil || loadedDigest != loaded.ContentDigest {
 			loaded.ContentDigest = ""
 		}
@@ -550,46 +545,6 @@ func hermeticFunctions() template.FuncMap {
 	}
 }
 
-func validateTree(root string) error {
-	info, err := os.Stat(root)
-	if err != nil {
-		return fmt.Errorf("stat Helm chart: %w", err)
-	}
-	if !info.IsDir() {
-		return errors.New("helm chart source must be a directory")
-	}
-	var totalBytes int64
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("helm chart contains unsupported symlink %q", path)
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		file, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !file.Mode().IsRegular() {
-			return fmt.Errorf("helm chart contains unsupported file %q", path)
-		}
-		totalBytes += file.Size()
-		if totalBytes > maxChartBytes {
-			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("inspect Helm chart: %w", err)
-	}
-
-	return nil
-}
-
 func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 	info, err := fs.Stat(source, ".")
 	if err != nil {
@@ -672,26 +627,31 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 	return chart, content.SHA256([]byte(digestKey.String())), nil
 }
 
-func digestTree(root string) (string, error) {
+func digestSourceFS(source fs.FS) (string, error) {
 	var paths []string
-	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+	var totalBytes int64
+	if err := fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if path == root || entry.IsDir() {
+		if name == "." || entry.IsDir() {
 			return nil
 		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("source tree contains unsupported symlink %q", path)
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("source tree contains unsupported symlink %q", name)
 		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("source tree contains unsupported file %q", path)
+			return fmt.Errorf("source tree contains unsupported file %q", name)
 		}
-		paths = append(paths, path)
+		if info.Size() > maxChartBytes-totalBytes {
+			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
+		}
+		totalBytes += info.Size()
+		paths = append(paths, name)
 
 		return nil
 	}); err != nil {
@@ -699,16 +659,17 @@ func digestTree(root string) (string, error) {
 	}
 	slices.Sort(paths)
 	var key strings.Builder
+	var readBytes int64
 	for _, filePath := range paths {
-		relative, err := filepath.Rel(root, filePath)
-		if err != nil {
-			return "", fmt.Errorf("relativize source tree path: %w", err)
-		}
-		data, err := os.ReadFile(filePath)
+		data, err := fs.ReadFile(source, filePath)
 		if err != nil {
 			return "", fmt.Errorf("read source tree file: %w", err)
 		}
-		key.WriteString(filepath.ToSlash(relative))
+		if int64(len(data)) > maxChartBytes-readBytes {
+			return "", fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
+		}
+		readBytes += int64(len(data))
+		key.WriteString(filepath.ToSlash(filePath))
 		key.WriteByte(0)
 		key.WriteString(content.SHA256(data))
 		key.WriteByte(0)

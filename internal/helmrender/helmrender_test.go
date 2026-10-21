@@ -1,6 +1,7 @@
 package helmrender
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	v2 "helm.sh/helm/v4/pkg/chart/v2"
 )
+
+const localTestTemplatePath = "templates/configmap.yaml"
 
 func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
 	t.Parallel()
@@ -33,6 +36,41 @@ func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
 	loadedChart, ok := loaded.source.(*v2.Chart)
 	if !ok || len(loadedChart.Templates) != 1 || !strings.Contains(string(loadedChart.Templates[0].Data), "name: test") {
 		t.Fatalf("Load() did not preserve chart templates: %#v", loadedChart)
+	}
+}
+
+func TestLoadReadsLocalChartIntoMemory(t *testing.T) {
+	t.Parallel()
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	chartRoot := filepath.Join(projectRoot, "charts", "app")
+	if err := os.MkdirAll(filepath.Join(chartRoot, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		"Chart.yaml":          "apiVersion: v2\nname: app\nversion: 0.1.0\n",
+		localTestTemplatePath: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n",
+	} {
+		if err := os.WriteFile(filepath.Join(chartRoot, filepath.FromSlash(name)), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loaded, err := Load(LoadRequest{
+		Source: "./charts/app", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"),
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	loadedChart := loaded.source.(*v2.Chart)
+	if len(loadedChart.Templates) != 1 || loadedChart.Templates[0].Name != localTestTemplatePath {
+		t.Fatalf("Load() templates = %#v", loadedChart.Templates)
+	}
+	if loaded.ContentDigest == "" || loaded.LocalPath != chartRoot {
+		t.Fatalf("Load() chart identity = (digest %q, path %q)", loaded.ContentDigest, loaded.LocalPath)
 	}
 }
 
