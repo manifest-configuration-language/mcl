@@ -6,7 +6,7 @@ import { parser as generatedParser } from "./parser.js";
 export const parser = generatedParser.configure({
   props: [
     styleTags({
-      "import as export type let fn rule emit validate require message using for in if else each descendants where select bySchema minMatches requireEach requireDescendants and or not is with without output": tags.keyword,
+      "import as export type let fn rule emit validate require message using for in if else each descendants where select bySchema minMatches requireEach requireDescendants and or not is with without output schema key": tags.keyword,
       "Any Null Bool Int Decimal String List Map Function Node Schema": tags.typeName,
       "true false null": tags.bool,
       Identifier: tags.variableName,

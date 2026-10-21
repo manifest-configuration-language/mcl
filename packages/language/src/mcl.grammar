@@ -1,10 +1,9 @@
-@top MCL { (BlockStatement | Statement lineEnd)* }
+@top MCL { (BlockStatement | FunctionDeclaration | Statement lineEnd)* }
 
 Statement {
   ImportDeclaration |
   TypeDeclaration |
   LetDeclaration |
-  FunctionDeclaration |
   EmitStatement |
   ValidateStatement |
   ExpressionStatement
@@ -14,49 +13,57 @@ BlockStatement { TypeRecordDeclaration | LetBlockDeclaration | LetNodeDeclaratio
 
 ImportDeclaration { Export? kw<"import"> QuotedString kw<"as"> Identifier }
 Export { kw<"export"> }
-TypeDeclaration { Export? kw<"type"> Identifier "=" TypeExpression }
-TypeRecordDeclaration { Export? kw<"type"> Identifier "=" lineEnd TypeRecordBlock }
+TypeDeclaration { Export? kw<"type"> Identifier TypeParameterList? "=" TypeExpression }
+TypeRecordDeclaration { Export? kw<"type"> Identifier TypeParameterList? "=" lineEnd TypeRecordBlock }
 LetDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" Expression }
 LetBlockDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" lineEnd Block }
 LetNodeDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" NodeExpression }
 LetOverlayDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" OverlayExpression }
 LetRemovalDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" RemovalExpression }
 TypeAnnotation { ":" TypeExpression }
-FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" ":" TypeExpression "=" Expression }
+FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" (("->" | ":") TypeExpression)? "=" FunctionBody }
+FunctionBody { Expression lineEnd | lineEnd Block }
+TypeParameterList { "<" Identifier ("," Identifier)* ","? ">" }
 ParameterList { Parameter ("," Parameter)* ","? }
 Parameter { Identifier TypeAnnotation? }
-RuleDeclaration { kw<"rule"> Identifier "(" TypedParameter ")" ":" lineEnd RuleBlock }
+RuleDeclaration { Export? kw<"rule"> Identifier "(" TypedParameter ")" ":" lineEnd RuleBlock }
 TypedParameter { Identifier ":" TypeExpression }
 RuleBlock { indent RequireStatement+ (dedent | eof) }
 RequireStatement { kw<"require"> Expression (kw<"message"> QuotedString)? lineEnd }
 EmitStatement { kw<"emit"> kw<"each">? Expression }
-ValidateStatement { kw<"validate"> (kw<"each"> DescendantsQuery | Expression) kw<"using"> Identifier }
+ValidateStatement { kw<"validate"> (kw<"each"> DescendantsQuery | Expression) kw<"using"> RuleReference }
+RuleReference { Identifier ("." Identifier)* }
 DescendantsQuery { kw<"descendants"> "(" kw<"output"> "," (TypeExpression | NamedQuerySelector) ("," kw<"minMatches"> "=" Number)? ")" }
 NamedQuerySelector { kw<"where"> "=" LambdaExpression | kw<"select"> "=" BySchemaSelector }
 BySchemaSelector { kw<"bySchema"> "(" TypeExpression ")" }
 ExpressionStatement { Expression }
 
 Block { indent BlockLine+ (dedent | eof) }
-BlockLine { MapEntry | SequenceItem | RequireStatement }
-MapEntry { MapKey ":" (Expression lineEnd | lineEnd Block | lineEnd) }
-MapKey { Identifier | Keyword | QuotedString | Number }
-SequenceItem { "-" ((MapKey ":" Expression) | Expression)? (lineEnd Block | lineEnd) }
+BlockLine { MapEntry | SequenceItem | RequireStatement | Expression lineEnd }
+MapEntry { MapEntryKey ":" (Expression lineEnd | lineEnd Block | lineEnd) }
+MapEntryKey { DynamicMapKey | MapKey }
+DynamicMapKey { kw<"key"> "(" Expression ")" }
+MapKey { Identifier | MapKeyword | QuotedString | Number }
+SequenceItem { ListMarker ((MapEntryKey ":" Expression) | Expression)? (lineEnd Block | lineEnd) }
 TypeRecordBlock { indent TypeField+ (dedent | eof) }
 TypeField { MapKey "?"? ":" TypeExpression lineEnd }
 
 TypeExpression { TypeAtom ("|" TypeAtom)* }
 TypeAtom {
   PrimitiveType TypeArguments? |
-  Identifier TypeArguments? |
+  kw<"schema"> "(" QuotedString ")" |
+  QuotedString |
+  TypeReference |
   "{" TypeFieldInline ("," TypeFieldInline)* ","? "}" |
   "(" TypeExpression ")"
 }
+TypeReference { Identifier ("." Identifier)* TypeArguments? }
 TypeArguments { "<" TypeExpression ("," TypeExpression)* ","? ">" }
 TypeFieldInline { MapKey "?"? ":" TypeExpression }
 PrimitiveType { kw<"Any"> | kw<"Null"> | kw<"Bool"> | kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"Function"> | kw<"Node"> | kw<"Schema"> }
 
 Expression { UnaryExpression (BinaryOperator UnaryExpression)* }
-UnaryExpression { (kw<"not"> | "-")? PostfixExpression }
+UnaryExpression { kw<"not"> PostfixExpression | NegativeNumber | PostfixExpression }
 PostfixExpression { PrimaryExpression Postfix* }
 OverlayExpression { PrimaryExpression Postfix* Overlay }
 Overlay { kw<"with"> ":" lineEnd Block }
@@ -75,17 +82,18 @@ PrimaryExpression {
   "(" Expression ")" |
   ListExpression |
   InlineMap |
-  IfExpression
+  IfExpression | ForExpression
 }
 NodeExpression { kw<"node"> ":" lineEnd Block }
 IfExpression { kw<"if"> Expression ":" lineEnd Block (kw<"else"> ":" lineEnd Block)? }
+ForExpression { kw<"for"> Identifier kw<"in"> Expression ":" lineEnd Block }
 LambdaExpression { kw<"fn"> "(" ParameterList? ")" "=>" Expression }
 ListExpression { "[" (Expression ("," Expression)* ","?)? "]" }
 InlineMap { "{" (InlineMapEntry ("," InlineMapEntry)* ","?)? "}" }
-InlineMapEntry { MapKey ":" Expression }
-CallArguments { "(" (CallArgument ("," CallArgument)* ","?)? ")" }
-CallArgument { (Identifier "=" )? (LambdaExpression | Expression) }
-BinaryOperator { Operator | kw<"and"> | kw<"or"> | kw<"in"> | kw<"is"> }
+InlineMapEntry { MapEntryKey ":" Expression }
+CallArguments { "(" (CallArgument ("," CallArgument)* ","? | lineEnd indent CallArgument ("," lineEnd? CallArgument)* ","? lineEnd dedent)? ")" }
+CallArgument { ((Identifier | kw<"key">) "=" )? (LambdaExpression | Expression) }
+BinaryOperator { Operator | Minus | kw<"and"> | kw<"or"> | kw<"in"> | kw<"is"> }
 
 @context trackIndent from "./layout.js"
 @external tokens indentation from "./layout.js" {
@@ -95,12 +103,16 @@ BinaryOperator { Operator | kw<"and"> | kw<"or"> | kw<"in"> | kw<"is"> }
 }
 
 @tokens {
+  @precedence { NegativeNumber, Minus }
   Identifier { $[A-Za-z_] $[A-Za-z0-9_]* }
+  ListMarker { "-" $[ \t]+ }
+  NegativeNumber { "-" $[0-9]+ ("." $[0-9]+)? }
   Number { $[0-9]+ ("." $[0-9]+)? }
   QuotedString { "\"" ("\\" _ | !["\\\n\r])* "\"" }
   MultiString { "\"\"\"" (!["\\] | "\\" _)* "\"\"\"" }
   Comment { "#" ![\n\r]* }
-  Operator { "==" | "!=" | "<=" | ">=" | "??" | "=>" | "->" | "+" | "-" | "*" | "/" | "%" | "|" | "<" | ">" }
+  Operator { "==" | "!=" | "<=" | ">=" | "??" | "=>" | "->" | "+" | "*" | "/" | "%" | "|" | "<" | ">" }
+  Minus { "-" }
   newline { "\r"? "\n" | "\r" }
   eof { @eof }
   spaces { $[ \t]+ }
@@ -116,11 +128,11 @@ lineEnd { newline | eof }
 
 kw<term> { @specialize[@name={term}]<Identifier, term> }
 
-Keyword {
+MapKeyword {
   kw<"import"> | kw<"as"> | kw<"export"> | kw<"type"> | kw<"let"> | kw<"fn"> | kw<"rule"> | kw<"emit"> |
-  kw<"validate"> | kw<"require"> | kw<"message"> | kw<"using"> | kw<"for"> | kw<"in"> | kw<"if"> | kw<"else"> |
-  kw<"each"> | kw<"descendants"> | kw<"where"> | kw<"select"> | kw<"bySchema"> | kw<"minMatches"> |
-  kw<"requireEach"> | kw<"requireDescendants"> | kw<"and"> | kw<"or"> | kw<"not"> | kw<"is"> | kw<"with"> | kw<"without"> |
-  kw<"true"> | kw<"false"> | kw<"null"> | kw<"output"> | kw<"Any"> | kw<"Null"> | kw<"Bool"> |
-  kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"Function"> | kw<"Node"> | kw<"Schema">
+  kw<"validate"> | kw<"require"> | kw<"message"> | kw<"using"> | kw<"in"> | kw<"each"> | kw<"descendants"> |
+  kw<"where"> | kw<"select"> | kw<"bySchema"> | kw<"minMatches"> | kw<"requireEach"> | kw<"requireDescendants"> |
+  kw<"and"> | kw<"or"> | kw<"not"> | kw<"is"> | kw<"with"> | kw<"without"> | kw<"output"> | kw<"Any"> |
+  kw<"Null"> | kw<"Bool"> | kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"schema"> |
+  kw<"Function"> | kw<"Node"> | kw<"Schema"> | kw<"true"> | kw<"false"> | kw<"null">
 }

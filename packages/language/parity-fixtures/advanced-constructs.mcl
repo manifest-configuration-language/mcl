@@ -1,0 +1,19 @@
+type Container = {name: String}
+type External = schema("./schema.json")
+
+fn resourceName(name: String) -> String =
+  "app-" + name
+
+let names =
+  - "api"
+  - "worker"
+
+let labels =
+  key("app.kubernetes.io/name"): resourceName("api")
+
+emit names
+emit labels
+validate each descendants(output, Container) using rules.container
+validate each descendants(output, where = fn(value) => value.name == "api") using rules.named
+validate each descendants(output, select = bySchema(Container)) using rules.schemaCheck
+validate each descendants(output, Int, minMatches = 0) using rules.minimum

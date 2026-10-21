@@ -83,7 +83,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcl",
-          "match": "\\b(?:import|as|export|let|type|fn|rule|emit|validate|require|message|using|for|in|if|else|each|descendants|where|select|bySchema|minMatches|requireEach|requireDescendants|node|with|without)\\b"
+          "match": "\\b(?:import|as|export|let|type|fn|rule|emit|validate|require|message|using|for|in|if|else|each|descendants|where|select|bySchema|minMatches|requireEach|requireDescendants|node|with|without|schema|key)\\b"
         },
         {
           "name": "keyword.operator.mcl",

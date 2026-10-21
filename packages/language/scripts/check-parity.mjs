@@ -34,8 +34,11 @@ const validFixtures = [
   resolve(packageRoot, "parity-fixtures/blocks.mcl"),
   resolve(packageRoot, "parity-fixtures/without.mcl"),
   resolve(packageRoot, "parity-fixtures/descendants-validation.mcl"),
+  resolve(packageRoot, "parity-fixtures/advanced-constructs.mcl"),
   resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples/validation/rules/main.mcl"),
   resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples/references/clone-node/main.mcl"),
+  resolve(repositoryRoot, "../examples/projects/complete-application/main.mcl"),
+  resolve(repositoryRoot, "../examples/validation/schema-validation/main.mcl"),
 ];
 
 for (const fixturePath of validFixtures) {
