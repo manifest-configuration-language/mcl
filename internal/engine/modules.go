@@ -306,6 +306,7 @@ func (index *DependentMCLSourceIndex) SourcesFromIndex(target string, workspaceR
 		return index.Sources(target, workspaceRoots, overlays)
 	}
 	diskSources := maps.Clone(index.diskSources)
+	files := newOSProjectFilesystem(root)
 	overlaySources, nextOverlayPaths, err := applyDependentOverlays(diskSources, root, searchRoots, overlays)
 	if err != nil {
 		return nil, err
@@ -316,7 +317,7 @@ func (index *DependentMCLSourceIndex) SourcesFromIndex(target string, workspaceR
 		if _, remainsOpen := nextOverlayPaths[path]; remainsOpen {
 			continue
 		}
-		content, readErr := readLimitedFileWithLimit(path, maxMCLSourceBytes)
+		content, readErr := files.readLimitedFile(path)
 		if readErr != nil {
 			if !errors.Is(readErr, os.ErrNotExist) {
 				return nil, fmt.Errorf("read module %q after closing overlay: %w", path, readErr)
@@ -362,6 +363,7 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 		return nil
 	}
 	diskSources := maps.Clone(index.diskSources)
+	files := newOSProjectFilesystem(index.root)
 	effectiveSources := maps.Clone(index.sources)
 	changed := make(map[string]struct{}, len(changes))
 	for _, change := range changes {
@@ -394,7 +396,7 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 				if change.Deleted {
 					delete(diskSources, path)
 				} else {
-					content, err := readLimitedFileWithLimit(path, maxMCLSourceBytes)
+					content, err := files.readLimitedFile(path)
 					if err != nil {
 						index.initialized = false
 
@@ -417,7 +419,7 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 		if change.Deleted {
 			delete(diskSources, path)
 		} else {
-			content, err := readLimitedFileWithLimit(path, maxMCLSourceBytes)
+			content, err := files.readLimitedFile(path)
 			if err != nil {
 				index.initialized = false
 
@@ -624,6 +626,7 @@ func dependentSourceScope(target string, workspaceRoots []string) (string, strin
 
 func collectDependentSources(canonical, root string, searchRoots []string) (map[string]string, error) {
 	allSources := make(map[string]string)
+	files := newOSProjectFilesystem(root)
 	var totalBytes int64
 	for _, searchRoot := range searchRoots {
 		err := filepath.WalkDir(searchRoot, func(path string, entry os.DirEntry, walkErr error) error {
@@ -675,7 +678,7 @@ func collectDependentSources(canonical, root string, searchRoots []string) (map[
 			if totalBytes+info.Size() > maxProjectMCLBytes {
 				return fmt.Errorf("workspace MCL sources exceed the %d-byte limit", maxProjectMCLBytes)
 			}
-			content, err := readLimitedFileWithLimit(modulePath, maxMCLSourceBytes)
+			content, err := files.readLimitedFile(modulePath)
 			if err != nil {
 				return fmt.Errorf("read module %q: %w", modulePath, err)
 			}
@@ -689,7 +692,7 @@ func collectDependentSources(canonical, root string, searchRoots []string) (map[
 		}
 	}
 	if _, exists := allSources[canonical]; !exists {
-		content, err := readLimitedFileWithLimit(canonical, maxMCLSourceBytes)
+		content, err := files.readLimitedFile(canonical)
 		if err != nil {
 			return nil, fmt.Errorf("read target module %q: %w", canonical, err)
 		}
@@ -816,7 +819,7 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read entry source %q: %w", canonical, err)
 	}
-	catalog, err := loadKubernetesResourceCatalog(root)
+	catalog, err := loadKubernetesResourceCatalogWithFilesystem(root, files)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -928,7 +931,7 @@ func evaluateSourceWithFilesystem(ctx context.Context, path, source string, over
 	} else {
 		root = files.root
 	}
-	catalog, err := loadKubernetesResourceCatalog(root)
+	catalog, err := loadKubernetesResourceCatalogWithFilesystem(root, files)
 	if err != nil {
 		return Bundle{}, nil, err
 	}

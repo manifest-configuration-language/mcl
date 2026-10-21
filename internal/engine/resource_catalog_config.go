@@ -3,13 +3,17 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 )
 
-const maxProjectConfigBytes = 1 << 20
+const (
+	maxProjectConfigBytes = 1 << 20
+	projectConfigFileName = "mcl.toml"
+)
 
 type projectConfig struct {
 	Kubernetes struct {
@@ -42,13 +46,25 @@ func LoadKubernetesResourceCatalogForFile(entryPath string) (KubernetesResourceC
 		return KubernetesResourceCatalog{}, err
 	}
 
-	return loadKubernetesResourceCatalog(root)
+	return loadKubernetesResourceCatalogWithFilesystem(root, newOSProjectFilesystem(root))
 }
 
-func loadKubernetesResourceCatalog(root string) (KubernetesResourceCatalog, error) {
-	configPath := filepath.Join(root, "mcl.toml")
-	info, err := os.Lstat(configPath)
-	if errors.Is(err, os.ErrNotExist) {
+func loadKubernetesResourceCatalogWithFilesystem(root string, filesystem *projectFilesystem) (KubernetesResourceCatalog, error) {
+	configPath := filepath.Join(root, projectConfigFileName)
+	if filesystem == nil {
+		filesystem = newOSProjectFilesystem(root)
+	}
+	relative, err := filesystem.relativePath(configPath)
+	if err != nil {
+		return KubernetesResourceCatalog{}, fmt.Errorf("resolve project configuration %q: %w", configPath, err)
+	}
+	var info fs.FileInfo
+	if filesystem.osBacked {
+		info, err = os.Lstat(configPath)
+	} else {
+		info, err = fs.Stat(filesystem.files, relative)
+	}
+	if errors.Is(err, fs.ErrNotExist) {
 		return DefaultKubernetesResourceCatalog(), nil
 	}
 	if err != nil {
@@ -57,7 +73,7 @@ func loadKubernetesResourceCatalog(root string) (KubernetesResourceCatalog, erro
 	if !info.Mode().IsRegular() {
 		return KubernetesResourceCatalog{}, fmt.Errorf("project configuration %q must be a regular file", configPath)
 	}
-	data, err := readLimitedFileWithLimit(configPath, maxProjectConfigBytes)
+	data, err := filesystem.readLimitedFileWithLimit(configPath, maxProjectConfigBytes)
 	if err != nil {
 		return KubernetesResourceCatalog{}, fmt.Errorf("read project configuration %q: %w", configPath, err)
 	}

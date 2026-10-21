@@ -1,25 +1,120 @@
-@top MCL { Token* }
+@top MCL { (BlockStatement | Statement lineEnd)* }
 
-Token { Keyword | Identifier | Number | QuotedString | Comment | Operator | Punctuation | Newline }
-Keyword {
-  kw<"import"> | kw<"as"> | kw<"export"> | kw<"type"> | kw<"let"> | kw<"fn"> | kw<"emit"> |
-  kw<"validate"> | kw<"require"> | kw<"using"> | kw<"for"> | kw<"in"> | kw<"if"> | kw<"else"> |
-  kw<"each"> | kw<"descendants"> | kw<"where"> | kw<"select"> | kw<"bySchema"> | kw<"minMatches"> |
-  kw<"requireEach"> | kw<"requireDescendants"> | kw<"and"> | kw<"or"> | kw<"not"> | kw<"is"> |
-  kw<"true"> | kw<"false"> | kw<"null"> | kw<"output"> | kw<"Any"> | kw<"Null"> | kw<"Bool"> |
-  kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"Function"> | kw<"Node"> | kw<"Schema">
+Statement {
+  ImportDeclaration |
+  TypeDeclaration |
+  LetDeclaration |
+  FunctionDeclaration |
+  EmitStatement |
+  ValidateStatement |
+  ExpressionStatement
 }
-kw<term> { @specialize[@name={term}]<Identifier, term> }
+
+BlockStatement { TypeRecordDeclaration | LetBlockDeclaration | LetNodeDeclaration | LetOverlayDeclaration | RuleDeclaration }
+
+ImportDeclaration { Export? kw<"import"> QuotedString kw<"as"> Identifier }
+Export { kw<"export"> }
+TypeDeclaration { Export? kw<"type"> Identifier "=" TypeExpression }
+TypeRecordDeclaration { Export? kw<"type"> Identifier "=" lineEnd TypeRecordBlock }
+LetDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" Expression }
+LetBlockDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" lineEnd Block }
+LetNodeDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" NodeExpression }
+LetOverlayDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" OverlayExpression }
+TypeAnnotation { ":" TypeExpression }
+FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" ":" TypeExpression "=" Expression }
+ParameterList { Parameter ("," Parameter)* ","? }
+Parameter { Identifier TypeAnnotation? }
+RuleDeclaration { kw<"rule"> Identifier "(" TypedParameter ")" ":" lineEnd RuleBlock }
+TypedParameter { Identifier ":" TypeExpression }
+RuleBlock { indent RequireStatement+ (dedent | eof) }
+RequireStatement { kw<"require"> Expression (kw<"message"> QuotedString)? lineEnd }
+EmitStatement { kw<"emit"> kw<"each">? Expression }
+ValidateStatement { kw<"validate"> Expression (kw<"each">)? kw<"using"> Identifier }
+ExpressionStatement { Expression }
+
+Block { indent BlockLine+ (dedent | eof) }
+BlockLine { MapEntry | SequenceItem | RequireStatement }
+MapEntry { MapKey ":" (Expression lineEnd | lineEnd Block | lineEnd) }
+MapKey { Identifier | Keyword | QuotedString | Number }
+SequenceItem { "-" ((MapKey ":" Expression) | Expression)? (lineEnd Block | lineEnd) }
+TypeRecordBlock { indent TypeField+ (dedent | eof) }
+TypeField { MapKey "?"? ":" TypeExpression lineEnd }
+
+TypeExpression { TypeAtom ("|" TypeAtom)* }
+TypeAtom {
+  PrimitiveType TypeArguments? |
+  Identifier TypeArguments? |
+  "{" TypeFieldInline ("," TypeFieldInline)* ","? "}" |
+  "(" TypeExpression ")"
+}
+TypeArguments { "<" TypeExpression ("," TypeExpression)* ","? ">" }
+TypeFieldInline { MapKey "?"? ":" TypeExpression }
+PrimitiveType { kw<"Any"> | kw<"Null"> | kw<"Bool"> | kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"Function"> | kw<"Node"> | kw<"Schema"> }
+
+Expression { UnaryExpression (BinaryOperator UnaryExpression)* }
+UnaryExpression { (kw<"not"> | "-")? PostfixExpression }
+PostfixExpression { PrimaryExpression Postfix* }
+OverlayExpression { PrimaryExpression Postfix* Overlay }
+Overlay { kw<"with"> ":" lineEnd Block }
+Postfix {
+  CallArguments |
+  "." MapKey |
+  "?." MapKey |
+  "[" Expression "]"
+}
+PrimaryExpression {
+  Number | QuotedString | MultiString | kw<"true"> | kw<"false"> | kw<"null"> |
+  Identifier | PrimitiveType |
+  "." Identifier |
+  "(" Expression ")" |
+  ListExpression |
+  InlineMap |
+  IfExpression
+}
+NodeExpression { kw<"node"> ":" lineEnd Block }
+IfExpression { kw<"if"> Expression ":" lineEnd Block (kw<"else"> ":" lineEnd Block)? }
+LambdaExpression { kw<"fn"> "(" ParameterList? ")" "=>" UnaryExpression }
+ListExpression { "[" (Expression ("," Expression)* ","?)? "]" }
+InlineMap { "{" (InlineMapEntry ("," InlineMapEntry)* ","?)? "}" }
+InlineMapEntry { MapKey ":" Expression }
+CallArguments { "(" (CallArgument ("," CallArgument)* ","?)? ")" }
+CallArgument { (Identifier "=" )? (LambdaExpression | Expression) }
+BinaryOperator { Operator | kw<"and"> | kw<"or"> | kw<"in"> | kw<"is"> }
+
+@context trackIndent from "./layout.js"
+@external tokens indentation from "./layout.js" {
+  indent
+  dedent
+  blankLineStart
+}
 
 @tokens {
   Identifier { $[A-Za-z_] $[A-Za-z0-9_]* }
   Number { $[0-9]+ ("." $[0-9]+)? }
-  QuotedString { "\"" !["\n\r]* "\"" }
+  QuotedString { "\"" ("\\" _ | !["\\\n\r])* "\"" }
+  MultiString { "\"\"\"" (!["\\] | "\\" _)* "\"\"\"" }
   Comment { "#" ![\n\r]* }
-  Operator { "==" | "!=" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "=" | "|" | "<" | ">" }
-  Punctuation { ":" | "," | "." | "?" | "(" | ")" | "[" | "]" | "{" | "}" }
-  Newline { "\r"? "\n" | "\r" }
-  space { $[ \t]+ }
+  Operator { "==" | "!=" | "<=" | ">=" | "??" | "=>" | "->" | "+" | "-" | "*" | "/" | "%" | "|" | "<" | ">" }
+  newline { "\r"? "\n" | "\r" }
+  eof { @eof }
+  spaces { $[ \t]+ }
 }
 
-@skip { space }
+@skip {
+  spaces |
+  Comment |
+  blankLineStart (spaces | Comment)* lineEnd
+}
+
+lineEnd { newline | eof }
+
+kw<term> { @specialize[@name={term}]<Identifier, term> }
+
+Keyword {
+  kw<"import"> | kw<"as"> | kw<"export"> | kw<"type"> | kw<"let"> | kw<"fn"> | kw<"rule"> | kw<"emit"> |
+  kw<"validate"> | kw<"require"> | kw<"message"> | kw<"using"> | kw<"for"> | kw<"in"> | kw<"if"> | kw<"else"> |
+  kw<"each"> | kw<"descendants"> | kw<"where"> | kw<"select"> | kw<"bySchema"> | kw<"minMatches"> |
+  kw<"requireEach"> | kw<"requireDescendants"> | kw<"and"> | kw<"or"> | kw<"not"> | kw<"is"> | kw<"with"> | kw<"without"> |
+  kw<"true"> | kw<"false"> | kw<"null"> | kw<"output"> | kw<"Any"> | kw<"Null"> | kw<"Bool"> |
+  kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"Function"> | kw<"Node"> | kw<"Schema">
+}

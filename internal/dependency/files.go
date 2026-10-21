@@ -1,42 +1,73 @@
 package dependency
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/manifest-configuration-language/mcl/internal/safepath"
 )
 
-func readLimitedFile(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, maxRemoteManifestSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxRemoteManifestSize {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", path, maxRemoteManifestSize)
-	}
-
-	return data, nil
+type rootFilesystem struct {
+	root     string
+	files    fs.FS
+	osBacked bool
 }
 
-func readLimitedFileWithLimit(path string, maximumSize int64) ([]byte, error) {
-	file, err := os.Open(path)
+func newOSRootFilesystem(root string) *rootFilesystem {
+	return &rootFilesystem{root: filepath.Clean(root), files: os.DirFS(root), osBacked: true}
+}
+
+func newRootFilesystem(root string, files fs.FS) *rootFilesystem {
+	return &rootFilesystem{root: filepath.Clean(root), files: files}
+}
+
+func (filesystem *rootFilesystem) stat(name string) (fs.FileInfo, error) {
+	if !fs.ValidPath(name) {
+		return nil, fs.ErrInvalid
+	}
+	if filesystem.osBacked {
+		return os.Lstat(filepath.Join(filesystem.root, filepath.FromSlash(name)))
+	}
+
+	return fs.Stat(filesystem.files, name)
+}
+
+func (filesystem *rootFilesystem) readLimitedFile(name string, maximumSize int64) ([]byte, error) {
+	if !fs.ValidPath(name) {
+		return nil, fs.ErrInvalid
+	}
+	if filesystem.osBacked {
+		path := filepath.Join(filesystem.root, filepath.FromSlash(name))
+		resolved, err := safepath.ResolveWithin(filesystem.root, path)
+		if err != nil {
+			return nil, err
+		}
+		root, err := filepath.EvalSymlinks(filesystem.root)
+		if err != nil {
+			return nil, err
+		}
+		relative, err := filepath.Rel(root, resolved)
+		if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, safepath.ErrOutsideRoot
+		}
+		name = filepath.ToSlash(relative)
+	}
+	file, err := filesystem.files.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, maximumSize+1))
-	if err != nil {
+	data, readErr := io.ReadAll(io.LimitReader(file, maximumSize+1))
+	closeErr := file.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > maximumSize {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", path, maximumSize)
+		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", name, maximumSize)
 	}
 
 	return data, nil

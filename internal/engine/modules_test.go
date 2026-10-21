@@ -11,9 +11,9 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for path, source := range map[string]string{
-		"mcl.toml":     "",
-		"target.mcl":   "export let value = \"old\"\n",
-		"importer.mcl": "let local = \"old\"\n",
+		projectConfigFileName: "",
+		"target.mcl":          "export let value = \"old\"\n",
+		"importer.mcl":        "let local = \"old\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
@@ -86,9 +86,9 @@ func TestDependentMCLSourceIndexInvalidatesOnDeletedImport(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for path, source := range map[string]string{
-		"mcl.toml":     "",
-		"target.mcl":   "export let value = \"old\"\n",
-		"importer.mcl": "import \"./target.mcl\" as target\nemit target.value\n",
+		projectConfigFileName: "",
+		"target.mcl":          "export let value = \"old\"\n",
+		"importer.mcl":        "import \"./target.mcl\" as target\nemit target.value\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
@@ -114,8 +114,8 @@ func TestDependentMCLSourceIndexIgnoresWatchedFilesInCache(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for path, source := range map[string]string{
-		"mcl.toml":   "",
-		"target.mcl": "export let value = \"old\"\n",
+		projectConfigFileName: "",
+		"target.mcl":          "export let value = \"old\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)

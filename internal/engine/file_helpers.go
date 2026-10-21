@@ -31,27 +31,6 @@ func pathWithin(root, target string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-func readLimitedFile(path string) ([]byte, error) {
-	return readLimitedFileWithLimit(path, maxYAMLBytes)
-}
-
-func readLimitedFileWithLimit(path string, maximumSize int64) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maximumSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maximumSize {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", path, maximumSize)
-	}
-
-	return data, nil
-}
-
 // projectFilesystem presents project files through root-relative io/fs paths.
 // osBacked filesystems resolve symlinks before opening so an OS path cannot
 // escape the project root through a link.
@@ -110,6 +89,10 @@ func (filesystem *projectFilesystem) resolveReadPath(filename string) (string, e
 }
 
 func (filesystem *projectFilesystem) readLimitedFile(filename string) ([]byte, error) {
+	return filesystem.readLimitedFileWithLimit(filename, maxMCLSourceBytes)
+}
+
+func (filesystem *projectFilesystem) readLimitedFileWithLimit(filename string, maximumSize int64) ([]byte, error) {
 	resolved, err := filesystem.resolveReadPath(filename)
 	if err != nil {
 		return nil, err
@@ -122,13 +105,13 @@ func (filesystem *projectFilesystem) readLimitedFile(filename string) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maxMCLSourceBytes+1))
+	data, readErr := io.ReadAll(io.LimitReader(file, maximumSize+1))
 	closeErr := file.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > maxMCLSourceBytes {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", filename, maxMCLSourceBytes)
+	if int64(len(data)) > maximumSize {
+		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", filename, maximumSize)
 	}
 
 	return data, nil

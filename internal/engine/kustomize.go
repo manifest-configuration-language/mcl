@@ -20,6 +20,13 @@ type kustomizeBuildInput struct {
 
 func kustomizeBuild(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
 	projectRoot, sourcePath, dependencies := adapterModuleInputs(state, arguments...)
+	var files *projectFilesystem
+	if state != nil && state.Module != nil {
+		files = state.Module.filesystem
+	}
+	if files == nil && projectRoot != "" {
+		files = newOSProjectFilesystem(projectRoot)
+	}
 	input, err := validateKustomizeBuildInput(arguments, projectRoot, sourcePath)
 	if err != nil {
 		return RuntimeValue{}, err
@@ -36,7 +43,7 @@ func kustomizeBuild(arguments []RuntimeValue, state *EvaluationState) (RuntimeVa
 	}
 	result, err := kustomizeadapter.Build(kustomizeadapter.Request{Source: input.source, Revision: input.revision.TextValue(), Directory: input.directory, ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies})
 	if err != nil {
-		if diagnostic, ok := kustomizeConfigSourceDiagnostic(err); ok {
+		if diagnostic, ok := kustomizeConfigSourceDiagnostic(err, files); ok {
 			return RuntimeValue{}, diagnostic
 		}
 
@@ -405,7 +412,7 @@ func setKustomizeSourceLocation(value *RuntimeValue, location SourceDiagnosticLo
 	}
 }
 
-func kustomizeConfigSourceDiagnostic(err error) (SourceDiagnosticError, bool) {
+func kustomizeConfigSourceDiagnostic(err error, filesystems ...*projectFilesystem) (SourceDiagnosticError, bool) {
 	configError, ok := errors.AsType[kustomizeadapter.ConfigSyntaxError](err)
 	if !ok || configError.Line <= 0 || configError.SourcePath == "" {
 		return SourceDiagnosticError{}, false
@@ -418,9 +425,10 @@ func kustomizeConfigSourceDiagnostic(err error) (SourceDiagnosticError, bool) {
 	path := configError.SourcePath
 	data := configError.SourceData
 	if data == nil {
-		var err error
-		data, err = readLimitedFile(path)
-		if err != nil {
+		filesystem := projectFilesystemFor(filepath.Dir(path), filesystems)
+		var readErr error
+		data, readErr = filesystem.readLimitedFile(path)
+		if readErr != nil {
 			return SourceDiagnosticError{}, false
 		}
 	}

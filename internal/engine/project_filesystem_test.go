@@ -85,3 +85,27 @@ func TestCompileSchemaLoadsReferencesFromInjectedFilesystem(t *testing.T) {
 		t.Fatalf("compile schema through injected filesystem: %v", err)
 	}
 }
+
+func TestLoadKubernetesResourceCatalogReadsInjectedConfiguration(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	filesystem := newProjectFilesystem(root, fstest.MapFS{
+		projectConfigFileName: &fstest.MapFile{Data: []byte(`[kubernetes.resourceCatalog]
+revision = "mcl-kubernetes-resource-catalog-v1"
+
+[[kubernetes.resourceCatalog.additionalResources]]
+apiGroup = "widgets.example.test"
+kind = "Widget"
+resourceName = "widgets"
+scope = "Namespaced"
+`)},
+	})
+
+	catalog, err := loadKubernetesResourceCatalogWithFilesystem(root, filesystem)
+	if err != nil {
+		t.Fatalf("load catalog from injected filesystem: %v", err)
+	}
+	if catalog.Revision != "mcl-kubernetes-resource-catalog-v1" || len(catalog.AdditionalResources) != 1 {
+		t.Fatalf("loaded catalog = %#v, want configured revision and resource", catalog)
+	}
+}

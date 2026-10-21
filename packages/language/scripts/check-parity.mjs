@@ -22,13 +22,35 @@ if (missingInTextMate.length || missingInLezer.length) {
   throw new Error(`Keyword mismatch: missing in TextMate [${missingInTextMate}], missing in Lezer [${missingInLezer}]`);
 }
 
-for (const fixture of ["basic.mcl", "types.mcl"]) {
-  const fixturePath = resolve(packageRoot, "parity-fixtures", fixture);
-  const source = await readFile(fixturePath, "utf8");
-  const tree = parser.parse(source);
+function hasSyntaxError(tree) {
   let hasError = false;
   tree.iterate({ enter(node) { if (node.type.isError) hasError = true; } });
-  if (hasError) throw new Error(`Lezer parser rejected fixture ${fixture}`);
+  return hasError;
+}
+
+const validFixtures = [
+  resolve(packageRoot, "parity-fixtures/basic.mcl"),
+  resolve(packageRoot, "parity-fixtures/types.mcl"),
+  resolve(packageRoot, "parity-fixtures/blocks.mcl"),
+  resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples/validation/rules/main.mcl"),
+  resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples/references/clone-node/main.mcl"),
+];
+
+for (const fixturePath of validFixtures) {
+  const fixture = fixturePath.slice(repositoryRoot.length + 1);
+  const source = await readFile(fixturePath, "utf8");
+  const tree = parser.parse(source);
+  if (hasSyntaxError(tree)) throw new Error(`Lezer parser rejected valid fixture ${fixture}`);
   const go = spawnSync("go", ["run", "./cmd/mcl", "fmt", fixturePath], { cwd: repositoryRoot, encoding: "utf8" });
   if (go.status !== 0) throw new Error(`Go parser rejected fixture ${fixture}: ${go.stderr}`);
 }
+
+const invalidFixture = "invalid.mcl";
+const invalidPath = resolve(packageRoot, "parity-fixtures", invalidFixture);
+const invalidSource = await readFile(invalidPath, "utf8");
+if (!hasSyntaxError(parser.parse(invalidSource))) {
+  throw new Error(`Lezer parser accepted invalid fixture ${invalidFixture}`);
+}
+const go = spawnSync("go", ["run", "./cmd/mcl", "fmt", invalidPath], { cwd: repositoryRoot, encoding: "utf8" });
+if (go.error || go.status === null) throw new Error(`Could not run Go parser for ${invalidFixture}: ${go.error}`);
+if (go.status === 0) throw new Error(`Go parser accepted invalid fixture ${invalidFixture}`);

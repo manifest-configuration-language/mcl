@@ -164,6 +164,7 @@ self.addEventListener("message", async (event) => {
     mountProject(message.source, message.files, message.entrypoint || "main.mcl");
     const request = {
       requestId: message.requestId,
+      revision: message.requestId,
       operation: message.operation,
       entrypoint: message.entrypoint,
       source: message.source,

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
 
 const (
@@ -29,40 +30,16 @@ const (
 	projectRoot         = "/mcl-project"
 )
 
-type fileInput struct {
-	Encoding string `json:"encoding"`
-	Content  string `json:"content"`
-}
-
-type request struct {
-	RequestID  json.RawMessage      `json:"requestId"`
-	Revision   uint64               `json:"revision"`
-	Operation  string               `json:"operation"`
-	Entrypoint string               `json:"entrypoint,omitempty"`
-	Source     string               `json:"source"`
-	Files      map[string]fileInput `json:"files,omitempty"`
-}
-
-type response struct {
-	RequestID json.RawMessage `json:"requestId"`
-	Revision  uint64          `json:"revision"`
-	OK        bool            `json:"ok"`
-	Result    any             `json:"result,omitempty"`
-	Error     *responseError  `json:"error,omitempty"`
-}
-
-type responseError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Line    int    `json:"line,omitempty"`
-	Column  int    `json:"column,omitempty"`
-}
+type request = wasmprotocol.Request
+type response = wasmprotocol.Response
+type fileInput = wasmprotocol.FileInput
+type responseError = wasmprotocol.Error
 
 func main() {
 	api := js.Global().Get("Object").New()
 	run := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) != 1 || args[0].Type() != js.TypeString {
-			return marshal(response{OK: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "run expects one JSON string argument"}})
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "run expects one JSON string argument"}})
 		}
 
 		return handle(args[0].String())
@@ -76,17 +53,18 @@ func main() {
 func handle(raw string) string {
 	var input request
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
-		return marshal(response{OK: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
 	}
 	result := response{RequestID: input.RequestID, Revision: input.Revision}
-	if len(input.RequestID) == 0 {
-		result.RequestID = json.RawMessage("null")
-	}
 	if len(input.Source) > maxSourceBytes {
 		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", maxSourceBytes)}
 		return marshal(result)
 	}
-	entrypoint, err := projectEntrypoint(input.Entrypoint)
+	entrypointInput := ""
+	if input.Entrypoint != nil {
+		entrypointInput = *input.Entrypoint
+	}
+	entrypoint, err := projectEntrypoint(entrypointInput)
 	if err != nil {
 		result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: err.Error()}
 		return marshal(result)
@@ -98,7 +76,7 @@ func handle(raw string) string {
 		} else if len(formatted) > maxOutputBytes {
 			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("formatted output exceeds the %d-byte limit", maxOutputBytes)}
 		} else {
-			result.OK = true
+			result.Ok = true
 			result.Result = map[string]any{"source": formatted}
 		}
 		return marshal(result)
@@ -111,10 +89,10 @@ func handle(raw string) string {
 	}
 	switch input.Operation {
 	case "parse":
-		result.OK = true
+		result.Ok = true
 		result.Result = map[string]any{"declarations": len(module.Nodes)}
 	case "lint":
-		result.OK = true
+		result.Ok = true
 		result.Result = diagnostics(module, input.Source)
 	case "check", "evaluate", "render":
 		bundle, evalErr := evaluate(input.Source, input.Files, entrypoint)
@@ -142,7 +120,7 @@ func handle(raw string) string {
 			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("rendered output exceeds the %d-byte limit", maxOutputBytes)}
 			return marshal(result)
 		}
-		result.OK = true
+		result.Ok = true
 		if input.Operation == "render" {
 			result.Result = map[string]any{"yaml": string(output), "artifacts": len(bundle.Artifacts)}
 		} else if input.Operation == "check" {
@@ -186,9 +164,9 @@ func validateProject(source string, files map[string]fileInput, entrypoint strin
 		}
 		var content []byte
 		switch input.Encoding {
-		case "utf8":
+		case wasmprotocol.FileInputEncodingUtf8:
 			content = []byte(input.Content)
-		case "base64":
+		case wasmprotocol.FileInputEncodingBase64:
 			decoded, err := base64.StdEncoding.DecodeString(input.Content)
 			if err != nil {
 				return fmt.Errorf("decode project file %q: invalid base64 content", relativePath)
@@ -252,7 +230,7 @@ func diagnosticError(source string, err error) *responseError {
 		message = "remote dependency access is unavailable in this browser runtime; provide dependencies in the project files"
 	}
 
-	return &responseError{Code: code, Message: message, Line: line, Column: column}
+	return &responseError{Code: code, Message: message, Line: new(uint64(line)), Column: new(uint64(column))}
 }
 
 func sourcePosition(source string, offset int) (int, int) {

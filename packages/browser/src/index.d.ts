@@ -1,30 +1,30 @@
-export type MclOperation = "parse" | "lint" | "format" | "check" | "evaluate" | "render";
+import type {
+  CheckResult,
+  Error as ProtocolError,
+  EvaluateResult,
+  FormatResult,
+  LintDiagnostic as ProtocolLintDiagnostic,
+  ParseResult,
+  RenderResult,
+  Request as WasmRequest,
+} from "./protocol.js";
+
+export type MclOperation = WasmRequest["operation"];
 
 export type ProjectFile = string | Uint8Array;
 export type ProjectFiles = Readonly<Record<string, ProjectFile>>;
 
-export interface MclError {
-  code: string;
-  message: string;
-  line?: number;
-  column?: number;
-}
+export type MclError = ProtocolError;
 
-export interface LintDiagnostic {
-  code: string;
-  message: string;
-  severity: string;
-  line: number;
-  column: number;
-}
+export type LintDiagnostic = ProtocolLintDiagnostic;
 
 export type MclResult =
-  | { operation: "parse"; declarations: number }
-  | { operation: "lint"; diagnostics: LintDiagnostic[] }
-  | { operation: "format"; source: string }
-  | { operation: "check"; valid: true; artifacts: number }
-  | { operation: "evaluate"; artifacts: number; renderedBytes: number }
-  | { operation: "render"; yaml: string; artifacts: number };
+  | ({ operation: "parse" } & ParseResult)
+  | { operation: "lint"; diagnostics: ProtocolLintDiagnostic[] }
+  | ({ operation: "format" } & FormatResult)
+  | ({ operation: "check" } & CheckResult)
+  | ({ operation: "evaluate" } & EvaluateResult)
+  | ({ operation: "render" } & RenderResult);
 
 export interface RuntimeOptions {
   initializationTimeoutMs?: number;

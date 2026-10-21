@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -114,11 +113,16 @@ type helmRenderedChart struct {
 
 func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
 	var parentContext context.Context
+	var files *projectFilesystem
 	projectRoot, sourcePath, dependencies := adapterModuleInputs(state, arguments...)
 	operationOverride := ""
 	if state != nil && state.Module != nil {
 		parentContext = state.Module.Context
+		files = state.Module.filesystem
 		operationOverride = state.Module.HelmOperation
+	}
+	if files == nil && projectRoot != "" {
+		files = newOSProjectFilesystem(projectRoot)
 	}
 	if parentContext == nil {
 		parentContext = context.Background()
@@ -151,12 +155,12 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 	ctx, cancel := context.WithTimeout(parentContext, 30*time.Second)
 	defer cancel()
 	allocations := runtimeAllocationBudgetOf(state)
-	rendered, err := renderHelmTemplates(ctx, prepared, allocations)
+	rendered, err := renderHelmTemplates(ctx, prepared, allocations, files)
 	if err != nil {
 		return RuntimeValue{}, err
 	}
 
-	return buildHelmBundle(rendered, allocations)
+	return buildHelmBundle(rendered, allocations, files)
 }
 
 func loadHelmChart(source string, options helmRenderOptions, projectRoot, sourcePath string, dependencies *dependency.Lock) (helmLoadedChart, error) {
@@ -188,7 +192,7 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 	}, nil
 }
 
-func renderHelmTemplates(ctx context.Context, prepared helmPreparedRender, allocations *runtimeAllocationBudget) (helmRenderedChart, error) {
+func renderHelmTemplates(ctx context.Context, prepared helmPreparedRender, allocations *runtimeAllocationBudget, filesystems ...*projectFilesystem) (helmRenderedChart, error) {
 	result := helmRenderedChart{prepared: prepared}
 	if prepared.cacheKeyAvailable {
 		if cached, ok := helmRenderedCache.get(prepared.cacheKey); ok {
@@ -200,7 +204,7 @@ func renderHelmTemplates(ctx context.Context, prepared helmPreparedRender, alloc
 		rendered, err := helmrender.Render(ctx, prepared.chart, prepared.values)
 		if err != nil {
 			renderError := fmt.Errorf("render Helm chart: %w", err)
-			if diagnostic, ok := helmTemplateSourceDiagnostic(err, prepared.chartSourcePath, prepared.chartRoot); ok {
+			if diagnostic, ok := helmTemplateSourceDiagnostic(err, prepared.chartSourcePath, prepared.chartRoot, filesystems...); ok {
 				return helmRenderedChart{}, diagnostic
 			}
 
@@ -282,7 +286,7 @@ func helmMappingValue(value RuntimeValue) helmrender.Value {
 	return result
 }
 
-func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationBudget) (RuntimeValue, error) {
+func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationBudget, filesystems ...*projectFilesystem) (RuntimeValue, error) {
 	chartSource := rendered.prepared.chart
 	chartRoot := rendered.prepared.chartRoot
 	chartSourcePath := rendered.prepared.chartSourcePath
@@ -296,7 +300,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
-		templateSourcePath, hasTemplateSourcePath := helmStaticTemplateSourcePath([]byte(content), path, chartRoot, chartSourcePath)
+		templateSourcePath, hasTemplateSourcePath := helmStaticTemplateSourcePath([]byte(content), path, chartRoot, chartSourcePath, filesystems...)
 		documents, err := decodeRuntimeYAMLDocuments([]byte(content), templateSourcePathIfKnown(templateSourcePath, hasTemplateSourcePath), allocations)
 		if err != nil {
 			if hasTemplateSourcePath {
@@ -314,7 +318,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 		for documentIndex, document := range documents.ListItems() {
 			mappedTemplateFields := false
 			if mappings := rendered.fieldMappings[path]; len(mappings) > 0 {
-				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path); ok && bytes.Equal(source, mappings[0].Source) {
+				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path, filesystems...); ok && bytes.Equal(source, mappings[0].Source) {
 					helmApplyFieldMappings(&document, documentIndex, mappings, templateSourcePath)
 					mappedTemplateFields = true
 					if mappings[0].Fallback {
@@ -326,7 +330,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 			if hasTemplateSourcePath {
 				setRuntimeSourcePath(&document, templateSourcePath)
 			} else if !mappedTemplateFields {
-				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path); ok {
+				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path, filesystems...); ok {
 					location := SourceDiagnosticLocation{
 						Path: templateSourcePath, Span: SourceSpan{End: len(source)}, Message: helmRenderedTemplateSourceLabel,
 					}
@@ -341,7 +345,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 					if found {
 						templatePath := filepath.Join(chartSourcePath, filepath.FromSlash(relativeTemplatePath))
 						if pathWithin(chartSourcePath, templatePath) {
-							if source, readErr := os.ReadFile(templatePath); readErr == nil && len(source) > 0 {
+							if source, readErr := readHelmProjectFile(templatePath, chartSourcePath, filesystems...); readErr == nil && len(source) > 0 {
 								message := fmt.Sprintf("Helm output from root template %q failed lifecycle validation: %v", path, err)
 
 								return RuntimeValue{}, SourceDiagnosticError{
@@ -536,12 +540,12 @@ func helmApplyMappedSourceLocation(value *RuntimeValue, location SourceDiagnosti
 	}
 }
 
-func helmTemplateSource(chartSourcePath, chartRoot, filename string) (string, []byte, bool) {
+func helmTemplateSource(chartSourcePath, chartRoot, filename string, filesystems ...*projectFilesystem) (string, []byte, bool) {
 	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, chartSourcePath)
 	if !ok {
 		return "", nil, false
 	}
-	source, err := os.ReadFile(sourcePath)
+	source, err := readHelmProjectFile(sourcePath, chartSourcePath, filesystems...)
 	if err != nil || len(source) == 0 {
 		return "", nil, false
 	}
@@ -549,7 +553,7 @@ func helmTemplateSource(chartSourcePath, chartRoot, filename string) (string, []
 	return sourcePath, source, true
 }
 
-func helmStaticTemplateSourcePath(rendered []byte, filename, chartRoot, localChartPath string) (string, bool) {
+func helmStaticTemplateSourcePath(rendered []byte, filename, chartRoot, localChartPath string, filesystems ...*projectFilesystem) (string, bool) {
 	if bytes.Contains(rendered, []byte("{{")) {
 		return "", false
 	}
@@ -557,12 +561,16 @@ func helmStaticTemplateSourcePath(rendered []byte, filename, chartRoot, localCha
 	if !ok {
 		return "", false
 	}
-	source, err := os.ReadFile(sourcePath)
+	source, err := readHelmProjectFile(sourcePath, localChartPath, filesystems...)
 	if err != nil || bytes.Contains(source, []byte("{{")) || !bytes.Equal(source, rendered) {
 		return "", false
 	}
 
 	return sourcePath, true
+}
+
+func readHelmProjectFile(filename, localChartPath string, filesystems ...*projectFilesystem) ([]byte, error) {
+	return projectFilesystemFor(localChartPath, filesystems).readLimitedFile(filename)
 }
 
 func helmLocalChartSourcePath(filename, chartRoot, localChartPath string) (string, bool) {
@@ -581,7 +589,7 @@ func helmLocalChartSourcePath(filename, chartRoot, localChartPath string) (strin
 	return sourcePath, true
 }
 
-func helmTemplateSourceDiagnostic(err error, chartPath, chartRoot string) (SourceDiagnosticError, bool) {
+func helmTemplateSourceDiagnostic(err error, chartPath, chartRoot string, filesystems ...*projectFilesystem) (SourceDiagnosticError, bool) {
 	if chartPath == "" || chartRoot == "" {
 		return SourceDiagnosticError{}, false
 	}
@@ -618,7 +626,7 @@ func helmTemplateSourceDiagnostic(err error, chartPath, chartRoot string) (Sourc
 		if !pathWithin(chartPath, templatePath) {
 			continue
 		}
-		templateSource, readErr := os.ReadFile(templatePath)
+		templateSource, readErr := readHelmProjectFile(templatePath, chartPath, filesystems...)
 		if readErr != nil {
 			continue
 		}

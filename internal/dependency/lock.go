@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,6 +42,7 @@ type Lock struct {
 	ociCharts  map[string]map[string]ociChartLock
 	gitSources map[string]gitSourceLock
 	fetched    map[string][]byte
+	filesystem *rootFilesystem
 }
 
 type ociChartLock struct {
@@ -89,6 +91,23 @@ type ToolchainIdentity struct {
 }
 
 func Open(ctx context.Context, root string, update bool, identity ToolchainIdentity) (*Lock, error) {
+	return openWithFilesystem(ctx, root, update, identity, newOSRootFilesystem(root))
+}
+
+// OpenWithFS loads the project lock and cached dependency content from a root-relative filesystem.
+// Lock writes remain OS-backed because io/fs does not provide write operations.
+func OpenWithFS(ctx context.Context, root string, update bool, identity ToolchainIdentity, files fs.FS) (*Lock, error) {
+	if files == nil {
+		return nil, errors.New("dependency filesystem is required")
+	}
+	if update {
+		return nil, errors.New("dependency updates require an OS-backed filesystem")
+	}
+
+	return openWithFilesystem(ctx, root, update, identity, newRootFilesystem(root, files))
+}
+
+func openWithFilesystem(ctx context.Context, root string, update bool, identity ToolchainIdentity, files *rootFilesystem) (*Lock, error) {
 	if ctx == nil {
 		return nil, errors.New("dependency context is required")
 	}
@@ -96,11 +115,10 @@ func Open(ctx context.Context, root string, update bool, identity ToolchainIdent
 		ctx: ctx, root: root, update: update, identity: identity,
 		manifests: make(map[string]string), schemas: make(map[string]string), charts: make(map[string]string),
 		ociCharts: make(map[string]map[string]ociChartLock), gitSources: make(map[string]gitSourceLock),
-		fetched: make(map[string][]byte),
+		fetched: make(map[string][]byte), filesystem: files,
 	}
-	path := filepath.Join(root, "mcl.lock")
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
+	info, err := files.stat("mcl.lock")
+	if errors.Is(err, fs.ErrNotExist) {
 		return lock, nil
 	}
 	if err != nil {
@@ -109,7 +127,7 @@ func Open(ctx context.Context, root string, update bool, identity ToolchainIdent
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("dependency lock must be a regular file")
 	}
-	data, err := readLimitedFile(path)
+	data, err := files.readLimitedFile("mcl.lock", maxRemoteManifestSize)
 	if err != nil {
 		return nil, fmt.Errorf("read dependency lock: %w", err)
 	}
@@ -337,6 +355,9 @@ func (lock *Lock) loadRemote(source, category string, entries map[string]string)
 }
 
 func (lock *Lock) Save() error {
+	if lock.filesystem == nil || !lock.filesystem.osBacked {
+		return errors.New("dependency lock writes require an OS-backed filesystem")
+	}
 	content := lockFile{Version: 3, Toolchain: lock.identity.lock(), Manifests: lock.manifests, Schemas: lock.schemas, Charts: lock.charts, OCICharts: lock.ociCharts, GitSources: lock.gitSources}
 	data, err := json.Marshal(content, json.Deterministic(true))
 	if err != nil {
@@ -366,25 +387,38 @@ func (lock *Lock) cachePath(digest string) string {
 
 func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 	cachePath := lock.cachePath(digest)
-	info, err := os.Lstat(cachePath)
+	relative, err := filepath.Rel(lock.root, cachePath)
+	if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, errors.New("cached dependency path escapes the project directory")
+	}
+	relative = filepath.ToSlash(relative)
+	filesystem := lock.filesystem
+	if filesystem == nil {
+		filesystem = newOSRootFilesystem(lock.root)
+	}
+	info, err := filesystem.stat(relative)
 	if err == nil && !info.Mode().IsRegular() {
 		return nil, errors.New("cached Manifest must be a regular file")
 	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("stat cached Manifest: %w", err)
 	}
-	path, err := safepath.ResolveWithin(lock.root, cachePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("cached Manifest with SHA-256 %s is missing; run mcl update", digest)
-		}
-		if errors.Is(err, safepath.ErrOutsideRoot) {
-			return nil, errors.New("cached Manifest escapes the project directory")
-		}
-
-		return nil, fmt.Errorf("resolve cached Manifest: %w", err)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("cached Manifest with SHA-256 %s is missing; run mcl update", digest)
 	}
-	data, err := readLimitedFileWithLimit(path, maximumSize)
+	if filesystem.osBacked {
+		if _, err := safepath.ResolveWithin(lock.root, cachePath); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("cached Manifest with SHA-256 %s is missing; run mcl update", digest)
+			}
+			if errors.Is(err, safepath.ErrOutsideRoot) {
+				return nil, errors.New("cached Manifest escapes the project directory")
+			}
+
+			return nil, fmt.Errorf("resolve cached Manifest: %w", err)
+		}
+	}
+	data, err := filesystem.readLimitedFile(relative, maximumSize)
 	if err != nil {
 		return nil, fmt.Errorf("read cached Manifest: %w", err)
 	}
