@@ -24,9 +24,12 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/chart/common/util"
 	"helm.sh/helm/v4/pkg/chart/loader"
+	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	v2 "helm.sh/helm/v4/pkg/chart/v2"
+	v2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
 	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
+	"helm.sh/helm/v4/pkg/ignore"
 )
 
 const maxChartBytes = 16 << 20
@@ -254,24 +257,14 @@ func Load(request LoadRequest) (Chart, error) {
 			if err != nil {
 				return Chart{}, fmt.Errorf("resolve Helm chart: %w", err)
 			}
-			chartPath, err := materializeChartFS(chartFS)
-			if err != nil {
-				return Chart{}, fmt.Errorf("materialize Helm chart: %w", err)
-			}
-			defer os.RemoveAll(chartPath)
-			if err := validateTree(chartPath); err != nil {
-				return Chart{}, err
-			}
-			loaded.ContentDigest, err = digestTree(chartPath)
-			if err != nil {
-				return Chart{}, err
-			}
-			loaded.LocalPath = filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeChartPath))
-			loaded.Origin = "helm:" + relativeChartPath
-			loaded.source, err = loader.Load(chartPath)
+			loadedChart, digest, err := loadChartFS(chartFS)
 			if err != nil {
 				return Chart{}, fmt.Errorf("load Helm chart: %w", err)
 			}
+			loaded.ContentDigest = digest
+			loaded.LocalPath = filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeChartPath))
+			loaded.Origin = "helm:" + relativeChartPath
+			loaded.source = loadedChart
 
 			return validateLoadedChart(loaded)
 		}
@@ -597,11 +590,28 @@ func validateTree(root string) error {
 	return nil
 }
 
-func materializeChartFS(source fs.FS) (string, error) {
-	root, err := os.MkdirTemp("", "mcl-helm-chart-*")
+func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
+	info, err := fs.Stat(source, ".")
 	if err != nil {
-		return "", err
+		return nil, "", fmt.Errorf("stat Helm chart source: %w", err)
 	}
+	if !info.IsDir() {
+		return nil, "", errors.New("helm chart source must be a directory")
+	}
+	rules := ignore.Empty()
+	if data, err := fs.ReadFile(source, ignore.HelmIgnore); err == nil {
+		rules, err = ignore.Parse(bytes.NewReader(data))
+		if err != nil {
+			return nil, "", fmt.Errorf("parse Helm ignore file: %w", err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, "", fmt.Errorf("read Helm ignore file: %w", err)
+	}
+	rules.AddDefaults()
+
+	files := make([]*archive.BufferedFile, 0)
+	ignoredDirectories := make(map[string]bool)
+	var digestKey strings.Builder
 	var totalBytes int64
 	err = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -613,18 +623,19 @@ func materializeChartFS(source fs.FS) (string, error) {
 		if entry.Type()&fs.ModeSymlink != 0 {
 			return fmt.Errorf("helm chart contains unsupported symlink %q", name)
 		}
-		target := filepath.Join(root, filepath.FromSlash(name))
-		if entry.IsDir() {
-			return os.MkdirAll(target, 0o700)
-		}
-		info, err := entry.Info()
+		fileInfo, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
+		if fileInfo.IsDir() {
+			parent := path.Dir(name)
+			ignoredDirectories[name] = ignoredDirectories[parent] || rules.Ignore(filepath.ToSlash(name), fileInfo)
+			return nil
+		}
+		if !fileInfo.Mode().IsRegular() {
 			return fmt.Errorf("helm chart contains unsupported file %q", name)
 		}
-		if info.Size() > maxChartBytes-totalBytes {
+		if fileInfo.Size() > maxChartBytes-totalBytes {
 			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
 		}
 		data, err := fs.ReadFile(source, name)
@@ -632,19 +643,30 @@ func materializeChartFS(source fs.FS) (string, error) {
 			return err
 		}
 		totalBytes += int64(len(data))
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return err
+		if totalBytes > maxChartBytes {
+			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
 		}
-
-		return os.WriteFile(target, data, 0o600)
+		digestKey.WriteString(filepath.ToSlash(name))
+		digestKey.WriteByte(0)
+		digestKey.WriteString(content.SHA256(data))
+		digestKey.WriteByte(0)
+		parent := path.Dir(name)
+		if !ignoredDirectories[parent] && !rules.Ignore(filepath.ToSlash(name), fileInfo) {
+			files = append(files, &archive.BufferedFile{Name: filepath.ToSlash(name), ModTime: fileInfo.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})})
+		}
+		return nil
 	})
 	if err != nil {
-		_ = os.RemoveAll(root)
-
-		return "", err
+		return nil, "", fmt.Errorf("inspect Helm chart: %w", err)
 	}
-
-	return root, nil
+	chart, err := v2loader.LoadFiles(files)
+	if err != nil {
+		return nil, "", err
+	}
+	if chart.Metadata.APIVersion == "v3" {
+		return nil, "", errors.New("loaded Helm Chart has an unsupported type")
+	}
+	return chart, content.SHA256([]byte(digestKey.String())), nil
 }
 
 func digestTree(root string) (string, error) {

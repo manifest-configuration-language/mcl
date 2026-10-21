@@ -36,6 +36,49 @@ func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
 	}
 }
 
+func TestLoadReadsProjectFSWithoutMaterializingIgnoredChartFiles(t *testing.T) {
+	t.Parallel()
+
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := fstest.MapFS{
+		"charts/app/.helmignore":              &fstest.MapFile{Data: []byte("ignored.txt\n")},
+		"charts/app/Chart.yaml":               &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 0.1.0\n")},
+		"charts/app/ignored.txt":              &fstest.MapFile{Data: []byte("ignored")},
+		"charts/app/templates/.hidden.yaml":   &fstest.MapFile{Data: []byte("invalid template data")},
+		"charts/app/templates/configmap.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")},
+	}
+	request := LoadRequest{
+		Source: "./charts/app", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), SourceFS: project,
+	}
+
+	loaded, err := Load(request)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	loadedChart := loaded.source.(*v2.Chart)
+	if len(loadedChart.Templates) != 1 || loadedChart.Templates[0].Name != "templates/configmap.yaml" {
+		t.Fatalf("Load() templates = %#v, want only the non-ignored template", loadedChart.Templates)
+	}
+	for _, file := range loadedChart.Files {
+		if file.Name == "ignored.txt" {
+			t.Fatal("Load() included a file excluded by .helmignore")
+		}
+	}
+
+	project["charts/app/ignored.txt"].Data = []byte("changed ignored input")
+	changed, err := Load(request)
+	if err != nil {
+		t.Fatalf("Load() after ignored input change: %v", err)
+	}
+	if loaded.ContentDigest == changed.ContentDigest {
+		t.Fatal("Load() content digest did not include ignored chart inputs")
+	}
+}
+
 func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 	t.Parallel()
 	templateSource := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: example\ndata:\n  value: {{ block \"config-value\" . }}{{ .Values.value }}{{ end }}\n")

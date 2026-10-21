@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
 const yamlStringTag = "!!str"
@@ -71,6 +72,7 @@ func (err ConfigSyntaxError) Unwrap() error { return err.Cause }
 
 type buildSource struct {
 	root               string
+	filesystem         filesys.FileSystem
 	localRoot          string
 	sourceMapRoot      string
 	sourceMapDirectory string
@@ -101,7 +103,7 @@ func Build(request Request) (result Result, err error) {
 	if source.removeRoot {
 		defer os.RemoveAll(source.root)
 	}
-	workingRoot, fileSystem, err := createOverlay(source.root, source.buildDirectory)
+	workingRoot, fileSystem, err := createOverlay(source.root, source.buildDirectory, source.filesystem)
 	if err != nil {
 		return Result{}, err
 	}
@@ -253,14 +255,13 @@ func resolveSource(request Request) (buildSource, error) {
 			if err != nil {
 				return buildSource{}, fmt.Errorf("resolve Kustomize source: %w", err)
 			}
-			root, err := materializeSourceFS(sourceFS)
+			memoryFS, root, err := loadSourceFS(sourceFS)
 			if err != nil {
-				return buildSource{}, fmt.Errorf("materialize Kustomize source: %w", err)
+				return buildSource{}, fmt.Errorf("load Kustomize source: %w", err)
 			}
 			originalRoot := filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeSource))
-			source.root, source.localRoot, source.sourceMapRoot = root, originalRoot, originalRoot
+			source.root, source.filesystem, source.localRoot, source.sourceMapRoot = root, memoryFS, originalRoot, originalRoot
 			source.origin = "kustomize:" + filepath.ToSlash(filepath.Join(filepath.Dir(projectPath), filepath.FromSlash(request.Source), filepath.FromSlash(request.Directory)))
-			source.removeRoot = true
 
 			return source, nil
 		}
