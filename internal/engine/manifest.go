@@ -17,9 +17,13 @@ func manifestLoad(arguments []RuntimeValue, state *EvaluationState) (RuntimeValu
 	if projectRoot == "" || sourcePath == "" {
 		return RuntimeValue{}, errors.New("manifest.load requires file-based evaluation")
 	}
-	loaded, err := manifestadapter.Load(manifestadapter.Request{
+	request := manifestadapter.Request{
 		Source: arguments[0].TextValue(), ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies,
-	})
+	}
+	if state.Module.filesystem != nil && !state.Module.filesystem.osBacked {
+		request.SourceFS = state.Module.filesystem.files
+	}
+	loaded, err := manifestadapter.Load(request)
 	if err != nil {
 		return RuntimeValue{}, err
 	}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestLoadLocalManifestEnforcesProjectBoundary(t *testing.T) {
@@ -58,5 +59,50 @@ func TestLoadRejectsAbsoluteAndNonRegularManifestSources(t *testing.T) {
 	}
 	if _, err := Load(Request{Source: "directory.yaml", ProjectRoot: root, SourcePath: projectFile}); err == nil {
 		t.Fatal("Load() accepted a directory as a manifest")
+	}
+}
+
+func TestLoadProjectFilesystemRejectsInvalidManifestSources(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	tests := []struct {
+		name      string
+		source    string
+		files     fstest.MapFS
+		wantError string
+	}{
+		{
+			name:      "absolute path",
+			source:    "/outside.yaml",
+			wantError: "local relative sources",
+		},
+		{
+			name:      "path escape",
+			source:    "../../outside.yaml",
+			wantError: "escapes the project directory",
+		},
+		{
+			name:      "directory",
+			source:    "directory",
+			files:     fstest.MapFS{"directory/child.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\n")}},
+			wantError: "regular file",
+		},
+		{
+			name:      "oversized file",
+			source:    "large.yaml",
+			files:     fstest.MapFS{"large.yaml": &fstest.MapFile{Data: []byte(strings.Repeat("x", maxManifestBytes+1))}},
+			wantError: "byte limit",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Load(Request{
+				Source: test.source, ProjectRoot: root, SourcePath: filepath.Join(root, "main.mcl"), SourceFS: test.files,
+			})
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("Load() error = %v, want error containing %q", err, test.wantError)
+			}
+		})
 	}
 }
