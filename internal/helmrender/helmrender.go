@@ -158,6 +158,7 @@ type Prepared struct {
 	Values            map[string]any
 	ChartRoot         string
 	ChartSourcePath   string
+	ChartSourceFiles  map[string][]byte
 	CacheKey          string
 	CacheKeyAvailable bool
 }
@@ -465,11 +466,19 @@ func Prepare(loaded Chart, options RenderOptions, projectRoot string) (Prepared,
 	}
 	prepared.ChartSourcePath = loaded.LocalPath
 	if loaded.RemoteDigest != "" && prepared.ChartRoot != "" {
-		if loadedChart, ok := loaded.source.(*v2.Chart); ok {
-			if cachedRoot, cacheErr := cacheSources(projectRoot, loaded.RemoteDigest, loadedChart); cacheErr == nil {
-				prepared.ChartSourcePath = cachedRoot
-			}
+		if !content.IsSHA256(loaded.RemoteDigest) {
+			return Prepared{}, errors.New("invalid remote Helm Chart digest")
 		}
+		loadedChart, ok := loaded.source.(*v2.Chart)
+		if !ok {
+			return Prepared{}, errors.New("loaded remote Helm Chart has an unsupported type")
+		}
+		files, err := chartSourceFiles(loadedChart)
+		if err != nil {
+			return Prepared{}, fmt.Errorf("read remote Helm Chart sources: %w", err)
+		}
+		prepared.ChartSourcePath = filepath.Join(projectRoot, ".mcl", "cache", "helm-sources", loaded.RemoteDigest)
+		prepared.ChartSourceFiles = files
 	}
 	prepared.Values = values
 	if loaded.ContentDigest != "" {
@@ -678,48 +687,69 @@ func digestSourceFS(source fs.FS) (string, error) {
 	return content.SHA256([]byte(key.String())), nil
 }
 
-func cacheSources(projectRoot, digest string, root *v2.Chart) (string, error) {
-	if !content.IsSHA256(digest) || root == nil {
-		return "", errors.New("invalid Helm source cache identity")
+func chartSourceFiles(root *v2.Chart) (map[string][]byte, error) {
+	if root == nil {
+		return nil, errors.New("invalid Helm chart source")
 	}
 	chartRoot := filepath.ToSlash(root.ChartFullPath())
 	if chartRoot == "" || path.IsAbs(chartRoot) || path.Clean(chartRoot) != chartRoot || chartRoot == "." || chartRoot == ".." || strings.HasPrefix(chartRoot, "../") {
-		return "", fmt.Errorf("invalid Helm chart root %q", chartRoot)
+		return nil, fmt.Errorf("invalid Helm chart root %q", chartRoot)
 	}
-	files := make(map[string][]byte)
-	var collect func(*v2.Chart)
-	collect = func(current *v2.Chart) {
+	fullPaths := make(map[string][]byte)
+	var collect func(*v2.Chart) error
+	collect = func(current *v2.Chart) error {
+		add := func(filename string, data []byte) error {
+			filename = strings.ReplaceAll(filename, "\\", "/")
+			filePath := filepath.FromSlash(filename)
+			if !fs.ValidPath(filename) || path.IsAbs(filename) || filepath.IsAbs(filePath) || filepath.VolumeName(filePath) != "" || path.Clean(filename) != filename {
+				return fmt.Errorf("invalid Helm chart source path %q", filename)
+			}
+			fullPath := path.Join(current.ChartFullPath(), filename)
+			if _, ok := fullPaths[fullPath]; ok {
+				return fmt.Errorf("duplicate Helm chart source path %q", filename)
+			}
+			fullPaths[fullPath] = bytes.Clone(data)
+
+			return nil
+		}
 		for _, file := range current.Templates {
-			files[path.Join(current.ChartFullPath(), file.Name)] = file.Data
+			if file == nil {
+				continue
+			}
+			if err := add(file.Name, file.Data); err != nil {
+				return err
+			}
 		}
 		for _, crd := range current.CRDObjects() {
-			files[path.Join(current.ChartFullPath(), crd.Name)] = crd.File.Data
+			if crd.File == nil {
+				continue
+			}
+			if err := add(crd.Name, crd.File.Data); err != nil {
+				return err
+			}
 		}
 		for _, child := range current.Dependencies() {
-			collect(child)
+			if err := collect(child); err != nil {
+				return err
+			}
 		}
+
+		return nil
 	}
-	collect(root)
-	cacheRoot := filepath.Join(projectRoot, ".mcl", "cache", "helm-sources", digest)
-	for _, filename := range slices.Sorted(maps.Keys(files)) {
-		data := files[filename]
+	if err := collect(root); err != nil {
+		return nil, err
+	}
+	files := make(map[string][]byte, len(fullPaths))
+	for _, filename := range slices.Sorted(maps.Keys(fullPaths)) {
+		data := fullPaths[filename]
 		relativePath, ok := strings.CutPrefix(filename, chartRoot+"/")
 		if !ok || relativePath == "" || path.Clean(relativePath) != relativePath || path.IsAbs(relativePath) || relativePath == ".." || strings.HasPrefix(relativePath, "../") {
-			return "", fmt.Errorf("invalid Helm chart source path %q", filename)
+			return nil, fmt.Errorf("invalid Helm chart source path %q", filename)
 		}
-		target := filepath.Join(cacheRoot, filepath.FromSlash(relativePath))
-		if !safepath.Within(cacheRoot, target) {
-			return "", errors.New("helm chart source escapes its cache directory")
-		}
-		if err := ensureDirectoryWithin(projectRoot, filepath.Dir(target)); err != nil {
-			return "", fmt.Errorf("create Helm source cache: %w", err)
-		}
-		if err := content.WriteFileAtomic(target, data); err != nil {
-			return "", fmt.Errorf("cache Helm source file: %w", err)
-		}
+		files[relativePath] = data
 	}
 
-	return cacheRoot, nil
+	return files, nil
 }
 
 func archiveFiles(root *v2.Chart) (map[string][]byte, error) {
@@ -749,38 +779,6 @@ func archiveFiles(root *v2.Chart) (map[string][]byte, error) {
 	}
 
 	return files, nil
-}
-
-func ensureDirectoryWithin(root, target string) error {
-	if !safepath.Within(root, target) {
-		return errors.New("directory escapes the project directory")
-	}
-	relative, err := filepath.Rel(root, target)
-	if err != nil {
-		return errors.New("directory escapes the project directory")
-	}
-	current := root
-	for part := range strings.SplitSeq(relative, string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-				return err
-			}
-			info, err = os.Lstat(current)
-		}
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("cache path contains a non-directory or symbolic link")
-		}
-	}
-	if _, err := safepath.ResolveWithin(root, target); err != nil {
-		return errors.New("cache directory escapes the project directory")
-	}
-
-	return nil
 }
 
 func instrumentChart(source *v2.Chart) (*v2.Chart, map[string][]fieldMapping) {

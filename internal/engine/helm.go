@@ -102,6 +102,7 @@ type helmPreparedRender struct {
 	mappingValues     map[string]any
 	chartRoot         string
 	chartSourcePath   string
+	chartSourceFiles  map[string][]byte
 	cacheKey          string
 	cacheKeyAvailable bool
 }
@@ -189,7 +190,8 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 	return helmPreparedRender{
 		chart: loaded, values: prepared.Values, mappingValues: cloneHelmRenderValues(prepared.Values),
 		chartRoot: prepared.ChartRoot, chartSourcePath: prepared.ChartSourcePath,
-		cacheKey: prepared.CacheKey, cacheKeyAvailable: prepared.CacheKeyAvailable,
+		chartSourceFiles: prepared.ChartSourceFiles,
+		cacheKey:         prepared.CacheKey, cacheKeyAvailable: prepared.CacheKeyAvailable,
 	}, nil
 }
 
@@ -205,7 +207,7 @@ func renderHelmTemplates(ctx context.Context, prepared helmPreparedRender, alloc
 		rendered, err := helmrender.Render(ctx, prepared.chart, prepared.values)
 		if err != nil {
 			renderError := fmt.Errorf("render Helm chart: %w", err)
-			if diagnostic, ok := helmTemplateSourceDiagnostic(err, prepared.chartSourcePath, prepared.chartRoot, filesystems...); ok {
+			if diagnostic, ok := helmTemplateSourceDiagnostic(err, prepared.chartSourcePath, prepared.chartRoot, prepared.chartSourceFiles, filesystems...); ok {
 				return helmRenderedChart{}, diagnostic
 			}
 
@@ -301,7 +303,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
-		templateSourcePath, hasTemplateSourcePath := helmStaticTemplateSourcePath([]byte(content), path, chartRoot, chartSourcePath, filesystems...)
+		templateSourcePath, hasTemplateSourcePath := helmStaticTemplateSourcePath([]byte(content), path, chartRoot, chartSourcePath, rendered.prepared.chartSourceFiles, filesystems...)
 		documents, err := decodeRuntimeYAMLDocuments([]byte(content), templateSourcePathIfKnown(templateSourcePath, hasTemplateSourcePath), allocations)
 		if err != nil {
 			if hasTemplateSourcePath {
@@ -319,7 +321,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 		for documentIndex, document := range documents.ListItems() {
 			mappedTemplateFields := false
 			if mappings := rendered.fieldMappings[path]; len(mappings) > 0 {
-				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path, filesystems...); ok && bytes.Equal(source, mappings[0].Source) {
+				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path, rendered.prepared.chartSourceFiles, filesystems...); ok && bytes.Equal(source, mappings[0].Source) {
 					helmApplyFieldMappings(&document, documentIndex, mappings, templateSourcePath)
 					mappedTemplateFields = true
 					if mappings[0].Fallback {
@@ -331,7 +333,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 			if hasTemplateSourcePath {
 				setRuntimeSourcePath(&document, templateSourcePath)
 			} else if !mappedTemplateFields {
-				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path, filesystems...); ok {
+				if templateSourcePath, source, ok := helmTemplateSource(chartSourcePath, chartRoot, path, rendered.prepared.chartSourceFiles, filesystems...); ok {
 					location := SourceDiagnosticLocation{
 						Path: templateSourcePath, Span: SourceSpan{End: len(source)}, Message: helmRenderedTemplateSourceLabel,
 					}
@@ -346,7 +348,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 					if found {
 						templatePath := filepath.Join(chartSourcePath, filepath.FromSlash(relativeTemplatePath))
 						if pathWithin(chartSourcePath, templatePath) {
-							if source, readErr := readHelmProjectFile(templatePath, chartSourcePath, filesystems...); readErr == nil && len(source) > 0 {
+							if source, readErr := readHelmChartSourceFile(templatePath, chartSourcePath, rendered.prepared.chartSourceFiles, filesystems...); readErr == nil && len(source) > 0 {
 								message := fmt.Sprintf("Helm output from root template %q failed lifecycle validation: %v", path, err)
 
 								return RuntimeValue{}, SourceDiagnosticError{
@@ -371,7 +373,7 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 		return RuntimeValue{}, err
 	}
 	for _, crd := range crds {
-		sourcePath, hasSourcePath := helmLocalChartSourcePath(crd.Filename, chartRoot, chartSourcePath)
+		sourcePath, hasSourcePath := helmLocalChartSourcePath(crd.Filename, chartRoot, chartSourcePath, rendered.prepared.chartSourceFiles)
 		if !hasSourcePath {
 			sourcePath = ""
 		}
@@ -541,12 +543,12 @@ func helmApplyMappedSourceLocation(value *RuntimeValue, location SourceDiagnosti
 	}
 }
 
-func helmTemplateSource(chartSourcePath, chartRoot, filename string, filesystems ...*projectFilesystem) (string, []byte, bool) {
-	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, chartSourcePath, filesystems...)
+func helmTemplateSource(chartSourcePath, chartRoot, filename string, chartSources map[string][]byte, filesystems ...*projectFilesystem) (string, []byte, bool) {
+	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, chartSourcePath, chartSources, filesystems...)
 	if !ok {
 		return "", nil, false
 	}
-	source, err := readHelmProjectFile(sourcePath, chartSourcePath, filesystems...)
+	source, err := readHelmChartSourceFile(sourcePath, chartSourcePath, chartSources, filesystems...)
 	if err != nil || len(source) == 0 {
 		return "", nil, false
 	}
@@ -554,15 +556,15 @@ func helmTemplateSource(chartSourcePath, chartRoot, filename string, filesystems
 	return sourcePath, source, true
 }
 
-func helmStaticTemplateSourcePath(rendered []byte, filename, chartRoot, localChartPath string, filesystems ...*projectFilesystem) (string, bool) {
+func helmStaticTemplateSourcePath(rendered []byte, filename, chartRoot, localChartPath string, chartSources map[string][]byte, filesystems ...*projectFilesystem) (string, bool) {
 	if bytes.Contains(rendered, []byte("{{")) {
 		return "", false
 	}
-	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, localChartPath, filesystems...)
+	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, localChartPath, chartSources, filesystems...)
 	if !ok {
 		return "", false
 	}
-	source, err := readHelmProjectFile(sourcePath, localChartPath, filesystems...)
+	source, err := readHelmChartSourceFile(sourcePath, localChartPath, chartSources, filesystems...)
 	if err != nil || bytes.Contains(source, []byte("{{")) || !bytes.Equal(source, rendered) {
 		return "", false
 	}
@@ -574,7 +576,23 @@ func readHelmProjectFile(filename, localChartPath string, filesystems ...*projec
 	return projectFilesystemFor(localChartPath, filesystems).readLimitedFile(filename)
 }
 
-func helmLocalChartSourcePath(filename, chartRoot, localChartPath string, filesystems ...*projectFilesystem) (string, bool) {
+func readHelmChartSourceFile(filename, localChartPath string, chartSources map[string][]byte, filesystems ...*projectFilesystem) ([]byte, error) {
+	if chartSources == nil {
+		return readHelmProjectFile(filename, localChartPath, filesystems...)
+	}
+	relativePath, err := filepath.Rel(localChartPath, filename)
+	if err != nil || relativePath == "." || filepath.IsAbs(relativePath) || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("helm chart source path %q escapes its source root", filename)
+	}
+	data, ok := chartSources[filepath.ToSlash(relativePath)]
+	if !ok {
+		return nil, fs.ErrNotExist
+	}
+
+	return bytes.Clone(data), nil
+}
+
+func helmLocalChartSourcePath(filename, chartRoot, localChartPath string, chartSources map[string][]byte, filesystems ...*projectFilesystem) (string, bool) {
 	if filename == "" || chartRoot == "" || localChartPath == "" {
 		return "", false
 	}
@@ -583,6 +601,16 @@ func helmLocalChartSourcePath(filename, chartRoot, localChartPath string, filesy
 		return "", false
 	}
 	joinedPath := filepath.Join(localChartPath, relativePath)
+	if chartSources != nil {
+		if !pathWithin(localChartPath, joinedPath) {
+			return "", false
+		}
+		if _, ok := chartSources[filepath.ToSlash(relativePath)]; !ok {
+			return "", false
+		}
+
+		return joinedPath, true
+	}
 	filesystem := projectFilesystemFor(localChartPath, filesystems)
 	if !filesystem.osBacked {
 		projectRelative, err := filesystem.relativePath(joinedPath)
@@ -603,7 +631,7 @@ func helmLocalChartSourcePath(filename, chartRoot, localChartPath string, filesy
 	return sourcePath, true
 }
 
-func helmTemplateSourceDiagnostic(err error, chartPath, chartRoot string, filesystems ...*projectFilesystem) (SourceDiagnosticError, bool) {
+func helmTemplateSourceDiagnostic(err error, chartPath, chartRoot string, chartSources map[string][]byte, filesystems ...*projectFilesystem) (SourceDiagnosticError, bool) {
 	if chartPath == "" || chartRoot == "" {
 		return SourceDiagnosticError{}, false
 	}
@@ -640,7 +668,7 @@ func helmTemplateSourceDiagnostic(err error, chartPath, chartRoot string, filesy
 		if !pathWithin(chartPath, templatePath) {
 			continue
 		}
-		templateSource, readErr := readHelmProjectFile(templatePath, chartPath, filesystems...)
+		templateSource, readErr := readHelmChartSourceFile(templatePath, chartPath, chartSources, filesystems...)
 		if readErr != nil {
 			continue
 		}

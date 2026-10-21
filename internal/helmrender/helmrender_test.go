@@ -7,11 +7,16 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/manifest-configuration-language/mcl/internal/content"
 	"helm.sh/helm/v4/pkg/chart/common"
 	v2 "helm.sh/helm/v4/pkg/chart/v2"
 )
 
-const localTestTemplatePath = "templates/configmap.yaml"
+const (
+	localTestTemplatePath = "templates/configmap.yaml"
+	testChartName         = "example"
+	testChartVersion      = "0.1.0"
+)
 
 func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
 	t.Parallel()
@@ -121,7 +126,7 @@ func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 	t.Parallel()
 	templateSource := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: example\ndata:\n  value: {{ block \"config-value\" . }}{{ .Values.value }}{{ end }}\n")
 	chartSource := Chart{source: &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "example", Version: "0.1.0", APIVersion: v2.APIVersionV2},
+		Metadata:  &v2.Metadata{Name: testChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2},
 		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: templateSource}},
 	}}
 	values := map[string]any{"Values": map[string]any{"value": "rendered"}}
@@ -143,7 +148,7 @@ func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 
 func TestPrepareRequiresExplicitKubernetesCapabilities(t *testing.T) {
 	t.Parallel()
-	loaded := Chart{source: &v2.Chart{Metadata: &v2.Metadata{Name: "example", Version: "0.1.0", APIVersion: v2.APIVersionV2}}}
+	loaded := Chart{source: &v2.Chart{Metadata: &v2.Metadata{Name: testChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2}}}
 	if _, err := Prepare(loaded, RenderOptions{}, t.TempDir()); err == nil || !strings.Contains(err.Error(), "requires kubeVersion") {
 		t.Fatalf("Prepare() error = %v, want missing kubeVersion error", err)
 	}
@@ -154,5 +159,40 @@ func TestPrepareRequiresExplicitKubernetesCapabilities(t *testing.T) {
 	options.APIVersions = []string{}
 	if _, err := Prepare(loaded, options, t.TempDir()); err != nil {
 		t.Fatalf("Prepare() with explicit empty apiVersions: %v", err)
+	}
+}
+
+func TestPrepareKeepsRemoteChartSourcesInMemory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	templateSource := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: example\n")
+	chart := &v2.Chart{
+		Metadata:  &v2.Metadata{Name: testChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: templateSource}},
+	}
+	loaded := Chart{source: chart, RemoteDigest: content.SHA256([]byte("archive"))}
+	prepared, err := Prepare(loaded, RenderOptions{
+		KubeVersion: "1.36.0", APIVersions: []string{},
+	}, root)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if got := string(prepared.ChartSourceFiles[localTestTemplatePath]); got != string(templateSource) {
+		t.Fatalf("Prepare() chart source = %q, want original template", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".mcl")); !os.IsNotExist(err) {
+		t.Fatalf("Prepare() created a project cache path, stat error = %v", err)
+	}
+}
+
+func TestChartSourceFilesRejectsPathsOutsideChart(t *testing.T) {
+	t.Parallel()
+
+	chart := &v2.Chart{
+		Metadata:  &v2.Metadata{Name: testChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: "../outside.yaml", Data: []byte("kind: ConfigMap\n")}},
+	}
+	if _, err := chartSourceFiles(chart); err == nil || !strings.Contains(err.Error(), "invalid Helm chart source path") {
+		t.Fatalf("chartSourceFiles() error = %v, want invalid source path", err)
 	}
 }
