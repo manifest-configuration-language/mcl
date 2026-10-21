@@ -74,3 +74,24 @@ GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/mc
 gzip -9 -n -f dist/mcl.wasm
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/wasm_exec.js
 '''
+
+[tasks."release:package"]
+description = "Package CLI and WebAssembly release assets with checksums"
+depends = ["release:cli", "release:wasm"]
+run = '''
+set -eu
+version="${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+  os="${target%/*}"
+  arch="${target#*/}"
+  binary="dist/mcl-${os}-${arch}"
+  if [ "$os" = windows ]; then
+    binary="${binary}.exe"
+    (cd dist && zip -q "mcl_${version}_${os}_${arch}.zip" "$(basename "$binary")")
+  else
+    (cd dist && tar -czf "mcl_${version}_${os}_${arch}.tar.gz" "$(basename "$binary")")
+  fi
+done
+(cd dist && tar -czf "mcl_${version}_wasm.tar.gz" mcl.wasm.gz wasm_exec.js)
+(cd dist && shasum -a 256 mcl_*.tar.gz mcl_*.zip > SHA256SUMS)
+'''

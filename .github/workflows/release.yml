@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag, for example v1.2.3. Empty selects the next patch version.
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release target
+        id: target
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              echo "Run this workflow from the default branch." >&2
+              exit 1
+            fi
+            release_tag="$RELEASE_TAG_INPUT"
+            if [ -z "$release_tag" ]; then
+              latest_tag="$(git tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+              if [ -z "$latest_tag" ]; then
+                release_tag=v0.1.0
+              else
+                version="${latest_tag#v}"
+                IFS=. read -r major minor patch <<< "$version"
+                release_tag="v${major}.${minor}.$((patch + 1))"
+              fi
+            fi
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+          [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          if git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "Release tag $release_tag already exists." >&2
+            exit 1
+          fi
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "version=${release_tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up mise
+        uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          install: true
+          cache: true
+
+      - name: Run release checks
+        run: mise run quality:check
+
+      - name: Build release assets
+        env:
+          MCL_VERSION: ${{ steps.target.outputs.version }}
+        run: mise run release:package
+
+      - name: Attest release assets
+        if: github.repository_visibility == 'public'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/mcl_*
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" dist/mcl_* dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "MCL $RELEASE_VERSION" \
+            --generate-notes
