@@ -25,6 +25,27 @@ async function run() {
     if (error.name !== "AbortError") throw error;
   }
 
+  const parsed = await project.parse({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  if (!Number.isInteger(parsed.declarations) || parsed.declarations < 1) {
+    throw new Error(`Unexpected parse result: ${JSON.stringify(parsed)}`);
+  }
+  const linted = await project.lint({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  if (!Array.isArray(linted.diagnostics)) {
+    throw new Error(`Unexpected lint result: ${JSON.stringify(linted)}`);
+  }
+  const formatted = await project.format({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  if (!formatted.source.includes("emit resources.resource")) {
+    throw new Error(`Unexpected format result: ${formatted.source}`);
+  }
+  const checked = await project.check({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  if (!checked.valid || checked.artifacts !== 1) {
+    throw new Error(`Unexpected check result: ${JSON.stringify(checked)}`);
+  }
+  const evaluated = await project.evaluate({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  if (evaluated.artifacts !== 1 || evaluated.renderedBytes < 1) {
+    throw new Error(`Unexpected evaluate result: ${JSON.stringify(evaluated)}`);
+  }
+
   const result = await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
   if (!result.yaml.includes("mcl-browser-smoke") || !result.yaml.includes('key: "value"')) {
     throw new Error(`Unexpected render output: ${result.yaml}`);
