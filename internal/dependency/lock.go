@@ -95,7 +95,7 @@ func Open(ctx context.Context, root string, update bool, identity ToolchainIdent
 }
 
 // OpenWithFS loads the project lock and cached dependency content from a root-relative filesystem.
-// Lock writes remain OS-backed because io/fs does not provide write operations.
+// Lock and cache writes remain OS-backed because io/fs does not provide write operations.
 func OpenWithFS(ctx context.Context, root string, update bool, identity ToolchainIdentity, files fs.FS) (*Lock, error) {
 	if files == nil {
 		return nil, errors.New("dependency filesystem is required")
@@ -394,7 +394,7 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 	relative = filepath.ToSlash(relative)
 	filesystem := lock.filesystem
 	if filesystem == nil {
-		filesystem = newOSRootFilesystem(lock.root)
+		return nil, errors.New("dependency filesystem is required")
 	}
 	info, err := filesystem.stat(relative)
 	if err == nil && !info.Mode().IsRegular() {
@@ -427,6 +427,9 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 }
 
 func (lock *Lock) writeCache(digest string, data []byte) error {
+	if lock.filesystem == nil || !lock.filesystem.osBacked {
+		return errors.New("dependency cache writes require an OS-backed filesystem")
+	}
 	path := lock.cachePath(digest)
 	directory := filepath.Dir(path)
 	if err := ensureDirectoryWithin(lock.root, directory); err != nil {

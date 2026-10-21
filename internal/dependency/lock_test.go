@@ -86,6 +86,42 @@ func TestLoadManifestReadsLockAndCacheFromInjectedFilesystem(t *testing.T) {
 	}
 }
 
+func TestInjectedFilesystemDoesNotFallBackToOrWriteOSCache(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	content := []byte("cached content")
+	digest := contentutil.SHA256(content)
+	cachePath := filepath.Join(root, ".mcl", "cache", "sha256", digest)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	zeroValueLock := &Lock{root: root}
+	if _, err := zeroValueLock.readCache(digest, maxRemoteManifestSize); err == nil || !strings.Contains(err.Error(), "dependency filesystem is required") {
+		t.Fatalf("readCache() error = %v, want missing filesystem error", err)
+	}
+
+	lock, err := OpenWithFS(t.Context(), root, false, testToolchainIdentity(), fstest.MapFS{})
+	if err != nil {
+		t.Fatalf("open injected lock filesystem: %v", err)
+	}
+	if err := lock.Save(); err == nil || !strings.Contains(err.Error(), "OS-backed filesystem") {
+		t.Fatalf("Save() error = %v, want OS-backed filesystem error", err)
+	}
+	if err := lock.writeCache(digest, content); err == nil || !strings.Contains(err.Error(), "OS-backed filesystem") {
+		t.Fatalf("writeCache() error = %v, want OS-backed filesystem error", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "mcl.lock")); !os.IsNotExist(err) {
+		t.Fatalf("mcl.lock stat error = %v, want file not to be created", err)
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("existing OS cache entry was unexpectedly changed or removed: %v", err)
+	}
+}
+
 func TestLoadManifestRejectsCacheDirectorySymlinkOutsideProject(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

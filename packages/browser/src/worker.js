@@ -58,6 +58,7 @@ function resetFilesystem() {
   // Helm and Kustomize adapters still use os paths; keep their temporary files isolated per request.
   activeVolume = new Volume();
   activeVolume.mkdirSync(projectRoot, { recursive: true });
+  activeVolume.mkdirSync("/tmp", { recursive: true });
   workingDirectory = projectRoot;
 }
 
