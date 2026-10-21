@@ -83,6 +83,27 @@ func TestEvaluateProjectFileLoadsManifestFromRootRelativeFilesystem(t *testing.T
 	}
 }
 
+func TestEvaluateProjectFileMapsKustomizeOriginForRootRelativeFilesystem(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := fstest.MapFS{
+		projectFileEntrypoint:           &fstest.MapFile{Data: []byte("let resources = kustomize.build(\"fixtures\", \"\", \"base\")\nemit resources\n")},
+		"fixtures/base/Kustomization":   &fstest.MapFile{Data: []byte("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - deployment.yaml\n")},
+		"fixtures/base/deployment.yaml": &fstest.MapFile{Data: []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sample\n")},
+	}
+
+	bundle, err := EvaluateProjectFileContext(t.Context(), root, projectFileEntrypoint, files)
+	if err != nil {
+		t.Fatalf("evaluate project file with virtual Kustomize source: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("project file bundle has %d artifacts, want one Kustomize resource", len(bundle.Artifacts))
+	}
+	if got, want := bundle.Artifacts[0].Lifecycle.Origin, "kustomize:fixtures/base/deployment.yaml"; got != want {
+		t.Fatalf("Kustomize origin = %q, want %q", got, want)
+	}
+}
+
 func TestEvaluateProjectFileRejectsManifestSymlinkAndPathEscape(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")

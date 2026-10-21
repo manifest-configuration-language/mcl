@@ -41,7 +41,7 @@ func kustomizeBuild(arguments []RuntimeValue, state *EvaluationState) (RuntimeVa
 	} else if input.revision.Kind() != String || input.revision.TextValue() != "" {
 		return RuntimeValue{}, errors.New("local Kustomize source requires an empty revision")
 	}
-	result, err := kustomizeadapter.Build(kustomizeadapter.Request{Source: input.source, Revision: input.revision.TextValue(), Directory: input.directory, ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies, SourceFS: files.files})
+	result, err := kustomizeadapter.Build(kustomizeadapter.Request{Source: input.source, Revision: input.revision.TextValue(), Directory: input.directory, ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies, SourceFS: files.files, SourceOSBacked: files.osBacked})
 	if err != nil {
 		if diagnostic, ok := kustomizeConfigSourceDiagnostic(err, files); ok {
 			return RuntimeValue{}, diagnostic
@@ -93,7 +93,7 @@ func mapKustomizeResourceArtifacts(value RuntimeValue, result kustomizeadapter.R
 		if err := mapKustomizeResourceProvenance(&value.List[index], origin, result, allocations); err != nil {
 			return nil, err
 		}
-		lifecycle := Lifecycle{Events: []string{phaseMain}, Origin: kustomizeResourceLocator(result.Origin, origin, result.LocalSourceRoot, projectRoot, result.SourceDirectory)}
+		lifecycle := Lifecycle{Events: []string{phaseMain}, Origin: kustomizeResourceLocator(result.Origin, origin, result.LocalSourceRoot, projectRoot, result.SourceDirectory, result.SourceOSBacked)}
 		artifacts[index] = RuntimeArtifact{Value: value.List[index], Lifecycle: lifecycle}
 	}
 
@@ -141,7 +141,7 @@ func mapKustomizeResourceProvenance(output *RuntimeValue, origin kustomizeadapte
 	return nil
 }
 
-func kustomizeResourceLocator(fallback string, origin kustomizeadapter.ResourceOrigin, localSourceDir, projectRoot, directory string) string {
+func kustomizeResourceLocator(fallback string, origin kustomizeadapter.ResourceOrigin, localSourceDir, projectRoot, directory string, osBacked bool) string {
 	path := origin.Path
 	if path == "" {
 		path = origin.ConfiguredIn
@@ -160,7 +160,7 @@ func kustomizeResourceLocator(fallback string, origin kustomizeadapter.ResourceO
 	if localSourceDir == "" {
 		return fallback + "/" + filepath.ToSlash(path)
 	}
-	resolved, ok := kustomizeResourceSourcePath(origin, localSourceDir, directory)
+	resolved, ok := kustomizeResourceSourcePath(origin, localSourceDir, directory, osBacked)
 	if !ok {
 		return fallback
 	}
@@ -182,7 +182,7 @@ func canonicalKustomizeResourcePath(resourcePath string) (string, bool) {
 	return cleaned, true
 }
 
-func kustomizeResourceSourcePath(origin kustomizeadapter.ResourceOrigin, localSourceDir, directory string) (string, bool) {
+func kustomizeResourceSourcePath(origin kustomizeadapter.ResourceOrigin, localSourceDir, directory string, osBacked bool) (string, bool) {
 	if localSourceDir == "" {
 		return "", false
 	}
@@ -193,7 +193,16 @@ func kustomizeResourceSourcePath(origin kustomizeadapter.ResourceOrigin, localSo
 	if path == "" || origin.Repo != "" {
 		return "", false
 	}
+	if filepath.IsAbs(path) || filepath.IsAbs(directory) {
+		return "", false
+	}
 	sourcePath := filepath.Join(localSourceDir, filepath.FromSlash(directory), filepath.FromSlash(path))
+	if !pathWithin(localSourceDir, sourcePath) {
+		return "", false
+	}
+	if !osBacked {
+		return sourcePath, true
+	}
 	resolved, err := filepath.EvalSymlinks(sourcePath)
 	if err != nil || !pathWithin(localSourceDir, resolved) {
 		return "", false
