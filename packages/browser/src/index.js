@@ -25,6 +25,7 @@ export function createMclRuntime(options = {}) {
   let disposed = false;
   let queue = Promise.resolve();
   let sequence = 0;
+  let workerGeneration = 0;
   let stopCurrent;
   let stopInitialization;
 
@@ -33,38 +34,48 @@ export function createMclRuntime(options = {}) {
     if (ready) return ready;
     const currentWorker = workerFactory();
     worker = currentWorker;
-    ready = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => fail(new Error("MCL WebAssembly initialization timed out")), initializationTimeoutMs);
-      const onMessage = (event) => {
-        if (event.data?.type === "ready") {
-          clearTimeout(timer);
-          currentWorker.removeEventListener("message", onMessage);
-          currentWorker.removeEventListener("error", onError);
-          if (stopInitialization === fail) stopInitialization = undefined;
-          resolve();
-        } else if (event.data?.type === "fatal") {
-          fail(new Error(event.data.message || "MCL WebAssembly initialization failed"));
-        }
-      };
-      const onError = (event) => fail(new Error(event.message || "MCL worker failed"));
-      function fail(error) {
+    workerGeneration++;
+    let resolveReady;
+    let rejectReady;
+    const initialization = new Promise((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    ready = initialization;
+    const timer = setTimeout(() => fail(new Error("MCL WebAssembly initialization timed out")), initializationTimeoutMs);
+    const onMessage = (event) => {
+      if (event.data?.type === "ready") {
         clearTimeout(timer);
         currentWorker.removeEventListener("message", onMessage);
         currentWorker.removeEventListener("error", onError);
-        currentWorker.terminate();
-        if (worker === currentWorker) {
-          worker = undefined;
-          ready = undefined;
-        }
         if (stopInitialization === fail) stopInitialization = undefined;
-        reject(error);
+        resolveReady();
+      } else if (event.data?.type === "fatal") {
+        fail(new Error(event.data.message || "MCL WebAssembly initialization failed"));
       }
-      stopInitialization = fail;
+    };
+    const onError = (event) => fail(new Error(event.message || "MCL worker failed"));
+    function fail(error) {
+      clearTimeout(timer);
+      currentWorker.removeEventListener("message", onMessage);
+      currentWorker.removeEventListener("error", onError);
+      currentWorker.terminate();
+      if (worker === currentWorker) {
+        worker = undefined;
+        ready = undefined;
+      }
+      if (stopInitialization === fail) stopInitialization = undefined;
+      rejectReady(error);
+    }
+    stopInitialization = fail;
+    try {
       currentWorker.addEventListener("message", onMessage);
       currentWorker.addEventListener("error", onError);
       currentWorker.postMessage({ type: "configure", wasmURL, wasmExecURL });
-    });
-    return ready;
+    } catch (error) {
+      fail(error);
+    }
+    return initialization;
   }
 
   async function waitUntilReady(signal) {
@@ -95,12 +106,14 @@ export function createMclRuntime(options = {}) {
       const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
       const requestId = ++sequence;
       const timeoutMs = requestOptions.timeoutMs ?? options.operationTimeoutMs ?? defaultOperationTimeoutMs;
+      const currentWorker = worker;
+      const currentGeneration = workerGeneration;
       return new Promise((resolve, reject) => {
         let settled = false;
         const cleanup = () => {
           clearTimeout(timer);
-          worker?.removeEventListener("message", onMessage);
-          worker?.removeEventListener("error", onError);
+          currentWorker.removeEventListener("message", onMessage);
+          currentWorker.removeEventListener("error", onError);
           requestOptions.signal?.removeEventListener("abort", onAbort);
         };
         const finish = (callback, value) => {
@@ -111,6 +124,7 @@ export function createMclRuntime(options = {}) {
           callback(value);
         };
         const onMessage = (event) => {
+          if (worker !== currentWorker || workerGeneration !== currentGeneration) return;
           const response = event.data;
           if (response?.type !== "response" || response.requestId !== requestId) return;
           if (!response.value.ok) finish(reject, new MclRuntimeError(response.value.error));
@@ -121,17 +135,19 @@ export function createMclRuntime(options = {}) {
         const onAbort = () => stop(new DOMException("The operation was aborted", "AbortError"));
         const stop = (error) => {
           finish(reject, error);
-          worker?.terminate();
-          worker = undefined;
-          ready = undefined;
+          currentWorker.terminate();
+          if (worker === currentWorker) {
+            worker = undefined;
+            ready = undefined;
+          }
         };
         const timer = setTimeout(() => stop(new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL operation timed out" })), timeoutMs);
-        worker.addEventListener("message", onMessage);
-        worker.addEventListener("error", onError);
+        currentWorker.addEventListener("message", onMessage);
+        currentWorker.addEventListener("error", onError);
         requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
         stopCurrent = stop;
         try {
-          worker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint }, preparedFiles.transferables);
+          currentWorker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint }, preparedFiles.transferables);
         } catch (error) {
           stop(error);
         }
@@ -153,7 +169,7 @@ export function createMclRuntime(options = {}) {
     for (const [filePath, content] of entries) {
       if (!isSafeRelativePath(filePath)) throw new TypeError(`Invalid project file path: ${filePath}`);
       if (typeof content !== "string" && !(content instanceof Uint8Array)) throw new TypeError(`Project file ${filePath} must be a string or Uint8Array`);
-      const copy = typeof content === "string" ? content : content.slice();
+      const copy = typeof content === "string" ? content : new Uint8Array(content);
       const fileBytes = typeof copy === "string" ? new TextEncoder().encode(copy).byteLength : copy.byteLength;
       if (fileBytes > maxProjectFileBytes) throw new RangeError(`Project file ${filePath} exceeds the ${maxProjectFileBytes}-byte limit`);
       totalBytes += fileBytes;
@@ -209,7 +225,7 @@ export function createMclRuntime(options = {}) {
       } else if (content instanceof Uint8Array) {
         if (content.byteLength > maxProjectFileBytes) throw new RangeError(`Project file ${filePath} exceeds the ${maxProjectFileBytes}-byte limit`);
         totalBytes += content.byteLength;
-        const copy = content.slice();
+        const copy = new Uint8Array(content);
         transferredFiles[filePath] = copy;
         transferables.push(copy.buffer);
       } else {

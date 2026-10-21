@@ -1,6 +1,9 @@
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { testRuntimeLifecycle } from "../test/runtime-lifecycle.mjs";
+
+await testRuntimeLifecycle();
 
 const server = spawn("./node_modules/.bin/vite", ["--config", "test/vite.config.js", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {
   stdio: ["ignore", "pipe", "pipe"],
