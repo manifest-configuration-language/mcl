@@ -10,15 +10,16 @@ import (
 
 func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
 	t.Parallel()
+	const targetFilename = "target.mcl"
 	root := filepath.Join(t.TempDir(), "project")
 	files := newProjectFilesystem(root, fstest.MapFS{
 		projectConfigFileName:     &fstest.MapFile{Data: []byte("")},
-		"target.mcl":              &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		targetFilename:            &fstest.MapFile{Data: []byte("export let value = 1\n")},
 		"nested/importer.mcl":     &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\nemit target.value\n")},
 		".mcl/cache/cached.mcl":   &fstest.MapFile{Data: []byte("ignored\n")},
 		"node_modules/module.mcl": &fstest.MapFile{Data: []byte("ignored\n")},
 	})
-	canonical := filepath.Join(root, "target.mcl")
+	canonical := filepath.Join(root, targetFilename)
 	sources, err := collectDependentSourcesWithFilesystem(files, canonical, root, []string{root})
 	if err != nil {
 		t.Fatal(err)
