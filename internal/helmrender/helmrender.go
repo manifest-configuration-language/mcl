@@ -640,6 +640,7 @@ func materializeChartFS(source fs.FS) (string, error) {
 	})
 	if err != nil {
 		_ = os.RemoveAll(root)
+
 		return "", err
 	}
 

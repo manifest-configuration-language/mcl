@@ -148,6 +148,7 @@ func materializeSourceFS(source fs.FS) (string, error) {
 	})
 	if err != nil {
 		_ = os.RemoveAll(root)
+
 		return "", err
 	}
 
