@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag whose package versions should be published.
+        required: true
+        type: string
 
 permissions: {}
 
@@ -15,34 +21,89 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install: true
           cache: false
-      - name: Verify package versions
+      - name: Validate release tag and package versions
+        id: release
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              echo "Dispatch this workflow from the default branch." >&2
+              exit 1
+            fi
+            release_tag="$RELEASE_TAG_INPUT"
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            printf 'Invalid release tag: %s\n' "$release_tag" >&2
+            exit 1
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null; then
+            printf 'Release tag %s is not present in the checked out source.\n' "$release_tag" >&2
+            exit 1
+          fi
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
           for package in browser language; do
             version="$(node -p "require('./packages/${package}/package.json').version")"
-            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-              printf 'Tag %s does not match %s package version %s\n' "$GITHUB_REF_NAME" "$package" "$version" >&2
+            if [ "v$version" != "$release_tag" ]; then
+              printf 'Tag %s does not match %s package version %s\n' "$release_tag" "$package" "$version" >&2
               exit 1
             fi
           done
-      - name: Publish packages
+
+      - name: Install browser package dependencies
+        run: cd packages/browser && npm ci
+      - name: Install Chromium
+        run: cd packages/browser && npx playwright install --with-deps chromium
+      - name: Test browser package
+        run: cd packages/browser && npm run test:browser
+      - name: Validate browser package archive
         run: |
           set -euo pipefail
           cd packages/browser
-          npm ci
-          npm publish --access public --provenance
-          cd ../language
-          npm ci
-          npm run check:parity
-          npm publish --access public --provenance
+          npm pack --dry-run --json > "$RUNNER_TEMP/browser-pack.json"
+          node - "$RUNNER_TEMP/browser-pack.json" dist/mcl.wasm dist/wasm_exec.js <<'NODE'
+          const fs = require('node:fs');
+          const [archive, ...required] = process.argv.slice(2);
+          const files = JSON.parse(fs.readFileSync(archive, 'utf8'))[0].files.map(({ path }) => path);
+          const missing = required.filter((path) => !files.includes(path));
+          if (missing.length) throw new Error(`Browser package is missing: ${missing.join(', ')}`);
+          NODE
+      - name: Install language package dependencies
+        run: cd packages/language && npm ci
+      - name: Check language grammar parity
+        run: cd packages/language && npm run check:parity
+      - name: Validate language package archive
+        run: |
+          set -euo pipefail
+          cd packages/language
+          npm pack --dry-run --json > "$RUNNER_TEMP/language-pack.json"
+          node - "$RUNNER_TEMP/language-pack.json" src/parser.js src/mcl.tmLanguage.json <<'NODE'
+          const fs = require('node:fs');
+          const [archive, ...required] = process.argv.slice(2);
+          const files = JSON.parse(fs.readFileSync(archive, 'utf8'))[0].files.map(({ path }) => path);
+          const missing = required.filter((path) => !files.includes(path));
+          if (missing.length) throw new Error(`Language package is missing: ${missing.join(', ')}`);
+          NODE
+      - name: Publish packages
+        run: |
+          set -euo pipefail
+          (cd packages/browser && npm publish --access public --provenance)
+          (cd packages/language && npm publish --access public --provenance)

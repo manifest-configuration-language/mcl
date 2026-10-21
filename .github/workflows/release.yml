@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+      actions: write
       id-token: write
       attestations: write
     steps:
@@ -134,3 +135,15 @@ jobs:
             --title "MCL $RELEASE_VERSION" \
             --generate-notes \
             "${release_flags[@]}"
+
+      - name: Dispatch npm package publishing
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        run: >-
+          gh workflow run publish-packages.yml
+          --repo "$GITHUB_REPOSITORY"
+          --ref "$DEFAULT_BRANCH"
+          -f "release_tag=$RELEASE_TAG"
