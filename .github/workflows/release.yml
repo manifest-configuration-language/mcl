@@ -94,8 +94,13 @@ jobs:
           RELEASE_VERSION: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
+          release_flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" dist/mcl_* dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "MCL $RELEASE_VERSION" \
-            --generate-notes
+            --generate-notes \
+            "${release_flags[@]}"
