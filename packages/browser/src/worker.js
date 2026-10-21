@@ -1,72 +1,12 @@
-import { Volume, constants } from "memfs";
-import path from "path-browserify";
-
-const projectRoot = "/mcl-project";
 let initialized;
 let runtimeAssets;
-let activeVolume = new Volume();
-let workingDirectory = projectRoot;
 let networkAccessDenied = false;
 const runtimeFetch = globalThis.fetch.bind(globalThis);
-
-globalThis.path = path.posix;
-globalThis.process = {
-  argv: [],
-  env: {},
-  pid: 1,
-  ppid: 1,
-  platform: "browser",
-  cwd: () => workingDirectory,
-  chdir: (directory) => { workingDirectory = path.posix.resolve(workingDirectory, directory); },
-  getuid: () => 1000,
-  getgid: () => 1000,
-  geteuid: () => 1000,
-  getegid: () => 1000,
-  getgroups: () => [1000],
-  umask: () => 0o022,
-};
-
-function createFsAdapter() {
-  return new Proxy({
-    constants,
-    writeSync(fd, bytes) {
-      const text = new TextDecoder().decode(bytes);
-      (fd === 2 ? console.error : console.log)(text);
-      return bytes.length;
-    },
-  }, {
-    get(target, key) {
-      if (key in target) return target[key];
-      if (typeof key !== "string") return undefined;
-      return (...args) => {
-        const callback = args.pop();
-        try {
-          const operation = activeVolume[`${key}Sync`];
-          if (typeof operation !== "function") throw Object.assign(new Error(`Unsupported filesystem operation: ${key}`), { code: "ENOSYS" });
-          const result = operation.apply(activeVolume, args);
-          if (key === "read" || key === "write") callback(null, result, args[1]);
-          else callback(null, result);
-        } catch (error) {
-          callback(error);
-        }
-      };
-    },
-  });
-}
-
-function resetFilesystem() {
-  // Helm and Kustomize adapters still use os paths; keep their temporary files isolated per request.
-  activeVolume = new Volume();
-  activeVolume.mkdirSync(projectRoot, { recursive: true });
-  activeVolume.mkdirSync("/tmp", { recursive: true });
-  workingDirectory = projectRoot;
-}
 
 async function initialize() {
   if (initialized) return initialized;
   initialized = (async () => {
     if (!runtimeAssets?.wasmURL || !runtimeAssets?.wasmExecURL) throw new Error("MCL runtime assets were not configured");
-    globalThis.fs = createFsAdapter();
     await import(runtimeAssets.wasmExecURL);
     const go = new Go();
     const response = await runtimeFetch(runtimeAssets.wasmURL);
@@ -128,7 +68,6 @@ self.addEventListener("message", async (event) => {
   if (message?.type !== "run") return;
   try {
     await initialize();
-    resetFilesystem();
     const encodedFiles = encodeFiles(message.files);
     const request = {
       requestId: message.requestId,
