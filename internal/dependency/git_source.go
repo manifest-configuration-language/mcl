@@ -9,12 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-billy/v5/memfs"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
@@ -106,16 +105,11 @@ func fetchGitTree(ctx context.Context, source, revision, directory string) ([]by
 		return nil, fmt.Errorf("prepare HTTPS Git transport: %w", err)
 	}
 
-	repositoryPath, err := os.MkdirTemp("", "mcl-git-objects-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temporary Git storage: %w", err)
-	}
-	defer os.RemoveAll(repositoryPath)
-	objectStoreFS := newQuotaFilesystem(osfs.New(repositoryPath), maxGitObjectStoreBytes)
+	objectStoreFS := newQuotaFilesystem(memfs.New(), maxGitObjectStoreBytes)
 	repositoryStorage := filesystem.NewStorage(objectStoreFS, cache.NewObjectLRUDefault())
 	repository, err := git.Init(repositoryStorage, nil)
 	if err != nil {
-		return nil, fmt.Errorf("initialize temporary Git storage: %w", err)
+		return nil, fmt.Errorf("initialize in-memory Git storage: %w", err)
 	}
 	if err := fetchGitCommit(fetchContext, parsed.String(), revision, strictHTTP, repository); err != nil {
 		return nil, fmt.Errorf("fetch Kustomize Git source %q at %s: %w", source, revision, err)
