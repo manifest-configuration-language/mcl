@@ -1,14 +1,8 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
-	"path"
-	"path/filepath"
 	"strings"
-
-	"github.com/manifest-configuration-language/mcl/internal/safepath"
 )
 
 type moduleGraph struct {
@@ -88,63 +82,10 @@ func (graph *moduleGraph) imports(importer string, module ModuleAST) ([]moduleIm
 }
 
 func (graph *moduleGraph) resolveImport(importer, modulePath string) (string, error) {
-	if filepath.IsAbs(modulePath) || path.IsAbs(modulePath) {
-		return "", errors.New("absolute module paths are not allowed")
-	}
-	if graph.files != nil && !graph.files.osBacked {
-		return graph.resolveImportInFS(importer, modulePath)
-	}
-	absoluteImporter, err := filepath.Abs(importer)
-	if err != nil {
-		return "", err
-	}
-	canonicalImporter, err := filepath.EvalSymlinks(absoluteImporter)
-	if err != nil {
-		canonicalDirectory, directoryErr := filepath.EvalSymlinks(filepath.Dir(absoluteImporter))
-		if directoryErr != nil {
-			return "", fmt.Errorf("resolve importer directory: %w", directoryErr)
-		}
-		canonicalImporter = filepath.Join(canonicalDirectory, filepath.Base(absoluteImporter))
-	}
-	joined, err := filepath.Abs(filepath.Join(filepath.Dir(canonicalImporter), filepath.FromSlash(modulePath)))
-	if err != nil {
-		return "", err
-	}
-	if err := graph.ensureWithinRoot(joined, modulePath); err != nil {
-		return "", err
-	}
-	canonical, err := safepath.ResolveWithin(graph.root, joined)
-	if err != nil {
-		if errors.Is(err, safepath.ErrOutsideRoot) {
-			return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
-		}
-
-		return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
+	files := graph.files
+	if files == nil {
+		files = newOSProjectFilesystem(graph.root)
 	}
 
-	return canonical, nil
-}
-
-func (graph *moduleGraph) resolveImportInFS(importer, modulePath string) (string, error) {
-	importerPath, err := graph.files.relativePath(importer)
-	if err != nil {
-		return "", fmt.Errorf("resolve importer: %w", err)
-	}
-	joined := path.Clean(path.Join(path.Dir(importerPath), filepath.ToSlash(filepath.FromSlash(modulePath))))
-	if !fs.ValidPath(joined) {
-		return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
-	}
-	if _, err := fs.Stat(graph.files.files, joined); err != nil {
-		return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
-	}
-
-	return filepath.Join(graph.root, filepath.FromSlash(joined)), nil
-}
-
-func (graph *moduleGraph) ensureWithinRoot(path, modulePath string) error {
-	if !safepath.Within(graph.root, path) {
-		return fmt.Errorf("module path %q escapes the project directory", modulePath)
-	}
-
-	return nil
+	return files.resolveModuleImport(importer, modulePath)
 }

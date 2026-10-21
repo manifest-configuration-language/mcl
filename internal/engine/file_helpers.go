@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -86,6 +87,54 @@ func (filesystem *projectFilesystem) resolveReadPath(filename string) (string, e
 	}
 
 	return filepath.Join(filesystem.root, filepath.FromSlash(relative)), nil
+}
+
+func (filesystem *projectFilesystem) resolveModuleImport(importer, modulePath string) (string, error) {
+	if filepath.IsAbs(modulePath) || path.IsAbs(modulePath) {
+		return "", errors.New("absolute module paths are not allowed")
+	}
+	importerPath := importer
+	if filesystem.osBacked {
+		absoluteImporter, err := filepath.Abs(importer)
+		if err != nil {
+			return "", err
+		}
+		canonicalImporter, err := filepath.EvalSymlinks(absoluteImporter)
+		if err != nil {
+			canonicalDirectory, directoryErr := filepath.EvalSymlinks(filepath.Dir(absoluteImporter))
+			if directoryErr != nil {
+				return "", fmt.Errorf("resolve importer directory: %w", directoryErr)
+			}
+			canonicalImporter = filepath.Join(canonicalDirectory, filepath.Base(absoluteImporter))
+		}
+		importerPath = canonicalImporter
+	}
+	importerRelative, err := filesystem.relativePath(importerPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve importer: %w", err)
+	}
+	joined := path.Clean(path.Join(path.Dir(importerRelative), filepath.ToSlash(filepath.FromSlash(modulePath))))
+	if !fs.ValidPath(joined) {
+		return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
+	}
+	candidate := filepath.Join(filesystem.root, filepath.FromSlash(joined))
+	if filesystem.osBacked {
+		canonical, err := safepath.ResolveWithin(filesystem.root, candidate)
+		if err != nil {
+			if errors.Is(err, safepath.ErrOutsideRoot) {
+				return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
+			}
+
+			return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
+		}
+
+		return canonical, nil
+	}
+	if _, err := fs.Stat(filesystem.files, joined); err != nil {
+		return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
+	}
+
+	return candidate, nil
 }
 
 func (filesystem *projectFilesystem) readLimitedFile(filename string) ([]byte, error) {
