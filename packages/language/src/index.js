@@ -1,4 +1,5 @@
 import { LanguageSupport, LRLanguage, continuedIndent, foldInside, foldNodeProp, indentNodeProp } from "@codemirror/language";
+import { closeBrackets } from "@codemirror/autocomplete";
 import { styleTags, tags } from "@lezer/highlight";
 import { parser as generatedParser } from "./parser.js";
 
@@ -26,5 +27,5 @@ const language = LRLanguage.define({
 });
 
 export function mclLanguageSupport() {
-  return new LanguageSupport(language);
+  return new LanguageSupport(language, closeBrackets());
 }
