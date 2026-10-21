@@ -92,20 +92,18 @@ function encodeFiles(files) {
   // Paths come from project input and may legally contain object property
   // names such as `__proto__`; keep them as data when serializing the request.
   const encoded = Object.create(null);
+  const binaryFiles = Object.create(null);
   for (const [filePath, content] of Object.entries(files ?? {})) {
     if (typeof content === "string") {
       encoded[filePath] = { encoding: "utf8", content };
     } else if (content instanceof Uint8Array) {
-      let binary = "";
-      for (let offset = 0; offset < content.length; offset += 0x8000) {
-        binary += String.fromCharCode(...content.subarray(offset, offset + 0x8000));
-      }
-      encoded[filePath] = { encoding: "base64", content: btoa(binary) };
+      encoded[filePath] = { encoding: "binary" };
+      binaryFiles[filePath] = content;
     } else {
       throw new TypeError(`Project file ${filePath} must be a string or Uint8Array`);
     }
   }
-  return encoded;
+  return { files: encoded, binaryFiles };
 }
 
 self.addEventListener("message", async (event) => {
@@ -128,15 +126,16 @@ self.addEventListener("message", async (event) => {
   try {
     await initialize();
     resetFilesystem();
+    const encodedFiles = encodeFiles(message.files);
     const request = {
       requestId: message.requestId,
       revision: message.requestId,
       operation: message.operation,
       entrypoint: message.entrypoint,
       source: message.source,
-      files: encodeFiles(message.files),
+      files: encodedFiles.files,
     };
-    const value = JSON.parse(globalThis.mclWasm.run(JSON.stringify(request)));
+    const value = JSON.parse(globalThis.mclWasm.run(JSON.stringify(request), encodedFiles.binaryFiles));
     postMessage({ type: "response", requestId: message.requestId, value });
   } catch (error) {
     postMessage({

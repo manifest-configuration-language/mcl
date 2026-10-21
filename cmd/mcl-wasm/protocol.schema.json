@@ -29,11 +29,22 @@
     },
     "fileInput": {
       "type": "object",
+      "description": "Binary files omit content and are supplied in the optional second run argument under the same path.",
       "properties": {
-        "encoding": { "enum": ["utf8", "base64"] },
+        "encoding": { "enum": ["utf8", "base64", "binary"] },
         "content": { "type": "string" }
       },
-      "required": ["encoding", "content"],
+      "required": ["encoding"],
+      "allOf": [
+        {
+          "if": { "properties": { "encoding": { "enum": ["utf8", "base64"] } }, "required": ["encoding"] },
+          "then": { "required": ["content"] }
+        },
+        {
+          "if": { "properties": { "encoding": { "const": "binary" } }, "required": ["encoding"] },
+          "then": { "not": { "required": ["content"] } }
+        }
+      ],
       "additionalProperties": false
     },
     "response": {

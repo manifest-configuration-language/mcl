@@ -92,6 +92,7 @@ export function createMclRuntime(options = {}) {
       if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
       await waitUntilReady(requestOptions.signal);
       if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+      const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
       const requestId = ++sequence;
       const timeoutMs = requestOptions.timeoutMs ?? options.operationTimeoutMs ?? defaultOperationTimeoutMs;
       return new Promise((resolve, reject) => {
@@ -129,7 +130,11 @@ export function createMclRuntime(options = {}) {
         worker.addEventListener("error", onError);
         requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
         stopCurrent = stop;
-        worker.postMessage({ type: "run", requestId, operation, source, files: files ?? {}, entrypoint });
+        try {
+          worker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint }, preparedFiles.transferables);
+        } catch (error) {
+          stop(error);
+        }
       });
     };
     const result = queue.then(run, run);
@@ -183,6 +188,36 @@ export function createMclRuntime(options = {}) {
 
   function isSafeRelativePath(filePath) {
     return typeof filePath === "string" && filePath.length > 0 && !filePath.startsWith("/") && !filePath.includes("\\") && filePath.split("/").every((part) => part && part !== "." && part !== "..");
+  }
+
+  function prepareFilesForTransfer(source, files, entrypoint) {
+    if (!isSafeRelativePath(entrypoint)) throw new TypeError(`Invalid project entrypoint: ${entrypoint}`);
+    const sourceBytes = new TextEncoder().encode(source).byteLength;
+    if (sourceBytes > maxSourceBytes) throw new RangeError(`Source exceeds the ${maxSourceBytes}-byte limit`);
+    const entries = Object.entries(files ?? {});
+    if (entries.length + 1 > maxProjectFiles) throw new RangeError(`Project has more than ${maxProjectFiles} files`);
+    let totalBytes = sourceBytes;
+    const transferredFiles = Object.create(null);
+    const transferables = [];
+    for (const [filePath, content] of entries) {
+      if (!isSafeRelativePath(filePath) || filePath === entrypoint) throw new TypeError(`Invalid project file path: ${filePath}`);
+      if (typeof content === "string") {
+        const fileBytes = new TextEncoder().encode(content).byteLength;
+        if (fileBytes > maxProjectFileBytes) throw new RangeError(`Project file ${filePath} exceeds the ${maxProjectFileBytes}-byte limit`);
+        totalBytes += fileBytes;
+        transferredFiles[filePath] = content;
+      } else if (content instanceof Uint8Array) {
+        if (content.byteLength > maxProjectFileBytes) throw new RangeError(`Project file ${filePath} exceeds the ${maxProjectFileBytes}-byte limit`);
+        totalBytes += content.byteLength;
+        const copy = content.slice();
+        transferredFiles[filePath] = copy;
+        transferables.push(copy.buffer);
+      } else {
+        throw new TypeError(`Project file ${filePath} must be a string or Uint8Array`);
+      }
+      if (totalBytes > maxProjectBytes) throw new RangeError(`Project files exceed the ${maxProjectBytes}-byte limit`);
+    }
+    return { files: transferredFiles, transferables };
   }
 
   return {

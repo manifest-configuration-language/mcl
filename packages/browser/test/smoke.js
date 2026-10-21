@@ -1,6 +1,7 @@
 import { createMclRuntime } from "../src/index.js";
 import source from "./app/main.mcl?raw";
 import resourceModule from "./app/modules/resource.mcl?raw";
+import schema from "./app/schema.json?raw";
 
 const output = document.querySelector("#result");
 async function run() {
@@ -27,6 +28,19 @@ async function run() {
   const result = await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
   if (!result.yaml.includes("mcl-browser-smoke") || !result.yaml.includes('key: "value"')) {
     throw new Error(`Unexpected render output: ${result.yaml}`);
+  }
+  const binarySource = `type BinaryConfig = schema("./schemas/config.json")
+
+let config: BinaryConfig =
+  name: "mcl-browser-binary-smoke"
+
+emit config`;
+  const binaryFiles = { "schemas/config.json": new TextEncoder().encode(schema) };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const binaryResult = await runtime.evaluate(binarySource, binaryFiles, { timeoutMs: 60_000 });
+    if (binaryResult.artifacts !== 1 || binaryFiles["schemas/config.json"].byteLength === 0) {
+      throw new Error("Binary project files were not reusable after transfer");
+    }
   }
   const networkBlocked = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Network isolation probe timed out")), 5000);

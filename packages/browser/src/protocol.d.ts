@@ -1,6 +1,13 @@
 /* Generated from cmd/mcl-wasm/protocol.schema.json. Do not edit. */
 
 export type MCLWebAssemblyRequestAndResponseProtocol = Request | Response;
+/**
+ * Binary files omit content and are supplied in the optional second run argument under the same path.
+ */
+export type FileInput = {
+  encoding: "utf8" | "base64" | "binary";
+  content?: string;
+};
 export type LintResult = LintDiagnostic[];
 
 export interface Request {
@@ -21,10 +28,6 @@ export interface Request {
   files?: {
     [k: string]: FileInput;
   };
-}
-export interface FileInput {
-  encoding: "utf8" | "base64";
-  content: string;
 }
 export interface Response {
   requestId: unknown;

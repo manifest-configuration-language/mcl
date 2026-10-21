@@ -1,5 +1,3 @@
-//go:build js && wasm
-
 package main
 
 import (
@@ -14,7 +12,14 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
 
-func newProjectFiles(source string, files map[string]fileInput, entrypoint string) (fs.FS, error) {
+const (
+	maxSourceBytes      = 64 << 10
+	maxProjectFiles     = 4096
+	maxProjectFileBytes = 16 << 20
+	maxProjectBytes     = 64 << 20
+)
+
+func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, binaryFiles map[string][]byte, entrypoint string) (fs.FS, error) {
 	if len(files)+1 > maxProjectFiles {
 		return nil, fmt.Errorf("project has more than %d files", maxProjectFiles)
 	}
@@ -23,6 +28,7 @@ func newProjectFiles(source string, files map[string]fileInput, entrypoint strin
 	}
 	totalBytes := len(source)
 	project := make(fstest.MapFS, len(files))
+	binaryCount := 0
 	for relativePath, input := range files {
 		if !filepath.IsLocal(relativePath) || path.Clean(relativePath) != relativePath || relativePath == "." || relativePath == entrypoint || strings.Contains(relativePath, `\`) {
 			return nil, fmt.Errorf("invalid project file path %q", relativePath)
@@ -30,15 +36,31 @@ func newProjectFiles(source string, files map[string]fileInput, entrypoint strin
 		var content []byte
 		switch input.Encoding {
 		case wasmprotocol.FileInputEncodingUtf8:
-			content = []byte(input.Content)
+			if input.Content == nil {
+				return nil, fmt.Errorf("project file %q is missing JSON content", relativePath)
+			}
+			content = []byte(*input.Content)
 		case wasmprotocol.FileInputEncodingBase64:
-			decoded, err := base64.StdEncoding.DecodeString(input.Content)
+			if input.Content == nil {
+				return nil, fmt.Errorf("project file %q is missing JSON content", relativePath)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(*input.Content)
 			if err != nil {
 				return nil, fmt.Errorf("decode project file %q: invalid base64 content", relativePath)
 			}
 			content = decoded
+		case wasmprotocol.FileInputEncodingBinary:
+			if input.Content != nil {
+				return nil, fmt.Errorf("binary project file %q cannot include JSON content", relativePath)
+			}
+			var ok bool
+			content, ok = binaryFiles[relativePath]
+			if !ok {
+				return nil, fmt.Errorf("binary project file %q is missing from the binary file map", relativePath)
+			}
+			binaryCount++
 		default:
-			return nil, fmt.Errorf("project file %q encoding must be utf8 or base64", relativePath)
+			return nil, fmt.Errorf("project file %q encoding must be utf8, base64, or binary", relativePath)
 		}
 		if len(content) > maxProjectFileBytes {
 			return nil, fmt.Errorf("project file %q exceeds the %d-byte limit", relativePath, maxProjectFileBytes)
@@ -47,7 +69,10 @@ func newProjectFiles(source string, files map[string]fileInput, entrypoint strin
 		if totalBytes > maxProjectBytes {
 			return nil, fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
 		}
-		project[relativePath] = &fstest.MapFile{Data: append([]byte(nil), content...), Mode: 0o444}
+		project[relativePath] = &fstest.MapFile{Data: content, Mode: 0o444}
+	}
+	if binaryCount != len(binaryFiles) {
+		return nil, fmt.Errorf("binary file map contains files without binary metadata")
 	}
 
 	return project, nil

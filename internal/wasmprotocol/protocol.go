@@ -32,9 +32,11 @@ type EvaluateResult struct {
 	RenderedBytes uint64 `json:"renderedBytes" yaml:"renderedBytes" mapstructure:"renderedBytes"`
 }
 
+// Binary files omit content and are supplied in the optional second run argument
+// under the same path.
 type FileInput struct {
 	// Content corresponds to the JSON schema field "content".
-	Content string `json:"content" yaml:"content" mapstructure:"content"`
+	Content *string `json:"content,omitempty,omitzero" yaml:"content,omitempty" mapstructure:"content,omitempty"`
 
 	// Encoding corresponds to the JSON schema field "encoding".
 	Encoding FileInputEncoding `json:"encoding" yaml:"encoding" mapstructure:"encoding"`
@@ -43,6 +45,7 @@ type FileInput struct {
 type FileInputEncoding string
 
 const FileInputEncodingBase64 FileInputEncoding = "base64"
+const FileInputEncodingBinary FileInputEncoding = "binary"
 const FileInputEncodingUtf8 FileInputEncoding = "utf8"
 
 type FormatResult struct {
