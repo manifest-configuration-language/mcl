@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -625,27 +626,42 @@ func dependentSourceScope(target string, workspaceRoots []string) (string, strin
 }
 
 func collectDependentSources(canonical, root string, searchRoots []string) (map[string]string, error) {
+	return collectDependentSourcesWithFilesystem(newOSProjectFilesystem(root), canonical, root, searchRoots)
+}
+
+func collectDependentSourcesWithFilesystem(files *projectFilesystem, canonical, root string, searchRoots []string) (map[string]string, error) {
 	allSources := make(map[string]string)
-	files := newOSProjectFilesystem(root)
 	var totalBytes int64
 	for _, searchRoot := range searchRoots {
-		err := filepath.WalkDir(searchRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		searchPath, err := files.relativePath(searchRoot)
+		if err != nil {
+			return nil, err
+		}
+		err = fs.WalkDir(files.files, searchPath, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
+			absolutePath := filepath.Join(root, filepath.FromSlash(path))
 			if entry.IsDir() {
-				if path != searchRoot && ignoredRenameIndexDirectory(path) {
+				if absolutePath != searchRoot && ignoredRenameIndexDirectory(absolutePath) {
 					return filepath.SkipDir
 				}
 
 				return nil
 			}
-			if filepath.Ext(path) != ".mcl" || !entry.Type().IsRegular() && entry.Type()&os.ModeSymlink == 0 {
+			if filepath.Ext(absolutePath) != ".mcl" {
 				return nil
 			}
-			modulePath, ok := resolveModuleLink(path)
-			if !ok {
+			if !entry.Type().IsRegular() && (!files.osBacked || entry.Type()&fs.ModeSymlink == 0) {
 				return nil
+			}
+			modulePath := absolutePath
+			if files.osBacked {
+				var ok bool
+				modulePath, ok = resolveModuleLink(absolutePath)
+				if !ok {
+					return nil
+				}
 			}
 			modulePath, err := filepath.Abs(modulePath)
 			if err != nil {
@@ -655,12 +671,14 @@ func collectDependentSources(canonical, root string, searchRoots []string) (map[
 			if !safepath.Within(root, modulePath) || !safepath.Within(searchRoot, modulePath) {
 				return nil
 			}
-			moduleRoot, err := discoverProjectRoot(filepath.Dir(modulePath))
-			if err != nil {
-				return err
-			}
-			if moduleRoot != root {
-				return nil
+			if files.osBacked {
+				moduleRoot, err := discoverProjectRoot(filepath.Dir(modulePath))
+				if err != nil {
+					return err
+				}
+				if moduleRoot != root {
+					return nil
+				}
 			}
 			if _, exists := allSources[modulePath]; exists {
 				return nil
@@ -668,7 +686,11 @@ func collectDependentSources(canonical, root string, searchRoots []string) (map[
 			if len(allSources) >= maxProjectMCLFiles {
 				return fmt.Errorf("workspace contains more than %d MCL files", maxProjectMCLFiles)
 			}
-			info, err := os.Stat(modulePath)
+			relativePath, err := files.relativePath(modulePath)
+			if err != nil {
+				return err
+			}
+			info, err := fs.Stat(files.files, relativePath)
 			if err != nil {
 				return fmt.Errorf("inspect module %q: %w", modulePath, err)
 			}

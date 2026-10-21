@@ -5,7 +5,37 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
+
+func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "project")
+	files := newProjectFilesystem(root, fstest.MapFS{
+		projectConfigFileName:     &fstest.MapFile{Data: []byte("")},
+		"target.mcl":              &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		"nested/importer.mcl":     &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\nemit target.value\n")},
+		".mcl/cache/cached.mcl":   &fstest.MapFile{Data: []byte("ignored\n")},
+		"node_modules/module.mcl": &fstest.MapFile{Data: []byte("ignored\n")},
+	})
+	canonical := filepath.Join(root, "target.mcl")
+	sources, err := collectDependentSourcesWithFilesystem(files, canonical, root, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sources[canonical], "export let value = 1\n"; got != want {
+		t.Fatalf("target source = %q, want %q", got, want)
+	}
+	importer := filepath.Join(root, "nested", "importer.mcl")
+	if got, want := sources[importer], "import \"../target.mcl\" as target\nemit target.value\n"; got != want {
+		t.Fatalf("importer source = %q, want %q", got, want)
+	}
+	for _, ignored := range []string{filepath.Join(root, ".mcl", "cache", "cached.mcl"), filepath.Join(root, "node_modules", "module.mcl")} {
+		if _, exists := sources[ignored]; exists {
+			t.Errorf("source index included ignored module %q", ignored)
+		}
+	}
+}
 
 func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	t.Parallel()
