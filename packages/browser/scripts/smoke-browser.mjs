@@ -33,6 +33,11 @@ try {
     try {
       const page = await browser.newPage();
       const pageErrors = [];
+      let wasmBytes;
+      page.on("response", async (response) => {
+        if (!response.url().endsWith("/mcl.wasm")) return;
+        wasmBytes = Number(await response.headerValue("content-length"));
+      });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error") pageErrors.push(message.text()); });
       await page.goto("http://127.0.0.1:4173/");
@@ -43,6 +48,12 @@ try {
         throw new Error(`${error.message}\nBrowser: ${browserType.name()}\nPage: ${body}\nBrowser errors: ${pageErrors.join("\n")}\nVite: ${serverOutput.join("")}`);
       }
       if (pageErrors.length) throw new Error(`${browserType.name()}: ${pageErrors.join("\n")}`);
+      const metrics = await page.locator("#result").evaluate((output) => JSON.parse(output.dataset.metrics));
+      if (!Number.isInteger(wasmBytes)) throw new Error(`${browserType.name()}: WebAssembly response size was not captured`);
+      for (const name of ["initializationMs", "firstRenderMs", "repeatRenderMs", "cancellationMs"]) {
+        if (!Number.isFinite(metrics[name])) throw new Error(`${browserType.name()}: ${name} was not captured`);
+      }
+      console.log(`${browserType.name()} ${JSON.stringify({ wasmBytes, ...metrics })}`);
     } finally {
       await browser.close();
     }

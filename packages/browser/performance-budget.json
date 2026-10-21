@@ -1,0 +1,7 @@
+{
+  "baselineBytes": {
+    "raw": 113125411,
+    "gzip": 19600102
+  },
+  "maxGrowthPercent": 10
+}

@@ -6,16 +6,23 @@ import schema from "./app/schema.json?raw";
 const output = document.querySelector("#result");
 async function run() {
   let worker;
+  let workerStartedAt;
+  const initializationTimes = [];
   const runtime = createMclRuntime({
     initializationTimeoutMs: 60_000,
     operationTimeoutMs: 60_000,
     workerFactory: () => {
       worker = new Worker(new URL("../src/worker.js", import.meta.url), { type: "module" });
+      workerStartedAt = performance.now();
+      worker.addEventListener("message", (event) => {
+        if (event.data?.type === "ready") initializationTimes.push(performance.now() - workerStartedAt);
+      });
       return worker;
     },
   });
   const project = runtime.openProject({ "app/main.mcl": source, "app/modules/resource.mcl": resourceModule });
   const controller = new AbortController();
+  const cancellationStartedAt = performance.now();
   const cancelled = project.render({ entrypoint: "app/main.mcl", signal: controller.signal });
   setTimeout(() => controller.abort(), 1);
   try {
@@ -24,6 +31,7 @@ async function run() {
   } catch (error) {
     if (error.name !== "AbortError") throw error;
   }
+  const cancellationMs = performance.now() - cancellationStartedAt;
 
   const parsed = await project.parse({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
   if (!Number.isInteger(parsed.declarations) || parsed.declarations < 1) {
@@ -46,10 +54,15 @@ async function run() {
     throw new Error(`Unexpected evaluate result: ${JSON.stringify(evaluated)}`);
   }
 
+  const firstRenderStartedAt = performance.now();
   const result = await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  const firstRenderMs = performance.now() - firstRenderStartedAt;
   if (!result.yaml.includes("mcl-browser-smoke") || !result.yaml.includes('key: "value"')) {
     throw new Error(`Unexpected render output: ${result.yaml}`);
   }
+  const repeatRenderStartedAt = performance.now();
+  await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  const repeatRenderMs = performance.now() - repeatRenderStartedAt;
   const binarySource = `type BinaryConfig = schema("./schemas/config.json")
 
 let config: BinaryConfig =
@@ -83,7 +96,13 @@ emit config`;
     if (!error.message.includes("disposed")) throw error;
   }
   output.dataset.status = "passed";
-  output.textContent = "passed";
+  output.dataset.metrics = JSON.stringify({
+    initializationMs: initializationTimes.at(-1),
+    firstRenderMs,
+    repeatRenderMs,
+    cancellationMs,
+  });
+  output.textContent = output.dataset.metrics;
 }
 
 run().catch((error) => {
