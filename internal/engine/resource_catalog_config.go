@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
@@ -58,12 +57,7 @@ func loadKubernetesResourceCatalogWithFilesystem(root string, filesystem *projec
 	if err != nil {
 		return KubernetesResourceCatalog{}, fmt.Errorf("resolve project configuration %q: %w", configPath, err)
 	}
-	var info fs.FileInfo
-	if filesystem.osBacked {
-		info, err = os.Lstat(configPath)
-	} else {
-		info, err = fs.Stat(filesystem.files, relative)
-	}
+	info, err := fs.Lstat(filesystem.files, relative)
 	if errors.Is(err, fs.ErrNotExist) {
 		return DefaultKubernetesResourceCatalog(), nil
 	}
