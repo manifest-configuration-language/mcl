@@ -1,11 +1,11 @@
 name: Release
-run-name: Release ${{ inputs.release_tag || 'next patch' }}
+run-name: Release ${{ inputs.release_tag || 'package version' }}
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag, for example v1.2.3. Empty selects the next patch version.
+        description: Release tag, for example v1.2.3. Empty selects the matching npm package version.
         required: false
         type: string
   push:
@@ -49,19 +49,28 @@ jobs:
             fi
             release_tag="$RELEASE_TAG_INPUT"
             if [ -z "$release_tag" ]; then
-              latest_tag="$(git tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
-              if [ -z "$latest_tag" ]; then
-                release_tag=v0.1.0
-              else
-                version="${latest_tag#v}"
-                IFS=. read -r major minor patch <<< "$version"
-                release_tag="v${major}.${minor}.$((patch + 1))"
+              browser_version="$(node -p "require('./packages/browser/package.json').version")"
+              language_version="$(node -p "require('./packages/language/package.json').version")"
+              if [ "$browser_version" != "$language_version" ]; then
+                printf 'Browser and language package versions differ: %s and %s\n' "$browser_version" "$language_version" >&2
+                exit 1
               fi
+              release_tag="v$browser_version"
             fi
           else
             release_tag="$GITHUB_REF_NAME"
           fi
-          [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            printf 'Invalid release tag: %s\n' "$release_tag" >&2
+            exit 1
+          fi
+          for package in browser language; do
+            package_version="$(node -p "require('./packages/${package}/package.json').version")"
+            if [ "v$package_version" != "$release_tag" ]; then
+              printf 'Release tag %s does not match %s package version %s\n' "$release_tag" "$package" "$package_version" >&2
+              exit 1
+            fi
+          done
           if git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             echo "Release tag $release_tag already exists." >&2
             exit 1
