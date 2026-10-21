@@ -49,6 +49,27 @@ func EvaluateProjectSourceWithDependenciesContext(ctx context.Context, projectRo
 	return bundle, loaded, err
 }
 
+// EvaluateProjectFileContext evaluates an entrypoint stored in a root-relative filesystem.
+// projectRoot must be an absolute logical root and entryPath must be slash-separated.
+func EvaluateProjectFileContext(ctx context.Context, projectRoot, entryPath string, files fs.FS) (Bundle, error) {
+	if ctx == nil {
+		return Bundle{}, errors.New("evaluation context is required")
+	}
+	if files == nil {
+		return Bundle{}, errors.New("project filesystem is required")
+	}
+	if !filepath.IsAbs(projectRoot) {
+		return Bundle{}, fmt.Errorf("project root %q must be absolute", projectRoot)
+	}
+	if !validProjectPath(entryPath) {
+		return Bundle{}, fmt.Errorf("invalid project entry path %q", entryPath)
+	}
+	root := filepath.Clean(projectRoot)
+	entry := filepath.Join(root, filepath.FromSlash(entryPath))
+
+	return evaluateFileWithFilesystem(ctx, entry, false, "", newProjectFilesystem(root, files))
+}
+
 // LoadKubernetesResourceCatalogForProjectFS reads the project configuration
 // from a root-relative filesystem. projectRoot must be an absolute logical
 // root and files must use slash-separated paths relative to that root.

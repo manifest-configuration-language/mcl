@@ -39,6 +39,36 @@ func TestEvaluateProjectSourceReadsDependencyLockFromFilesystem(t *testing.T) {
 	}
 }
 
+func TestEvaluateProjectFileUsesRootRelativeFilesystem(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := fstest.MapFS{
+		"main.mcl":  &fstest.MapFile{Data: []byte("import \"./child.mcl\" as child\nemit child.value\n")},
+		"child.mcl": &fstest.MapFile{Data: []byte("export let value = \"project file\"\n")},
+	}
+
+	bundle, err := EvaluateProjectFileContext(t.Context(), root, "main.mcl", files)
+	if err != nil {
+		t.Fatalf("evaluate project file: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != String || bundle.Artifacts[0].Value.Text != "project file" {
+		t.Fatalf("project file bundle = %#v, want one imported string artifact", bundle.Artifacts)
+	}
+}
+
+func TestEvaluateProjectFileReadsDependencyLockFromFilesystem(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"main.mcl": &fstest.MapFile{Data: []byte("emit \"ok\"\n")},
+		"mcl.lock": &fstest.MapFile{Data: []byte(`{"version":4}`)},
+	}
+
+	_, err := EvaluateProjectFileContext(t.Context(), filepath.Join(string(filepath.Separator), "virtual-project"), "main.mcl", files)
+	if err == nil || !strings.Contains(err.Error(), "unsupported dependency lock version 4") {
+		t.Fatalf("evaluate project file with virtual lock: got %v, want unsupported lock version", err)
+	}
+}
+
 func TestLoadKubernetesResourceCatalogForProjectFS(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{

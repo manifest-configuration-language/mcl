@@ -845,7 +845,12 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	if err != nil {
 		return Bundle{}, err
 	}
-	dependencies, err := dependency.Open(ctx, root, update, dependencyToolchainIdentity())
+	var dependencies *dependency.Lock
+	if files.osBacked {
+		dependencies, err = dependency.Open(ctx, root, update, dependencyToolchainIdentity())
+	} else {
+		dependencies, err = dependency.OpenWithFS(ctx, root, update, dependencyToolchainIdentity(), files.files)
+	}
 	if err != nil {
 		return Bundle{}, err
 	}
