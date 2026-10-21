@@ -150,6 +150,7 @@ func loadSourceFS(source fs.FS) (filesys.FileSystem, string, error) {
 			return err
 		}
 		totalBytes += int64(len(data))
+
 		return memoryFS.WriteFile(target, data)
 	})
 	if err != nil {
@@ -310,6 +311,7 @@ func (fs *overlayFileSystem) CleanedAbs(overlayPath string) (filesys.ConfirmedDi
 		if fs.sourceFileSystem.IsDir(source) {
 			return filesys.ConfirmedDir(filepath.Join(fs.overlayRoot, relative)), "", nil
 		}
+
 		return filesys.ConfirmedDir(filepath.Join(fs.overlayRoot, filepath.Dir(relative))), filepath.Base(relative), nil
 	}
 	if err := rejectKustomizeSourceSymlinks(fs.sourceRoot, source); err != nil {

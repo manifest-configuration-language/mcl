@@ -630,6 +630,7 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 		if fileInfo.IsDir() {
 			parent := path.Dir(name)
 			ignoredDirectories[name] = ignoredDirectories[parent] || rules.Ignore(filepath.ToSlash(name), fileInfo)
+
 			return nil
 		}
 		if !fileInfo.Mode().IsRegular() {
@@ -654,6 +655,7 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 		if !ignoredDirectories[parent] && !rules.Ignore(filepath.ToSlash(name), fileInfo) {
 			files = append(files, &archive.BufferedFile{Name: filepath.ToSlash(name), ModTime: fileInfo.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})})
 		}
+
 		return nil
 	})
 	if err != nil {
@@ -666,6 +668,7 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 	if chart.Metadata.APIVersion == "v3" {
 		return nil, "", errors.New("loaded Helm Chart has an unsupported type")
 	}
+
 	return chart, content.SHA256([]byte(digestKey.String())), nil
 }
 
