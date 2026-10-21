@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -35,9 +35,19 @@ const validFixtures = [
   resolve(packageRoot, "parity-fixtures/without.mcl"),
   resolve(packageRoot, "parity-fixtures/descendants-validation.mcl"),
   resolve(packageRoot, "parity-fixtures/advanced-constructs.mcl"),
-  resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples/validation/rules/main.mcl"),
-  resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples/references/clone-node/main.mcl"),
+  resolve(packageRoot, "parity-fixtures/block-expressions.mcl"),
 ];
+
+async function findMclFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map((entry) => {
+    const path = resolve(directory, entry.name);
+    return entry.isDirectory() ? findMclFiles(path) : entry.name.endsWith(".mcl") ? [path] : [];
+  }));
+  return nested.flat();
+}
+
+validFixtures.push(...await findMclFiles(resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples")));
 
 for (const fixturePath of validFixtures) {
   const fixture = fixturePath.slice(repositoryRoot.length + 1);

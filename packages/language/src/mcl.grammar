@@ -39,7 +39,7 @@ BySchemaSelector { kw<"bySchema"> "(" TypeExpression ")" }
 ExpressionStatement { Expression }
 
 Block { indent BlockLine+ (dedent | eof) }
-BlockLine { MapEntry | SequenceItem | RequireStatement | Expression lineEnd }
+BlockLine { MapEntry | SequenceItem | RequireStatement | IfExpression | ForExpression | Expression lineEnd }
 MapEntry { MapEntryKey ":" (Expression lineEnd | lineEnd Block | lineEnd) }
 MapEntryKey { DynamicMapKey | MapKey }
 DynamicMapKey { kw<"key"> "(" Expression ")" }
@@ -81,8 +81,7 @@ PrimaryExpression {
   "." Identifier |
   "(" Expression ")" |
   ListExpression |
-  InlineMap |
-  IfExpression | ForExpression
+  InlineMap
 }
 NodeExpression { kw<"node"> ":" lineEnd Block }
 IfExpression { kw<"if"> Expression ":" lineEnd Block (kw<"else"> ":" lineEnd Block)? }

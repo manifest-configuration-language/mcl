@@ -1,4 +1,4 @@
-import { LanguageSupport, LRLanguage, continuedIndent, foldInside, foldNodeProp, indentNodeProp } from "@codemirror/language";
+import { LanguageSupport, LRLanguage, continuedIndent, foldService, indentNodeProp, syntaxTree } from "@codemirror/language";
 import { closeBrackets } from "@codemirror/autocomplete";
 import { styleTags, tags } from "@lezer/highlight";
 import { parser as generatedParser } from "./parser.js";
@@ -15,8 +15,14 @@ export const parser = generatedParser.configure({
       Comment: tags.comment,
       Operator: tags.operator,
     }),
-    indentNodeProp.add({ MCL: continuedIndent() }),
-    foldNodeProp.add({ MCL: foldInside }),
+    indentNodeProp.add({
+      LetBlockDeclaration: continuedIndent(),
+      Block: continuedIndent({ except: /^\s*else\b/ }),
+      IfExpression: continuedIndent({ except: /^\s*else\b/ }),
+      ForExpression: continuedIndent(),
+      TypeRecordBlock: continuedIndent(),
+      RuleBlock: continuedIndent(),
+    }),
   ],
 });
 
@@ -27,5 +33,25 @@ const language = LRLanguage.define({
 });
 
 export function mclLanguageSupport() {
-  return new LanguageSupport(language, closeBrackets());
+  return new LanguageSupport(language, [closeBrackets(), foldService.of(foldMclBlock)]);
+}
+
+function foldMclBlock(state, lineStart, lineEnd) {
+  const tree = syntaxTree(state);
+  const text = state.doc.sliceString(lineStart, lineEnd).trim();
+  const isElseHeader = /^else\s*:/.test(text);
+  for (let node = tree.resolveInner(lineEnd, -1); node; node = node.parent) {
+    if (isElseHeader ? node.name !== "IfExpression" : node.from < lineStart || node.from > lineEnd) continue;
+
+    let candidate;
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      if (child.name === "Block" && child.from >= lineEnd) {
+        candidate = child;
+        if (!isElseHeader) break;
+      }
+    }
+    if (candidate && candidate.to > lineEnd) return { from: lineEnd, to: candidate.to };
+    if (isElseHeader) return null;
+  }
+  return null;
 }

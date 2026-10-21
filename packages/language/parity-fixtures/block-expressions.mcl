@@ -1,0 +1,8 @@
+let replicas =
+  if true:
+    3
+  else:
+    1
+let result =
+  replicas: replicas
+emit result
