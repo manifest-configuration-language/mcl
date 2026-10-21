@@ -26,10 +26,6 @@ CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`などのコマン�
 - [VS Code拡張](https://github.com/manifest-configuration-language/vscode)
 - [サンプル集](https://github.com/manifest-configuration-language/examples)
 
-## 構文ハイライト
-
-Editor向けTextMate Grammarは[`editors/mcl.tmLanguage.json`](./editors/mcl.tmLanguage.json)を正本として管理します。Webサイトなどの利用側は、MCLリポジトリのコミットを固定してGrammarを取得します。
-
 ## 開発
 
 miseをインストールしてから、次のコマンドで品質チェックを実行します。
