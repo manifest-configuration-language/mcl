@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -53,6 +56,43 @@ func TestEvaluateProjectFileUsesRootRelativeFilesystem(t *testing.T) {
 	}
 	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != String || bundle.Artifacts[0].Value.Text != "project file" {
 		t.Fatalf("project file bundle = %#v, want one imported string artifact", bundle.Artifacts)
+	}
+}
+
+func TestEvaluateProjectFileRejectsFileSymlinkOutsideRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	externalFile := filepath.Join(t.TempDir(), "external.mcl")
+	if err := os.WriteFile(externalFile, []byte("emit \"outside\"\n"), 0o600); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	if err := os.Symlink(externalFile, filepath.Join(root, "main.mcl")); err != nil {
+		t.Skipf("create file symlink: %v", err)
+	}
+
+	_, err := EvaluateProjectFileContext(t.Context(), root, "main.mcl", os.DirFS(root))
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("evaluate symlinked project file: got %v, want permission error", err)
+	}
+}
+
+func TestEvaluateProjectFileRejectsDirectorySymlinkOutsideRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	externalDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.mcl"), []byte("import \"./linked/child.mcl\" as child\nemit child.value\n"), 0o600); err != nil {
+		t.Fatalf("write project entrypoint: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(externalDir, "child.mcl"), []byte("export let value = \"outside\"\n"), 0o600); err != nil {
+		t.Fatalf("write external module: %v", err)
+	}
+	if err := os.Symlink(externalDir, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("create directory symlink: %v", err)
+	}
+
+	_, err := EvaluateProjectFileContext(t.Context(), root, "main.mcl", os.DirFS(root))
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("evaluate import through directory symlink: got %v, want permission error", err)
 	}
 }
 

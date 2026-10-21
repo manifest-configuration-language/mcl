@@ -41,12 +41,35 @@ type projectFilesystem struct {
 	osBacked bool
 }
 
+type rootConfinedFS struct {
+	files fs.FS
+}
+
+func (filesystem rootConfinedFS) Open(name string) (fs.File, error) {
+	links, ok := filesystem.files.(fs.ReadLinkFS)
+	if ok {
+		current := ""
+		for component := range strings.SplitSeq(name, "/") {
+			current = path.Join(current, component)
+			info, err := links.Lstat(current)
+			if err != nil {
+				return nil, err
+			}
+			if info.Mode()&fs.ModeSymlink != 0 {
+				return nil, &fs.PathError{Op: "open", Path: name, Err: fmt.Errorf("symbolic link %q is not allowed: %w", current, fs.ErrPermission)}
+			}
+		}
+	}
+
+	return filesystem.files.Open(name)
+}
+
 func newOSProjectFilesystem(root string) *projectFilesystem {
 	return &projectFilesystem{root: filepath.Clean(root), files: os.DirFS(root), osBacked: true}
 }
 
 func newProjectFilesystem(root string, files fs.FS) *projectFilesystem {
-	return &projectFilesystem{root: filepath.Clean(root), files: files}
+	return &projectFilesystem{root: filepath.Clean(root), files: rootConfinedFS{files: files}}
 }
 
 func projectFilesystemFor(root string, filesystems []*projectFilesystem) *projectFilesystem {
