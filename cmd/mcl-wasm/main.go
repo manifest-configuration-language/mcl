@@ -4,10 +4,10 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -95,13 +95,18 @@ func handle(raw string) string {
 		result.Ok = true
 		result.Result = diagnostics(module, input.Source)
 	case "check", "evaluate", "render":
-		bundle, evalErr := evaluate(input.Source, input.Files, entrypoint)
+		projectFiles, filesErr := newProjectFiles(input.Source, input.Files, entrypoint)
+		if filesErr != nil {
+			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: filesErr.Error()}
+			return marshal(result)
+		}
+		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint)
 		if evalErr != nil {
 			result.Error = diagnosticError(input.Source, evalErr)
 			return marshal(result)
 		}
 		if input.Operation == "check" || input.Operation == "render" {
-			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForFile(path.Join(browserProjectRoot(), entrypoint))
+			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForProjectFS(browserProjectRoot(), projectFiles)
 			if catalogErr != nil {
 				result.Error = diagnosticError(input.Source, catalogErr)
 				return marshal(result)
@@ -135,14 +140,11 @@ func handle(raw string) string {
 	return marshal(result)
 }
 
-func evaluate(source string, files map[string]fileInput, entrypoint string) (engine.Bundle, error) {
-	if err := validateProject(source, files, entrypoint); err != nil {
-		return engine.Bundle{}, err
-	}
+func evaluate(source string, files fs.FS, entrypoint string) (engine.Bundle, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
 	defer cancel()
 
-	return engine.EvaluateSourceWithOverlaysContext(ctx, path.Join(browserProjectRoot(), entrypoint), source, nil)
+	return engine.EvaluateProjectSourceContext(ctx, browserProjectRoot(), entrypoint, source, files, nil)
 }
 
 func browserProjectRoot() string {
@@ -151,40 +153,6 @@ func browserProjectRoot() string {
 	}
 
 	return projectRoot
-}
-
-func validateProject(source string, files map[string]fileInput, entrypoint string) error {
-	if len(files)+1 > maxProjectFiles {
-		return fmt.Errorf("project has more than %d files", maxProjectFiles)
-	}
-	totalBytes := len(source)
-	for relativePath, input := range files {
-		if !filepath.IsLocal(relativePath) || path.Clean(relativePath) != relativePath || relativePath == "." || relativePath == entrypoint || strings.Contains(relativePath, "\\") {
-			return fmt.Errorf("invalid project file path %q", relativePath)
-		}
-		var content []byte
-		switch input.Encoding {
-		case wasmprotocol.FileInputEncodingUtf8:
-			content = []byte(input.Content)
-		case wasmprotocol.FileInputEncodingBase64:
-			decoded, err := base64.StdEncoding.DecodeString(input.Content)
-			if err != nil {
-				return fmt.Errorf("decode project file %q: invalid base64 content", relativePath)
-			}
-			content = decoded
-		default:
-			return fmt.Errorf("project file %q encoding must be utf8 or base64", relativePath)
-		}
-		if len(content) > maxProjectFileBytes {
-			return fmt.Errorf("project file %q exceeds the %d-byte limit", relativePath, maxProjectFileBytes)
-		}
-		totalBytes += len(content)
-		if totalBytes > maxProjectBytes {
-			return fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
-		}
-	}
-
-	return nil
 }
 
 func projectEntrypoint(entrypoint string) (string, error) {

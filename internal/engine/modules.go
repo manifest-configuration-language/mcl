@@ -957,7 +957,7 @@ func evaluateSourceWithFilesystem(ctx context.Context, path, source string, over
 	if err != nil {
 		return Bundle{}, nil, err
 	}
-	dependencies, err := dependency.Open(ctx, root, false, dependencyToolchainIdentity())
+	dependencies, err := dependency.OpenWithFS(ctx, root, false, dependencyToolchainIdentity(), files.files)
 	if err != nil {
 		return Bundle{}, nil, err
 	}
