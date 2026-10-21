@@ -49,8 +49,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install browser package dependencies
         run: cd packages/browser && npm ci
-      - name: Install Chromium
-        run: cd packages/browser && npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: cd packages/browser && npx playwright install --with-deps chromium firefox webkit
       - name: Test browser package
         run: cd packages/browser && npm run test:browser
       - name: Validate browser package archive
