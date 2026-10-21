@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -72,7 +73,7 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 		project[relativePath] = &fstest.MapFile{Data: content, Mode: 0o444}
 	}
 	if binaryCount != len(binaryFiles) {
-		return nil, fmt.Errorf("binary file map contains files without binary metadata")
+		return nil, errors.New("binary file map contains files without binary metadata")
 	}
 
 	return project, nil
