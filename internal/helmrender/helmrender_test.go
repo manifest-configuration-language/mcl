@@ -1,12 +1,40 @@
 package helmrender
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"helm.sh/helm/v4/pkg/chart/common"
 	v2 "helm.sh/helm/v4/pkg/chart/v2"
 )
+
+func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
+	t.Parallel()
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := fstest.MapFS{
+		"charts/app/Chart.yaml":          &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 0.1.0\n")},
+		"charts/app/templates/test.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\n")},
+	}
+	loaded, err := Load(LoadRequest{
+		Source: "./charts/app", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), SourceFS: project,
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Origin != "helm:charts/app" || loaded.LocalPath != filepath.Join(projectRoot, "charts", "app") {
+		t.Fatalf("Load() source identity = (%q, %q)", loaded.Origin, loaded.LocalPath)
+	}
+	loadedChart, ok := loaded.source.(*v2.Chart)
+	if !ok || len(loadedChart.Templates) != 1 || !strings.Contains(string(loadedChart.Templates[0].Data), "name: test") {
+		t.Fatalf("Load() did not preserve chart templates: %#v", loadedChart)
+	}
+}
 
 func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 	t.Parallel()

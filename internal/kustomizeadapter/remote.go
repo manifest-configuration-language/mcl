@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -100,6 +101,55 @@ func createOverlay(sourceRoot, buildDirectory string) (string, *overlayFileSyste
 	}
 
 	return overlayRoot, overlay, nil
+}
+
+func materializeSourceFS(source fs.FS) (string, error) {
+	root, err := os.MkdirTemp("", "mcl-kustomize-source-*")
+	if err != nil {
+		return "", err
+	}
+	var totalBytes int64
+	fileCount := 0
+	err = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if name == "." {
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("source contains unsupported symlink %q", name)
+		}
+		target := filepath.Join(root, filepath.FromSlash(name))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("source contains unsupported file %q", name)
+		}
+		fileCount++
+		if fileCount > maxSourceFiles || info.Size() > maxSourceBytes-totalBytes {
+			return fmt.Errorf("source exceeds the file-count or %d-byte limit", maxSourceBytes)
+		}
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
+			return err
+		}
+		totalBytes += int64(len(data))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o600)
+	})
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	return root, nil
 }
 
 func (fs *overlayFileSystem) ReadFile(path string) ([]byte, error) {

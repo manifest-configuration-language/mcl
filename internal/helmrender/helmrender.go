@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -133,6 +134,8 @@ type LoadRequest struct {
 	ProjectRoot string
 	SourcePath  string
 	Lock        *dependency.Lock
+	// SourceFS optionally supplies project files using root-relative io/fs paths.
+	SourceFS fs.FS
 }
 
 // RenderOptionsはHelm template評価へ渡す値を保持します。
@@ -238,6 +241,39 @@ func Load(request LoadRequest) (Chart, error) {
 		if request.Version != "" {
 			return Chart{}, errors.New("helm.render option version is only valid for remote Chart sources")
 		}
+		if request.SourceFS != nil {
+			projectPath, err := filepath.Rel(request.ProjectRoot, filepath.Clean(request.SourcePath))
+			if err != nil || projectPath == ".." || filepath.IsAbs(projectPath) || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
+				return Chart{}, fmt.Errorf("resolve Helm chart source path %q: outside project root", request.SourcePath)
+			}
+			relativeChartPath := path.Join(path.Dir(filepath.ToSlash(projectPath)), request.Source)
+			if relativeChartPath != "." && !fs.ValidPath(relativeChartPath) {
+				return Chart{}, fmt.Errorf("resolve Helm chart: invalid project path %q", relativeChartPath)
+			}
+			chartFS, err := fs.Sub(request.SourceFS, relativeChartPath)
+			if err != nil {
+				return Chart{}, fmt.Errorf("resolve Helm chart: %w", err)
+			}
+			chartPath, err := materializeChartFS(chartFS)
+			if err != nil {
+				return Chart{}, fmt.Errorf("materialize Helm chart: %w", err)
+			}
+			defer os.RemoveAll(chartPath)
+			if err := validateTree(chartPath); err != nil {
+				return Chart{}, err
+			}
+			loaded.ContentDigest, err = digestTree(chartPath)
+			if err != nil {
+				return Chart{}, err
+			}
+			loaded.LocalPath = filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeChartPath))
+			loaded.Origin = "helm:" + relativeChartPath
+			loaded.source, err = loader.Load(chartPath)
+			if err != nil {
+				return Chart{}, fmt.Errorf("load Helm chart: %w", err)
+			}
+			return validateLoadedChart(loaded)
+		}
 		chartPath, err := safepath.ResolveWithin(request.ProjectRoot, filepath.Join(filepath.Dir(request.SourcePath), filepath.FromSlash(request.Source)))
 		if err != nil {
 			return Chart{}, fmt.Errorf("resolve Helm chart: %w", err)
@@ -265,6 +301,10 @@ func Load(request LoadRequest) (Chart, error) {
 		}
 	}
 
+	return validateLoadedChart(loaded)
+}
+
+func validateLoadedChart(loaded Chart) (Chart, error) {
 	loadedChart, ok := loaded.source.(*v2.Chart)
 	if !ok {
 		return Chart{}, errors.New("loaded Helm Chart has an unsupported type")
@@ -554,6 +594,53 @@ func validateTree(root string) error {
 	}
 
 	return nil
+}
+
+func materializeChartFS(source fs.FS) (string, error) {
+	root, err := os.MkdirTemp("", "mcl-helm-chart-*")
+	if err != nil {
+		return "", err
+	}
+	var totalBytes int64
+	err = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if name == "." {
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("Helm chart contains unsupported symlink %q", name)
+		}
+		target := filepath.Join(root, filepath.FromSlash(name))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Helm chart contains unsupported file %q", name)
+		}
+		if info.Size() > maxChartBytes-totalBytes {
+			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
+		}
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
+			return err
+		}
+		totalBytes += int64(len(data))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o600)
+	})
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	return root, nil
 }
 
 func digestTree(root string) (string, error) {

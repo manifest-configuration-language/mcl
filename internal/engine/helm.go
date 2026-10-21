@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"math"
 	"path/filepath"
@@ -144,7 +145,7 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 	if operationOverride != "" {
 		options.operation = operationOverride
 	}
-	loaded, err := loadHelmChart(source, options, projectRoot, sourcePath, dependencies)
+	loaded, err := loadHelmChart(source, options, projectRoot, sourcePath, dependencies, files)
 	if err != nil {
 		return RuntimeValue{}, err
 	}
@@ -163,9 +164,9 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 	return buildHelmBundle(rendered, allocations, files)
 }
 
-func loadHelmChart(source string, options helmRenderOptions, projectRoot, sourcePath string, dependencies *dependency.Lock) (helmLoadedChart, error) {
+func loadHelmChart(source string, options helmRenderOptions, projectRoot, sourcePath string, dependencies *dependency.Lock, files *projectFilesystem) (helmLoadedChart, error) {
 	return helmrender.Load(helmrender.LoadRequest{
-		Source: source, Version: options.version, ProjectRoot: projectRoot, SourcePath: sourcePath, Lock: dependencies,
+		Source: source, Version: options.version, ProjectRoot: projectRoot, SourcePath: sourcePath, Lock: dependencies, SourceFS: files.files,
 	})
 }
 
@@ -541,7 +542,7 @@ func helmApplyMappedSourceLocation(value *RuntimeValue, location SourceDiagnosti
 }
 
 func helmTemplateSource(chartSourcePath, chartRoot, filename string, filesystems ...*projectFilesystem) (string, []byte, bool) {
-	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, chartSourcePath)
+	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, chartSourcePath, filesystems...)
 	if !ok {
 		return "", nil, false
 	}
@@ -557,7 +558,7 @@ func helmStaticTemplateSourcePath(rendered []byte, filename, chartRoot, localCha
 	if bytes.Contains(rendered, []byte("{{")) {
 		return "", false
 	}
-	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, localChartPath)
+	sourcePath, ok := helmLocalChartSourcePath(filename, chartRoot, localChartPath, filesystems...)
 	if !ok {
 		return "", false
 	}
@@ -573,7 +574,7 @@ func readHelmProjectFile(filename, localChartPath string, filesystems ...*projec
 	return projectFilesystemFor(localChartPath, filesystems).readLimitedFile(filename)
 }
 
-func helmLocalChartSourcePath(filename, chartRoot, localChartPath string) (string, bool) {
+func helmLocalChartSourcePath(filename, chartRoot, localChartPath string, filesystems ...*projectFilesystem) (string, bool) {
 	if filename == "" || chartRoot == "" || localChartPath == "" {
 		return "", false
 	}
@@ -581,7 +582,19 @@ func helmLocalChartSourcePath(filename, chartRoot, localChartPath string) (strin
 	if err != nil || relativePath == "." || filepath.IsAbs(relativePath) || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
 		return "", false
 	}
-	sourcePath, err := filepath.EvalSymlinks(filepath.Join(localChartPath, relativePath))
+	joinedPath := filepath.Join(localChartPath, relativePath)
+	filesystem := projectFilesystemFor(localChartPath, filesystems)
+	if !filesystem.osBacked {
+		projectRelative, err := filesystem.relativePath(joinedPath)
+		if err != nil {
+			return "", false
+		}
+		if _, err := fs.Stat(filesystem.files, projectRelative); err != nil {
+			return "", false
+		}
+		return joinedPath, true
+	}
+	sourcePath, err := filepath.EvalSymlinks(joinedPath)
 	if err != nil || !pathWithin(localChartPath, sourcePath) {
 		return "", false
 	}

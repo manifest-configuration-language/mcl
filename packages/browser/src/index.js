@@ -142,7 +142,9 @@ export function createMclRuntime(options = {}) {
     if (entries.length === 0) throw new TypeError("Project must contain at least one MCL source file");
     if (entries.length > maxProjectFiles) throw new RangeError(`Project has more than ${maxProjectFiles} files`);
     let totalBytes = 0;
-    const projectFiles = {};
+    // Project paths are user controlled; a null prototype keeps names such as
+    // `__proto__` as ordinary file paths instead of mutating the file map.
+    const projectFiles = Object.create(null);
     for (const [filePath, content] of entries) {
       if (!isSafeRelativePath(filePath)) throw new TypeError(`Invalid project file path: ${filePath}`);
       if (typeof content !== "string" && !(content instanceof Uint8Array)) throw new TypeError(`Project file ${filePath} must be a string or Uint8Array`);

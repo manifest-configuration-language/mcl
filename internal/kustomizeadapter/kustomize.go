@@ -3,6 +3,7 @@ package kustomizeadapter
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,6 +31,8 @@ type Request struct {
 	ProjectRoot  string
 	SourcePath   string
 	Dependencies *dependency.Lock
+	// SourceFS optionally supplies the project files using root-relative io/fs paths.
+	SourceFS fs.FS
 }
 
 // Resultはbuild済みYAMLとsource provenanceを保持します。
@@ -73,6 +76,7 @@ type buildSource struct {
 	sourceMapDirectory string
 	buildDirectory     string
 	origin             string
+	removeRoot         bool
 }
 
 type overlay struct {
@@ -94,7 +98,7 @@ func Build(request Request) (result Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if source.root != "" && strings.HasPrefix(request.Source, "git+") {
+	if source.removeRoot {
 		defer os.RemoveAll(source.root)
 	}
 	workingRoot, fileSystem, err := createOverlay(source.root, source.buildDirectory)
@@ -235,6 +239,29 @@ func resolveSource(request Request) (buildSource, error) {
 		}
 		if strings.Contains(request.Source, "://") || filepath.IsAbs(request.Source) {
 			return buildSource{}, errors.New("kustomize.build accepts only local relative or fixed Git sources")
+		}
+		if request.SourceFS != nil {
+			projectPath, err := filepath.Rel(request.ProjectRoot, filepath.Clean(request.SourcePath))
+			if err != nil || projectPath == ".." || filepath.IsAbs(projectPath) || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
+				return buildSource{}, fmt.Errorf("resolve Kustomize source path %q: outside project root", request.SourcePath)
+			}
+			relativeSource := path.Join(path.Dir(filepath.ToSlash(projectPath)), request.Source)
+			if relativeSource != "." && !fs.ValidPath(relativeSource) {
+				return buildSource{}, fmt.Errorf("resolve Kustomize source: invalid project path %q", relativeSource)
+			}
+			sourceFS, err := fs.Sub(request.SourceFS, relativeSource)
+			if err != nil {
+				return buildSource{}, fmt.Errorf("resolve Kustomize source: %w", err)
+			}
+			root, err := materializeSourceFS(sourceFS)
+			if err != nil {
+				return buildSource{}, fmt.Errorf("materialize Kustomize source: %w", err)
+			}
+			originalRoot := filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeSource))
+			source.root, source.localRoot, source.sourceMapRoot = root, originalRoot, originalRoot
+			source.origin = "kustomize:" + filepath.ToSlash(filepath.Join(filepath.Dir(projectPath), filepath.FromSlash(request.Source), filepath.FromSlash(request.Directory)))
+			source.removeRoot = true
+			return source, nil
 		}
 		root, err := safepath.ResolveWithin(request.ProjectRoot, filepath.Join(filepath.Dir(request.SourcePath), filepath.FromSlash(request.Source)))
 		if err != nil {

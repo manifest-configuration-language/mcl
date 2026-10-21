@@ -125,7 +125,9 @@ async function initialize() {
 }
 
 function encodeFiles(files) {
-  const encoded = {};
+  // Paths come from project input and may legally contain object property
+  // names such as `__proto__`; keep them as data when serializing the request.
+  const encoded = Object.create(null);
   for (const [filePath, content] of Object.entries(files ?? {})) {
     if (typeof content === "string") {
       encoded[filePath] = { encoding: "utf8", content };

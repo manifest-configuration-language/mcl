@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
@@ -57,6 +58,30 @@ func TestBuildIgnoresUnreferencedFilesAndDirectories(t *testing.T) {
 	}
 	if !strings.Contains(string(result.YAML), "name: app") {
 		t.Fatalf("Build() output does not include the referenced deployment:\n%s", result.YAML)
+	}
+}
+
+func TestBuildReadsRootRelativeProjectFS(t *testing.T) {
+	t.Parallel()
+
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := fstest.MapFS{
+		"deployment/base/kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n- deployment.yaml\n")},
+		"deployment/base/deployment.yaml":    &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")},
+	}
+	result, err := Build(Request{
+		Source: "./deployment", Directory: "base", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), SourceFS: project,
+		Dependencies: &dependency.Lock{},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !strings.Contains(string(result.YAML), "name: app") {
+		t.Fatalf("Build() output does not include the root-relative project resource:\n%s", result.YAML)
 	}
 }
 
