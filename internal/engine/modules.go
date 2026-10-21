@@ -596,6 +596,56 @@ func DependentMCLSources(target string, workspaceRoots []string, overlays map[st
 	return index.Sources(target, workspaceRoots, overlays)
 }
 
+// DependentMCLSourcesForProjectFS returns project modules that directly or indirectly import targetPath.
+// Project and target paths use an absolute logical root and slash-separated root-relative names.
+func DependentMCLSourcesForProjectFS(projectRoot, targetPath string, files fs.FS) (map[string]string, error) {
+	if files == nil {
+		return nil, errors.New("project filesystem is required")
+	}
+	if !filepath.IsAbs(projectRoot) {
+		return nil, fmt.Errorf("project root %q must be absolute", projectRoot)
+	}
+	if !validProjectPath(targetPath) || filepath.Ext(targetPath) != ".mcl" {
+		return nil, fmt.Errorf("invalid project target path %q", targetPath)
+	}
+	root := filepath.Clean(projectRoot)
+	target := filepath.Join(root, filepath.FromSlash(targetPath))
+	filesystem := newProjectFilesystem(root, files)
+	relative, err := filesystem.relativePath(target)
+	if err != nil {
+		return nil, err
+	}
+	info, err := fs.Stat(filesystem.files, relative)
+	if err != nil {
+		return nil, fmt.Errorf("inspect target module %q: %w", target, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("target module %q must be a regular file", target)
+	}
+	searchRoots := []string{root}
+	sources, err := collectDependentSourcesWithFilesystem(filesystem, target, root, searchRoots)
+	if err != nil {
+		return nil, err
+	}
+	importers := make(map[string][]string)
+	for modulePath, source := range sources {
+		module, err := ParseAST(source)
+		if err != nil {
+			return nil, fmt.Errorf("parse workspace module %q: %w", modulePath, sourceDiagnosticPath(modulePath, err))
+		}
+		graph := moduleGraph{root: root, files: filesystem}
+		imports, err := graph.imports(modulePath, module)
+		if err != nil {
+			return nil, err
+		}
+		for _, imported := range imports {
+			importers[imported.path] = append(importers[imported.path], modulePath)
+		}
+	}
+
+	return dependentModuleSources(target, sources, importers)
+}
+
 func dependentSourceScope(target string, workspaceRoots []string) (string, string, []string, error) {
 	absolute, err := filepath.Abs(target)
 	if err != nil {

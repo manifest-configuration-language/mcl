@@ -38,6 +38,35 @@ func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
 	}
 }
 
+func TestDependentMCLSourcesForProjectFS(t *testing.T) {
+	t.Parallel()
+	const targetFilename = "target.mcl"
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := fstest.MapFS{
+		targetFilename:             &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		"modules/middle.mcl":       &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\nexport let value = target.value\n")},
+		"modules/main.mcl":         &fstest.MapFile{Data: []byte("import \"./middle.mcl\" as middle\nemit middle.value\n")},
+		"modules/unrelated.mcl":    &fstest.MapFile{Data: []byte("emit 1\n")},
+		".mcl/cache/cached.mcl":    &fstest.MapFile{Data: []byte("import \"../../target.mcl\" as target\n")},
+		"node_modules/ignored.mcl": &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\n")},
+	}
+
+	sources, err := DependentMCLSourcesForProjectFS(root, targetFilename, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{targetFilename, "modules/middle.mcl", "modules/main.mcl"} {
+		if _, exists := sources[filepath.Join(root, filepath.FromSlash(relative))]; !exists {
+			t.Errorf("dependent source result omitted %q", relative)
+		}
+	}
+	for _, relative := range []string{"modules/unrelated.mcl", ".mcl/cache/cached.mcl", "node_modules/ignored.mcl"} {
+		if _, exists := sources[filepath.Join(root, filepath.FromSlash(relative))]; exists {
+			t.Errorf("dependent source result included %q", relative)
+		}
+	}
+}
+
 func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
