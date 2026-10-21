@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcl.walnuts.dev/schemas/wasm-protocol-1.json",
+  "title": "MCL WebAssembly request and response protocol",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "properties": {
+        "requestId": {},
+        "revision": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 },
+        "operation": { "enum": ["parse", "lint", "format", "check", "evaluate", "render"] },
+        "entrypoint": { "type": "string", "description": "Project-relative MCL source path. Defaults to main.mcl." },
+        "source": { "type": "string", "description": "UTF-8 entrypoint source, limited to 65536 bytes by the runtime." },
+        "files": {
+          "type": "object",
+          "maxProperties": 4096,
+          "description": "Project files are limited to 16 MiB each and 64 MiB total including source.",
+          "propertyNames": {
+            "allOf": [
+              { "minLength": 1 },
+              { "not": { "pattern": "(^/|\\\\|(^|/)\\.\\.?(/|$)|//|/$)" } }
+            ]
+          },
+          "additionalProperties": { "$ref": "#/$defs/fileInput" }
+        }
+      },
+      "required": ["operation", "source"],
+      "additionalProperties": false
+    },
+    "fileInput": {
+      "type": "object",
+      "properties": {
+        "encoding": { "enum": ["utf8", "base64"] },
+        "content": { "type": "string" }
+      },
+      "required": ["encoding", "content"],
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "properties": {
+        "requestId": {},
+        "revision": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 },
+        "ok": { "type": "boolean" },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/parseResult" },
+            { "$ref": "#/$defs/lintResult" },
+            { "$ref": "#/$defs/formatResult" },
+            { "$ref": "#/$defs/checkResult" },
+            { "$ref": "#/$defs/evaluateResult" },
+            { "$ref": "#/$defs/renderResult" }
+          ]
+        },
+        "error": { "$ref": "#/$defs/error" }
+      },
+      "required": ["ok"],
+      "additionalProperties": false
+    },
+    "parseResult": {
+      "type": "object",
+      "properties": { "declarations": { "type": "integer", "minimum": 0 } },
+      "required": ["declarations"],
+      "additionalProperties": false
+    },
+    "lintResult": { "type": "array", "items": { "$ref": "#/$defs/lintDiagnostic" } },
+    "lintDiagnostic": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "severity": { "type": "string" },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["code", "message", "severity", "line", "column"],
+      "additionalProperties": false
+    },
+    "formatResult": {
+      "type": "object",
+      "properties": { "source": { "type": "string" } },
+      "required": ["source"],
+      "additionalProperties": false
+    },
+    "checkResult": {
+      "type": "object",
+      "properties": { "valid": { "const": true }, "artifacts": { "type": "integer", "minimum": 0 } },
+      "required": ["valid", "artifacts"],
+      "additionalProperties": false
+    },
+    "evaluateResult": {
+      "type": "object",
+      "properties": { "artifacts": { "type": "integer", "minimum": 0 }, "renderedBytes": { "type": "integer", "minimum": 0 } },
+      "required": ["artifacts", "renderedBytes"],
+      "additionalProperties": false
+    },
+    "renderResult": {
+      "type": "object",
+      "properties": { "yaml": { "type": "string" }, "artifacts": { "type": "integer", "minimum": 0 } },
+      "required": ["yaml", "artifacts"],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ]
+}

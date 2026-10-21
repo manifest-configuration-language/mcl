@@ -9,6 +9,7 @@ import (
 
 type schemaAnalysisLoader struct {
 	root         string
+	files        *projectFilesystem
 	graph        *moduleGraph
 	entry        string
 	entrySource  string
@@ -19,8 +20,11 @@ type schemaAnalysisLoader struct {
 }
 
 func (loader *schemaAnalysisLoader) analyze(path string, entry bool) (map[string]ResolvedType, error) {
+	if loader.files == nil {
+		loader.files = newOSProjectFilesystem(loader.root)
+	}
 	if loader.graph == nil {
-		loader.graph = &moduleGraph{root: loader.root, active: loader.active}
+		loader.graph = &moduleGraph{root: loader.root, files: loader.files, active: loader.active}
 	}
 	if loader.graph.isActive(path) {
 		return nil, fmt.Errorf("module import cycle includes %q", path)
@@ -37,7 +41,8 @@ func (loader *schemaAnalysisLoader) analyze(path string, entry bool) (map[string
 
 	source := loader.entrySource
 	if path != loader.entry {
-		data, err := readLimitedFileWithLimit(path, maxMCLSourceBytes)
+		files := projectFilesystemFor(loader.root, []*projectFilesystem{loader.files})
+		data, err := files.readLimitedFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read module %q: %w", path, err)
 		}
@@ -54,7 +59,7 @@ func (loader *schemaAnalysisLoader) analyze(path string, entry bool) (map[string
 	if loader.analysis == nil {
 		loader.analysis = &TypeAnalysisContext{}
 	}
-	if err := loadTypeSchemaFiles(types, loader.root, path, loader.dependencies, loader.analysis); err != nil {
+	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	imports, err := loader.graph.imports(path, module)

@@ -16,7 +16,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,12 +39,11 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-
-      - parallel:
-          - name: Run project quality checks
-            run: mise run quality:check
-          - name: Lint GitHub Actions workflows
-            run: mise run actions:lint
-          - name: Build browser package assets
-            run: cd packages/browser && npm ci && npm run build:wasm
-          - name: Check language grammar parity
-            run: cd packages/language && npm ci && npm run check:parity
+      - name: Run project quality checks
+        run: mise run quality:check
+      - name: Lint GitHub Actions workflows
+        run: mise run actions:lint
+      - name: Run browser runtime smoke test
+        run: cd packages/browser && npm ci && npx playwright install --with-deps chromium && npm run test:browser
+      - name: Check language grammar parity
+        run: cd packages/language && npm ci && npm run check:parity

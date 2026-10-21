@@ -50,7 +50,7 @@ func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string
 		return nil, err
 	}
 	loader := schemaAnalysisLoader{
-		root: root, entry: modulePath, entrySource: source, dependencies: dependencies,
+		root: root, files: newOSProjectFilesystem(root), entry: modulePath, entrySource: source, dependencies: dependencies,
 		cache: make(map[string]map[string]ResolvedType), active: make(map[string]bool), analysis: &TypeAnalysisContext{},
 	}
 	types, err := loader.analyze(modulePath, true)
@@ -67,7 +67,7 @@ func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string
 			continue
 		}
 		typeExpr := semanticTypeFromSyntax(*declaration.Annotation)
-		if err := loadSchemaTypes(&typeExpr, root, modulePath, dependencies, loader.analysis); err != nil {
+		if err := loadSchemaTypesWithFilesystem(&typeExpr, root, modulePath, dependencies, loader.files, loader.analysis); err != nil {
 			return nil, err
 		}
 		schema := schemaForType(typeExpr, types, make(map[string]bool), loader.analysis)
@@ -121,7 +121,7 @@ func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]st
 		return nil, err
 	}
 	loader := schemaAnalysisLoader{
-		root: root, entry: modulePath, entrySource: source, dependencies: dependencies,
+		root: root, files: newOSProjectFilesystem(root), entry: modulePath, entrySource: source, dependencies: dependencies,
 		cache: make(map[string]map[string]ResolvedType), active: make(map[string]bool), analysis: &TypeAnalysisContext{},
 	}
 	types, err := loader.analyze(modulePath, true)
@@ -133,7 +133,7 @@ func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]st
 		return nil, errors.New("schema type probe has no annotation")
 	}
 	typeExpr := semanticTypeFromSyntax(*declaration.Annotation)
-	if err := loadSchemaTypes(&typeExpr, root, modulePath, dependencies, loader.analysis); err != nil {
+	if err := loadSchemaTypesWithFilesystem(&typeExpr, root, modulePath, dependencies, loader.files, loader.analysis); err != nil {
 		return nil, err
 	}
 	schema := schemaForType(typeExpr, types, make(map[string]bool), loader.analysis)

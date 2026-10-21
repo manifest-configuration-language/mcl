@@ -1,0 +1,151 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MCL",
+  "scopeName": "source.mcl",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#multiline-strings"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#function-calls"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.mcl",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mcl",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.mcl"
+        }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.mcl"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.mcl",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "multiline-strings": {
+      "name": "string.quoted.multi.double.mcl",
+      "begin": "\"\"\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.mcl"
+        }
+      },
+      "end": "\"\"\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.mcl"
+        }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mcl",
+          "match": "\\b(?:import|as|export|let|type|fn|emit|validate|require|using|for|in|if|else|each|descendants|where|select|bySchema|minMatches|requireEach|requireDescendants)\\b"
+        },
+        {
+          "name": "keyword.operator.mcl",
+          "match": "\\b(?:and|or|not|is)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.mcl",
+          "match": "\\b(?:true|false|null|output)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.mcl",
+          "match": "\\b(?:Any|Null|Bool|Int|Decimal|String|List|Map|Function|Node|Schema)\\b"
+        }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "name": "entity.name.function.mcl",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.mcl",
+          "match": "\\b\\d+(?:\\.\\d+)?\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.mcl",
+          "match": "(?:==|!=|<=|>=|\\+|-|\\*|/|%|=|\\||<|>)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.key-value.mcl",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.separator.comma.mcl",
+          "match": ","
+        },
+        {
+          "name": "punctuation.accessor.mcl",
+          "match": "\\.|\\?"
+        }
+      ]
+    }
+  }
+}

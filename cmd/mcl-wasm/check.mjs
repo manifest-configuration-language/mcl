@@ -66,10 +66,21 @@ try {
   const nodeEmits = [...nodesFixture.matchAll(/^emit .*$/gm)].map(([line]) => line).join('\n');
   const ruleDeclarations = rulesFixture.replace(/^emit container\n?/m, '').replace(/^validate container using hardened\n?/m, '').trimEnd();
   const source = `${nodeDeclarations}\n${ruleDeclarations}\n${nodeEmits}\nemit container\nvalidate container using hardened\n`;
-  const invoke = (operation, inputSource = source, files = {}) => JSON.parse(globalThis.mclWasm.run(JSON.stringify({
-    requestId: `${operation}-request`, revision: 9, operation, source: inputSource,
-    files: Object.fromEntries(Object.entries(files).map(([relativePath, content]) => [relativePath, { encoding: 'utf8', content }])),
-  })));
+  const invoke = (operation, inputSource = source, files = {}) => {
+    rmSync(projectPath, { recursive: true, force: true });
+    mkdirSync(projectPath, { recursive: true });
+    writeFileSync(path.join(projectPath, 'main.mcl'), inputSource);
+    for (const [relativePath, content] of Object.entries(files)) {
+      const filePath = path.join(projectPath, relativePath);
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, content);
+    }
+
+    return JSON.parse(globalThis.mclWasm.run(JSON.stringify({
+      requestId: `${operation}-request`, revision: 9, operation, source: inputSource,
+      files: Object.fromEntries(Object.entries(files).map(([relativePath, content]) => [relativePath, { encoding: 'utf8', content }])),
+    })));
+  };
   for (const operation of ['parse', 'lint', 'format', 'evaluate', 'check']) {
     const response = invoke(operation);
     if (!response.ok || response.requestId !== `${operation}-request` || response.revision !== 9) {

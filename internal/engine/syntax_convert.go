@@ -67,7 +67,7 @@ func resolveTypeFromSyntax(expression syntax.TypeExpr, state *EvaluationState) (
 	if state == nil || state.Module == nil {
 		return resolved, nil
 	}
-	if err := loadSchemaTypes(&resolved, state.Module.ProjectRoot, state.SourcePath, state.Module.Dependencies, state.Module.Analysis); err != nil {
+	if err := loadSchemaTypesWithFilesystem(&resolved, state.Module.ProjectRoot, state.SourcePath, state.Module.Dependencies, state.Module.filesystem, state.Module.Analysis); err != nil {
 		return ResolvedType{}, err
 	}
 

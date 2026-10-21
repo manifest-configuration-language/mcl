@@ -1,0 +1,4 @@
+type Names = List<String>
+fn identity(value: String): String = value
+let name = identity("mcl")
+emit name

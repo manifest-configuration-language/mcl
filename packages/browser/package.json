@@ -1,0 +1,39 @@
+{
+  "name": "@mcl/browser",
+  "version": "0.1.0",
+  "description": "Run MCL projects in a browser Web Worker using the Go WebAssembly runtime.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "build:wasm": "node ./scripts/build-wasm.mjs",
+    "test:browser": "npm run build:wasm && node ./scripts/smoke-browser.mjs",
+    "prepack": "npm run build:wasm"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "dependencies": {
+    "buffer": "6.0.3",
+    "memfs": "4.80.0",
+    "path-browserify": "1.0.1"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1",
+    "vite": "8.3.4",
+    "vite-plugin-node-polyfills": "^0.28.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

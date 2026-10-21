@@ -36,6 +36,7 @@ type moduleLoader struct {
 	//nolint:containedctx // Contextはモジュール評価とAdapter呼び出しの間で共有します。
 	ctx           context.Context
 	root          string
+	files         *projectFilesystem
 	graph         *moduleGraph
 	entry         string
 	entryText     string
@@ -781,6 +782,10 @@ func dependentModuleSources(target string, sources map[string]string, importers 
 }
 
 func evaluateFile(ctx context.Context, path string, update bool, operation string) (Bundle, error) {
+	return evaluateFileWithFilesystem(ctx, path, update, operation, nil)
+}
+
+func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, files *projectFilesystem) (Bundle, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
 	}
@@ -788,17 +793,28 @@ func evaluateFile(ctx context.Context, path string, update bool, operation strin
 	if err != nil {
 		return Bundle{}, err
 	}
-	canonical, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return Bundle{}, err
+	var canonical string
+	root := ""
+	if files == nil {
+		canonical, err = filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return Bundle{}, err
+		}
+		root, err = discoverProjectRoot(filepath.Dir(canonical))
+		if err != nil {
+			return Bundle{}, err
+		}
+		files = newOSProjectFilesystem(root)
+	} else {
+		root = files.root
+		canonical, err = files.resolveReadPath(absolute)
+		if err != nil {
+			return Bundle{}, fmt.Errorf("resolve entry source %q: %w", absolute, err)
+		}
 	}
-	source, err := readLimitedFileWithLimit(canonical, maxMCLSourceBytes)
+	source, err := files.readLimitedFile(canonical)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read entry source %q: %w", canonical, err)
-	}
-	root, err := discoverProjectRoot(filepath.Dir(canonical))
-	if err != nil {
-		return Bundle{}, err
 	}
 	catalog, err := loadKubernetesResourceCatalog(root)
 	if err != nil {
@@ -810,7 +826,7 @@ func evaluateFile(ctx context.Context, path string, update bool, operation strin
 	}
 	loader := moduleLoader{
 		ctx:  ctx,
-		root: root, entry: canonical, entryText: string(source),
+		root: root, files: files, entry: canonical, entryText: string(source),
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, loadedModules: make(map[string]struct{}), budget: &functionBudget{},
 		analysis: &TypeAnalysisContext{},
@@ -891,6 +907,10 @@ func EvaluateSourceWithOverlaysAndDependencies(path, source string, overlays map
 
 // EvaluateSourceWithOverlaysAndDependenciesContextは呼び出し元のContextを使ってソースを評価し、読み込んだモジュールのパスを返します。
 func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path, source string, overlays map[string]string) (Bundle, []string, error) {
+	return evaluateSourceWithFilesystem(ctx, path, source, overlays, nil)
+}
+
+func evaluateSourceWithFilesystem(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem) (Bundle, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, nil, err
 	}
@@ -898,9 +918,15 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 	if err != nil {
 		return Bundle{}, nil, err
 	}
-	root, err := discoverProjectRoot(filepath.Dir(absolute))
-	if err != nil {
-		return Bundle{}, nil, err
+	root := ""
+	if files == nil {
+		root, err = discoverProjectRoot(filepath.Dir(absolute))
+		if err != nil {
+			return Bundle{}, nil, err
+		}
+		files = newOSProjectFilesystem(root)
+	} else {
+		root = files.root
 	}
 	catalog, err := loadKubernetesResourceCatalog(root)
 	if err != nil {
@@ -911,8 +937,12 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 		return Bundle{}, nil, err
 	}
 	entry := absolute
-	if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
-		entry = canonical
+	if files.osBacked {
+		if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
+			entry = canonical
+		}
+	} else if _, err := files.relativePath(absolute); err != nil {
+		return Bundle{}, nil, fmt.Errorf("resolve entry source %q: %w", absolute, err)
 	}
 	canonicalOverlays := make(map[string]string, len(overlays))
 	for overlayPath, overlaySource := range overlays {
@@ -921,8 +951,10 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 			return Bundle{}, nil, err
 		}
 		canonicalOverlay := absoluteOverlay
-		if resolved, err := filepath.EvalSymlinks(absoluteOverlay); err == nil {
-			canonicalOverlay = resolved
+		if files.osBacked {
+			if resolved, err := filepath.EvalSymlinks(absoluteOverlay); err == nil {
+				canonicalOverlay = resolved
+			}
 		}
 		relative, err := filepath.Rel(root, canonicalOverlay)
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -933,6 +965,7 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 	loader := moduleLoader{
 		ctx:           ctx,
 		root:          root,
+		files:         files,
 		entry:         entry,
 		entryText:     source,
 		runtimeCache:  make(map[string][]RuntimeEntry),
@@ -965,6 +998,9 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if loader.ctx == nil {
 		loader.ctx = context.Background()
 	}
+	if loader.files == nil {
+		loader.files = newOSProjectFilesystem(loader.root)
+	}
 	if loader.runtimeCache == nil {
 		loader.runtimeCache = make(map[string][]RuntimeEntry)
 	}
@@ -989,7 +1025,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		}
 	}
 	if loader.graph == nil {
-		loader.graph = &moduleGraph{root: loader.root}
+		loader.graph = &moduleGraph{root: loader.root, files: loader.files}
 	}
 	if err := loader.graph.enter(path); err != nil {
 		return nil, nil, nil, err
@@ -1000,7 +1036,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		if overlaySource, exists := loader.overlays[path]; exists {
 			source = overlaySource
 		} else {
-			data, err := readLimitedFileWithLimit(path, maxMCLSourceBytes)
+			data, err := loader.files.readLimitedFile(path)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("read module %q: %w", path, err)
 			}
@@ -1016,10 +1052,10 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if err := loadTypeSchemaFiles(types, loader.root, path, loader.dependencies, loader.analysis); err != nil {
+	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis, ResourceCatalog: loader.catalog}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis, ResourceCatalog: loader.catalog}
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext, ResourceCatalog: loader.catalog}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)
@@ -1119,7 +1155,7 @@ func (loader *moduleLoader) loadedModulePaths() []string {
 
 func (loader *moduleLoader) resolveImport(importer, modulePath string) (string, error) {
 	if loader.graph == nil {
-		loader.graph = &moduleGraph{root: loader.root}
+		loader.graph = &moduleGraph{root: loader.root, files: loader.files}
 	}
 
 	return loader.graph.resolveImport(importer, modulePath)

@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	maxSourceBytes  = 64 << 10
-	maxProjectFiles = 4096
-	maxProjectBytes = 64 << 20
-	maxOutputBytes  = 1 << 20
-	evaluationTime  = 4 * time.Second
-	projectRoot     = "/mcl-project"
+	maxSourceBytes      = 64 << 10
+	maxProjectFiles     = 4096
+	maxProjectFileBytes = 16 << 20
+	maxProjectBytes     = 64 << 20
+	maxOutputBytes      = 1 << 20
+	evaluationTime      = 4 * time.Second
+	projectRoot         = "/mcl-project"
 )
 
 type fileInput struct {
@@ -34,11 +35,12 @@ type fileInput struct {
 }
 
 type request struct {
-	RequestID json.RawMessage      `json:"requestId"`
-	Revision  uint64               `json:"revision"`
-	Operation string               `json:"operation"`
-	Source    string               `json:"source"`
-	Files     map[string]fileInput `json:"files,omitempty"`
+	RequestID  json.RawMessage      `json:"requestId"`
+	Revision   uint64               `json:"revision"`
+	Operation  string               `json:"operation"`
+	Entrypoint string               `json:"entrypoint,omitempty"`
+	Source     string               `json:"source"`
+	Files      map[string]fileInput `json:"files,omitempty"`
 }
 
 type response struct {
@@ -84,6 +86,11 @@ func handle(raw string) string {
 		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", maxSourceBytes)}
 		return marshal(result)
 	}
+	entrypoint, err := projectEntrypoint(input.Entrypoint)
+	if err != nil {
+		result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: err.Error()}
+		return marshal(result)
+	}
 	if input.Operation == "format" {
 		formatted, err := engine.FormatSource(input.Source)
 		if err != nil {
@@ -110,13 +117,13 @@ func handle(raw string) string {
 		result.OK = true
 		result.Result = diagnostics(module, input.Source)
 	case "check", "evaluate", "render":
-		bundle, evalErr := evaluate(input.Source, input.Files)
+		bundle, evalErr := evaluate(input.Source, input.Files, entrypoint)
 		if evalErr != nil {
 			result.Error = diagnosticError(input.Source, evalErr)
 			return marshal(result)
 		}
 		if input.Operation == "check" || input.Operation == "render" {
-			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForFile(path.Join(browserProjectRoot(), "main.mcl"))
+			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForFile(path.Join(browserProjectRoot(), entrypoint))
 			if catalogErr != nil {
 				result.Error = diagnosticError(input.Source, catalogErr)
 				return marshal(result)
@@ -150,14 +157,14 @@ func handle(raw string) string {
 	return marshal(result)
 }
 
-func evaluate(source string, files map[string]fileInput) (engine.Bundle, error) {
-	if err := mountProject(source, files); err != nil {
+func evaluate(source string, files map[string]fileInput, entrypoint string) (engine.Bundle, error) {
+	if err := validateProject(source, files, entrypoint); err != nil {
 		return engine.Bundle{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
 	defer cancel()
 
-	return engine.EvaluateSourceWithOverlaysContext(ctx, path.Join(browserProjectRoot(), "main.mcl"), source, nil)
+	return engine.EvaluateSourceWithOverlaysContext(ctx, path.Join(browserProjectRoot(), entrypoint), source, nil)
 }
 
 func browserProjectRoot() string {
@@ -168,23 +175,13 @@ func browserProjectRoot() string {
 	return projectRoot
 }
 
-func mountProject(source string, files map[string]fileInput) error {
-	root := browserProjectRoot()
-	if err := os.RemoveAll(root); err != nil {
-		return fmt.Errorf("reset browser project filesystem: %w", err)
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return fmt.Errorf("create browser project filesystem: %w", err)
-	}
-	if err := os.WriteFile(path.Join(root, "main.mcl"), []byte(source), 0o600); err != nil {
-		return fmt.Errorf("write browser project entry: %w", err)
-	}
-	if len(files) > maxProjectFiles {
+func validateProject(source string, files map[string]fileInput, entrypoint string) error {
+	if len(files)+1 > maxProjectFiles {
 		return fmt.Errorf("project has more than %d files", maxProjectFiles)
 	}
-	totalBytes := 0
+	totalBytes := len(source)
 	for relativePath, input := range files {
-		if !filepath.IsLocal(relativePath) || path.Clean(relativePath) != relativePath || relativePath == "." || relativePath == "main.mcl" || strings.Contains(relativePath, "\\") {
+		if !filepath.IsLocal(relativePath) || path.Clean(relativePath) != relativePath || relativePath == "." || relativePath == entrypoint || strings.Contains(relativePath, "\\") {
 			return fmt.Errorf("invalid project file path %q", relativePath)
 		}
 		var content []byte
@@ -200,20 +197,27 @@ func mountProject(source string, files map[string]fileInput) error {
 		default:
 			return fmt.Errorf("project file %q encoding must be utf8 or base64", relativePath)
 		}
+		if len(content) > maxProjectFileBytes {
+			return fmt.Errorf("project file %q exceeds the %d-byte limit", relativePath, maxProjectFileBytes)
+		}
 		totalBytes += len(content)
 		if totalBytes > maxProjectBytes {
 			return fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
 		}
-		absolutePath := path.Join(root, relativePath)
-		if err := os.MkdirAll(path.Dir(absolutePath), 0o700); err != nil {
-			return fmt.Errorf("create project directory for %q: %w", relativePath, err)
-		}
-		if err := os.WriteFile(absolutePath, content, 0o600); err != nil {
-			return fmt.Errorf("write project file %q: %w", relativePath, err)
-		}
 	}
 
 	return nil
+}
+
+func projectEntrypoint(entrypoint string) (string, error) {
+	if entrypoint == "" {
+		return "main.mcl", nil
+	}
+	if !filepath.IsLocal(entrypoint) || path.Clean(entrypoint) != entrypoint || entrypoint == "." || strings.Contains(entrypoint, "\\") {
+		return "", fmt.Errorf("invalid project entrypoint %q", entrypoint)
+	}
+
+	return entrypoint, nil
 }
 
 func diagnostics(module engine.ModuleAST, source string) []map[string]any {

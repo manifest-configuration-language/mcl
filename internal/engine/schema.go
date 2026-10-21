@@ -11,11 +11,13 @@ import (
 	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
+	"github.com/manifest-configuration-language/mcl/internal/safepath"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 type projectSchemaLoader struct {
 	root         string
+	files        *projectFilesystem
 	dependencies *dependency.Lock
 	loadedFiles  map[string]struct{}
 	loadedURLs   map[string]struct{}
@@ -26,7 +28,8 @@ const maxSchemaFiles = 128
 
 const maxSchemaBytes = 32 << 20
 
-func compileSchema(source, projectRoot, modulePath string, dependencies *dependency.Lock) (*jsonschema.Schema, error) {
+func compileSchema(source, projectRoot, modulePath string, dependencies *dependency.Lock, filesystems ...*projectFilesystem) (*jsonschema.Schema, error) {
+	files := projectFilesystemFor(projectRoot, filesystems)
 	var resourceURL string
 	var data []byte
 	loadedFiles := make(map[string]struct{})
@@ -49,17 +52,20 @@ func compileSchema(source, projectRoot, modulePath string, dependencies *depende
 		if filepath.IsAbs(source) {
 			return nil, errors.New("schema() accepts only local relative paths or HTTPS URLs")
 		}
-		path, err := filepath.EvalSymlinks(filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(source)))
+		path := filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(source))
+		path, err := files.resolveReadPath(path)
 		if err != nil {
+			if errors.Is(err, safepath.ErrOutsideRoot) || !pathWithin(projectRoot, filepath.Clean(filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(source)))) {
+				return nil, fmt.Errorf("schema %q escapes the project directory", source)
+			}
+
 			return nil, fmt.Errorf("resolve Schema %q: %w", source, err)
 		}
-		if !pathWithin(projectRoot, path) {
-			return nil, fmt.Errorf("schema %q escapes the project directory", source)
-		}
-		data, err = readLimitedFile(path)
+		data, err = files.readLimitedFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read Schema %q: %w", source, err)
 		}
+
 		resourceURL = (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
 		loadedFiles[path] = struct{}{}
 	}
@@ -72,7 +78,7 @@ func compileSchema(source, projectRoot, modulePath string, dependencies *depende
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.UseLoader(&projectSchemaLoader{
-		root: projectRoot, dependencies: dependencies, loadedFiles: loadedFiles,
+		root: projectRoot, files: files, dependencies: dependencies, loadedFiles: loadedFiles,
 		loadedURLs: loadedURLs, loadedBytes: int64(len(data)),
 	})
 	if err := compiler.AddResource(resourceURL, document); err != nil {
@@ -97,14 +103,12 @@ func (loader *projectSchemaLoader) Load(source string) (any, error) {
 	if parsed.Scheme != "file" || parsed.Host != "" {
 		return nil, fmt.Errorf("schema reference %q is not a local file", source)
 	}
-	path, err := filepath.EvalSymlinks(filepath.FromSlash(parsed.Path))
+	path, err := loader.resolveFileURLPath(filepath.FromSlash(parsed.Path))
 	if err != nil {
 		return nil, err
 	}
-	if !pathWithin(loader.root, path) {
-		return nil, fmt.Errorf("schema reference %q escapes the project directory", source)
-	}
-	data, err := readLimitedFile(path)
+	files := projectFilesystemFor(loader.root, []*projectFilesystem{loader.files})
+	data, err := files.readLimitedFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +124,16 @@ func (loader *projectSchemaLoader) Load(source string) (any, error) {
 	}
 
 	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
+}
+
+func (loader *projectSchemaLoader) resolveFileURLPath(path string) (string, error) {
+	files := projectFilesystemFor(loader.root, []*projectFilesystem{loader.files})
+	resolved, err := files.resolveReadPath(path)
+	if errors.Is(err, safepath.ErrOutsideRoot) || err != nil && !pathWithin(loader.root, filepath.Clean(path)) {
+		return "", fmt.Errorf("schema reference escapes the project directory: %w", err)
+	}
+
+	return resolved, err
 }
 
 func (loader *projectSchemaLoader) loadExternal(source string) (any, error) {
@@ -148,10 +162,10 @@ func (loader *projectSchemaLoader) loadExternal(source string) (any, error) {
 	return jsonschema.UnmarshalJSON(bytes.NewReader(data))
 }
 
-func loadTypeSchemaFiles(types map[string]ResolvedType, projectRoot, modulePath string, dependencies *dependency.Lock, analyses ...*TypeAnalysisContext) error {
+func loadTypeSchemaFilesWithFilesystem(types map[string]ResolvedType, projectRoot, modulePath string, dependencies *dependency.Lock, files *projectFilesystem, analyses ...*TypeAnalysisContext) error {
 	for _, name := range slices.Sorted(maps.Keys(types)) {
 		typeExpr := types[name]
-		if err := loadSchemaTypes(&typeExpr, projectRoot, modulePath, dependencies, analyses...); err != nil {
+		if err := loadSchemaTypesWithFilesystem(&typeExpr, projectRoot, modulePath, dependencies, files, analyses...); err != nil {
 			return fmt.Errorf("type %q: %w", name, err)
 		}
 		types[name] = typeExpr

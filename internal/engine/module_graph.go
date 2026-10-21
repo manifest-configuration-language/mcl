@@ -3,6 +3,8 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -11,6 +13,7 @@ import (
 
 type moduleGraph struct {
 	root        string
+	files       *projectFilesystem
 	active      map[string]bool
 	loaded      map[string]struct{}
 	loadedBytes int64
@@ -85,8 +88,11 @@ func (graph *moduleGraph) imports(importer string, module ModuleAST) ([]moduleIm
 }
 
 func (graph *moduleGraph) resolveImport(importer, modulePath string) (string, error) {
-	if filepath.IsAbs(modulePath) {
+	if filepath.IsAbs(modulePath) || path.IsAbs(modulePath) {
 		return "", errors.New("absolute module paths are not allowed")
+	}
+	if graph.files != nil && !graph.files.osBacked {
+		return graph.resolveImportInFS(importer, modulePath)
 	}
 	absoluteImporter, err := filepath.Abs(importer)
 	if err != nil {
@@ -117,6 +123,22 @@ func (graph *moduleGraph) resolveImport(importer, modulePath string) (string, er
 	}
 
 	return canonical, nil
+}
+
+func (graph *moduleGraph) resolveImportInFS(importer, modulePath string) (string, error) {
+	importerPath, err := graph.files.relativePath(importer)
+	if err != nil {
+		return "", fmt.Errorf("resolve importer: %w", err)
+	}
+	joined := path.Clean(path.Join(path.Dir(importerPath), filepath.ToSlash(filepath.FromSlash(modulePath))))
+	if !fs.ValidPath(joined) {
+		return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
+	}
+	if _, err := fs.Stat(graph.files.files, joined); err != nil {
+		return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
+	}
+
+	return filepath.Join(graph.root, filepath.FromSlash(joined)), nil
 }
 
 func (graph *moduleGraph) ensureWithinRoot(path, modulePath string) error {

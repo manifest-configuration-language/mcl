@@ -9,6 +9,7 @@
   "requestId": "request-1",
   "revision": 12,
   "operation": "render",
+  "entrypoint": "app/main.mcl",
   "source": "emit resource\n",
   "files": {
     "mcl.toml": { "encoding": "utf8", "content": "" },
@@ -17,19 +18,19 @@
 }
 ```
 
-`operation`には`parse`、`lint`、`format`、`evaluate`、`check`、`render`を指定します。`files`のキーは仮想プロジェクトルートからの相対パスです。MCL import、`mcl.toml`、ローカルManifest、Helm Chart、Kustomize入力を含められます。`main.mcl`の内容には`source`を使います。
+`operation`には`parse`、`lint`、`format`、`evaluate`、`check`、`render`を指定します。`files`のキーは仮想プロジェクトルートからの相対パスです。MCL import、`mcl.toml`、ローカルManifest、Helm Chart、Kustomize入力を含められます。`entrypoint`には評価対象の相対パスを指定します。省略時は`main.mcl`を使います。選択したentrypointの内容には`source`を使い、同じパスを`files`にも指定できません。
 
 ## レスポンス
 
 成功時は`ok: true`と操作結果を返します。`render`は`result.yaml`、`format`は`result.source`、`check`は`result.valid`とリソース数を返します。失敗時は`ok: false`と`error`を返し、入力診断にはCodeMirrorと同じUTF-16列の`line`と`column`を含めます。両方の応答に要求の`requestId`と`revision`をそのまま含めるため、Worker呼び出し元は古い結果を破棄できます。
 
-入力ソースは64KiB、仮想ファイルは4096個かつ合計64MiB、整形またはレンダー結果は1MiBまでです。評価は4秒で中断します。
+入力ソースは64KiB、entrypointを含む仮想ファイルは4096個かつ1ファイル16MiB、entrypointを含む合計64MiB、整形またはレンダー結果は1MiBまでです。評価は4秒で中断します。
 
 ## ブラウザーのファイルシステム
 
 GoのWASMランタイムはNode互換の`globalThis.fs`、`globalThis.path`、`globalThis.process`を参照します。ブラウザーWorkerはメモリ上の仮想FSをこれらのAPIとして公開し、FSコールバックを同期的に呼び出す必要があります。GoのWASM syscall層はFSコールバックの完了を同期的に待つため、非同期コールバックは評価を停止させます。
 
-HTTPやOCIからの依存取得はブラウザーから利用する配信元のCORS、認証、ロックファイルの制約を受けます。ローカルの依存ファイルは`files`で渡せます。ネットワーク依存はロック済みのファイルとしてプロジェクトに含めてください。
+Browser RuntimeはWASMと`wasm_exec.js`を読み込んだ後に`fetch`を無効化するため、プロジェクト評価から外部ネットワークへ接続できません。ローカルの依存ファイルは`files`で渡してください。
 
 ## サイズ確認
 

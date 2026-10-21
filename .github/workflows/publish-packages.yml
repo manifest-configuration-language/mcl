@@ -1,0 +1,48 @@
+name: Publish npm Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          install: true
+          cache: false
+      - name: Verify package versions
+        run: |
+          for package in browser language; do
+            version="$(node -p "require('./packages/${package}/package.json').version")"
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              printf 'Tag %s does not match %s package version %s\n' "$GITHUB_REF_NAME" "$package" "$version" >&2
+              exit 1
+            fi
+          done
+      - name: Publish packages
+        run: |
+          set -euo pipefail
+          cd packages/browser
+          npm ci
+          npm publish --access public --provenance
+          cd ../language
+          npm ci
+          npm run check:parity
+          npm publish --access public --provenance

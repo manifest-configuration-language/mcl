@@ -1,0 +1,7 @@
+export let resource =
+  apiVersion: "v1"
+  kind: "ConfigMap"
+  metadata:
+    name: "mcl-browser-smoke"
+  data:
+    key: "value"

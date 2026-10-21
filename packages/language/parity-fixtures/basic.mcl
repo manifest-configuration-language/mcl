@@ -1,0 +1,2 @@
+let replicas = 3
+emit replicas + 1

@@ -161,7 +161,7 @@ func directTypeAliases(typeExpr ResolvedType) []string {
 	return aliases
 }
 
-func loadSchemaTypes(typeExpr *ResolvedType, projectRoot, modulePath string, dependencies *dependency.Lock, analyses ...*TypeAnalysisContext) error {
+func loadSchemaTypesWithFilesystem(typeExpr *ResolvedType, projectRoot, modulePath string, dependencies *dependency.Lock, files *projectFilesystem, analyses ...*TypeAnalysisContext) error {
 	if typeExpr == nil {
 		return nil
 	}
@@ -170,7 +170,7 @@ func loadSchemaTypes(typeExpr *ResolvedType, projectRoot, modulePath string, dep
 		analysis = analyses[0]
 	}
 	if typeExpr.SchemaPath != "" {
-		compiled, err := compileSchema(typeExpr.SchemaPath, projectRoot, modulePath, dependencies)
+		compiled, err := compileSchema(typeExpr.SchemaPath, projectRoot, modulePath, dependencies, files)
 		if err != nil {
 			return err
 		}
@@ -178,21 +178,21 @@ func loadSchemaTypes(typeExpr *ResolvedType, projectRoot, modulePath string, dep
 		analysis.registerSchema(typeExpr.SchemaID, compiled)
 	}
 	for index := range typeExpr.Options {
-		if err := loadSchemaTypes(&typeExpr.Options[index], projectRoot, modulePath, dependencies, analysis); err != nil {
+		if err := loadSchemaTypesWithFilesystem(&typeExpr.Options[index], projectRoot, modulePath, dependencies, files, analysis); err != nil {
 			return err
 		}
 	}
 	if typeExpr.Element != nil {
-		if err := loadSchemaTypes(typeExpr.Element, projectRoot, modulePath, dependencies, analysis); err != nil {
+		if err := loadSchemaTypesWithFilesystem(typeExpr.Element, projectRoot, modulePath, dependencies, files, analysis); err != nil {
 			return err
 		}
 	}
 	for index := range typeExpr.Fields {
-		if err := loadSchemaTypes(&typeExpr.Fields[index].Type, projectRoot, modulePath, dependencies, analysis); err != nil {
+		if err := loadSchemaTypesWithFilesystem(&typeExpr.Fields[index].Type, projectRoot, modulePath, dependencies, files, analysis); err != nil {
 			return err
 		}
 	}
-	if err := loadSchemaTypes(typeExpr.AdditionalProperties, projectRoot, modulePath, dependencies, analysis); err != nil {
+	if err := loadSchemaTypesWithFilesystem(typeExpr.AdditionalProperties, projectRoot, modulePath, dependencies, files, analysis); err != nil {
 		return err
 	}
 

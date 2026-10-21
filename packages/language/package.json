@@ -1,0 +1,30 @@
+{
+  "name": "@mcl/language",
+  "version": "0.1.0",
+  "description": "MCL TextMate grammar and CodeMirror language support.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": ["src", "README.md"],
+  "exports": {
+    ".": { "types": "./src/index.d.ts", "import": "./src/index.js" },
+    "./textmate": "./src/mcl.tmLanguage.json"
+  },
+  "scripts": {
+    "build": "lezer-generator src/mcl.grammar -o src/parser.js",
+    "check:parity": "npm run build && node scripts/check-parity.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@lezer/highlight": "1.2.5",
+    "@lezer/lr": "1.4.11"
+  },
+  "devDependencies": {
+    "@lezer/generator": "1.8.1"
+  },
+  "peerDependencies": {
+    "@codemirror/language": ">=6 <7",
+    "@codemirror/state": ">=6 <7",
+    "@codemirror/view": ">=6 <7"
+  },
+  "publishConfig": { "access": "public" }
+}

@@ -1,0 +1,2 @@
+import "modules/resource.mcl" as resources
+emit resources.resource
