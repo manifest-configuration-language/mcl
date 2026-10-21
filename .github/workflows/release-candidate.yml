@@ -32,10 +32,55 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+              printf 'Invalid release tag: %s\n' "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+            for package in browser language; do
+              package_version="$(node -p "require('./packages/${package}/package.json').version")"
+              if [ "$package_version" != "$version" ]; then
+                printf 'Tag %s does not match %s package version %s\n' "$GITHUB_REF_NAME" "$package" "$package_version" >&2
+                exit 1
+              fi
+            done
           else
             version="0.0.0-candidate.${GITHUB_SHA:0:12}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install browser package dependencies
+        run: cd packages/browser && npm ci
+      - name: Install Chromium
+        run: cd packages/browser && npx playwright install --with-deps chromium
+      - name: Test browser package
+        run: cd packages/browser && npm run test:browser
+      - name: Validate browser package archive
+        run: |
+          set -euo pipefail
+          cd packages/browser
+          npm pack --dry-run --ignore-scripts --json > "$RUNNER_TEMP/browser-pack.json"
+          node - "$RUNNER_TEMP/browser-pack.json" dist/mcl.wasm dist/wasm_exec.js <<'NODE'
+          const fs = require('node:fs');
+          const [archive, ...required] = process.argv.slice(2);
+          const files = JSON.parse(fs.readFileSync(archive, 'utf8'))[0].files.map(({ path }) => path);
+          const missing = required.filter((path) => !files.includes(path));
+          if (missing.length) throw new Error(`Browser package is missing: ${missing.join(', ')}`);
+          NODE
+      - name: Install language package dependencies
+        run: cd packages/language && npm ci
+      - name: Check language grammar parity
+        run: cd packages/language && npm run check:parity
+      - name: Validate language package archive
+        run: |
+          set -euo pipefail
+          cd packages/language
+          npm pack --dry-run --ignore-scripts --json > "$RUNNER_TEMP/language-pack.json"
+          node - "$RUNNER_TEMP/language-pack.json" src/parser.js src/mcl.tmLanguage.json <<'NODE'
+          const fs = require('node:fs');
+          const [archive, ...required] = process.argv.slice(2);
+          const files = JSON.parse(fs.readFileSync(archive, 'utf8'))[0].files.map(({ path }) => path);
+          const missing = required.filter((path) => !files.includes(path));
+          if (missing.length) throw new Error(`Language package is missing: ${missing.join(', ')}`);
+          NODE
       - name: Run release checks
         run: mise run quality:check
       - name: Validate GoReleaser configuration
