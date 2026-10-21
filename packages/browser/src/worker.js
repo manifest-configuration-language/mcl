@@ -71,6 +71,10 @@ async function initialize() {
     const go = new Go();
     const response = await runtimeFetch(runtimeAssets.wasmURL);
     if (!response.ok) throw new Error(`Unable to load MCL WebAssembly: ${response.status}`);
+    // The only network request available to the worker is the SDK-owned WASM load.
+    // Deny fetch before starting Go so evaluated projects cannot race initialization.
+    globalThis.fetch = () => Promise.reject(new TypeError("Network access is disabled in the MCL runtime"));
+    networkAccessDenied = true;
     let instance;
     try {
       ({ instance } = await WebAssembly.instantiateStreaming(response.clone(), go.importObject));
@@ -79,8 +83,6 @@ async function initialize() {
     }
     void go.run(instance);
     while (!globalThis.mclWasmReady) await new Promise((resolve) => setTimeout(resolve, 0));
-    globalThis.fetch = () => Promise.reject(new TypeError("Network access is disabled in the MCL runtime"));
-    networkAccessDenied = true;
     postMessage({ type: "ready" });
   })().catch((error) => {
     postMessage({ type: "fatal", message: error instanceof Error ? error.message : String(error) });

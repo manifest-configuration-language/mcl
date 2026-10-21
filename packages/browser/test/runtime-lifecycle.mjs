@@ -174,4 +174,52 @@ export async function testRuntimeLifecycle() {
     assert.equal(workers[0].terminated, true);
     await assert.rejects(runtime.parse("type A = string"), /disposed/);
   }
+
+  {
+    let workerCreations = 0;
+    const { runtime } = runtimeWithWorkers(() => {
+      workerCreations++;
+      return new FakeWorker({ configure: ready, run(worker, request) { respond(worker, request.requestId); } });
+    });
+
+    assert.throws(() => runtime.openProject({}), /at least one MCL source file/);
+    for (const filePath of ["/main.mcl", "../main.mcl", "app/../main.mcl", "app\\main.mcl", "app//main.mcl"]) {
+      assert.throws(() => runtime.openProject({ [filePath]: "emit 1" }), /Invalid project file path/);
+    }
+    assert.throws(() => runtime.openProject({ "main.mcl": "", "large.bin": new Uint8Array(16 * 1024 * 1024 + 1) }), /exceeds the 16777216-byte limit/);
+    assert.throws(() => runtime.openProject({ "main.mcl": "", ...Object.fromEntries(Array.from({ length: 4096 }, (_, index) => [`file-${index}.bin`, ""])) }), /more than 4096 files/);
+
+    const oversized = runtime.openProject({ "main.mcl": "x".repeat(64 * 1024 + 1) });
+    await assert.rejects(oversized.parse(), /Source exceeds the 65536-byte limit/);
+    assert.equal(workerCreations, 0, "invalid project input should be rejected before creating a Worker");
+    runtime.dispose();
+  }
+
+  {
+    const diagnostic = { code: "MCL-LINT-TEST", message: "test diagnostic", severity: "warning", line: 2, column: 3 };
+    const { runtime } = runtimeWithWorkers(() => new FakeWorker({
+      configure: ready,
+      run(worker, request) {
+        if (request.operation === "lint") {
+          worker.emit("message", { type: "response", requestId: request.requestId, value: { ok: true, result: [diagnostic] } });
+          return;
+        }
+        worker.emit("message", {
+          type: "response",
+          requestId: request.requestId,
+          value: { ok: false, error: { code: "MCL-WASM-TEST", message: "evaluation failed", line: 4, column: 5 } },
+        });
+      },
+    }));
+
+    assert.deepEqual(await runtime.lint("emit 1"), { operation: "lint", diagnostics: [diagnostic] });
+    await assert.rejects(runtime.evaluate("emit 1"), (error) => {
+      assert.equal(error.name, "MclRuntimeError");
+      assert.equal(error.code, "MCL-WASM-TEST");
+      assert.equal(error.line, 4);
+      assert.equal(error.column, 5);
+      return true;
+    });
+    runtime.dispose();
+  }
 }
