@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "lezer-generator src/mcl.grammar -o src/parser.js",
-    "check:parity": "npm run build && node scripts/check-parity.mjs && node scripts/smoke-language-support.mjs",
+    "check:parity": "npm run build && node scripts/check-parity.mjs && node scripts/check-textmate.mjs && node scripts/smoke-language-support.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
@@ -19,7 +19,9 @@
     "@lezer/lr": "1.4.11"
   },
   "devDependencies": {
-    "@lezer/generator": "1.8.1"
+    "@lezer/generator": "1.8.1",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
   },
   "peerDependencies": {
     "@codemirror/autocomplete": ">=6 <7",

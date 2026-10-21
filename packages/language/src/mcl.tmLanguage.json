@@ -25,6 +25,9 @@
       "include": "#function-calls"
     },
     {
+      "include": "#identifiers"
+    },
+    {
       "include": "#numbers"
     },
     {
@@ -112,6 +115,14 @@
         {
           "name": "entity.name.function.mcl",
           "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.mcl",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
         }
       ]
     },
