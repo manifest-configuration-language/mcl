@@ -1,6 +1,8 @@
 package kustomizeadapter
 
 import (
+	"archive/tar"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,83 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
+
+func TestLoadGitSourceFSUsesValidatedInMemoryTree(t *testing.T) {
+	t.Parallel()
+
+	archive := makeGitArchive(t, []gitArchiveEntry{{name: "base/kustomization.yaml", body: "resources:\n- app.yaml\n"}})
+	filesystem, root, err := loadGitSourceFS(archive)
+	if err != nil {
+		t.Fatalf("loadGitSourceFS() error = %v", err)
+	}
+	if root != "/mcl-source" {
+		t.Fatalf("loadGitSourceFS() root = %q, want /mcl-source", root)
+	}
+	got, err := filesystem.ReadFile(filepath.Join(root, "base/kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "resources:\n- app.yaml\n" {
+		t.Fatalf("ReadFile() = %q", got)
+	}
+}
+
+func TestLoadGitSourceFSRejectsUnsafeArchiveEntries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		entries []gitArchiveEntry
+	}{
+		{name: "path traversal", entries: []gitArchiveEntry{{name: "../outside.yaml", body: "unsafe"}}},
+		{name: "symlink", entries: []gitArchiveEntry{{name: "link.yaml", typeflag: tar.TypeSymlink, body: "outside.yaml"}}},
+		{name: "duplicate path", entries: []gitArchiveEntry{{name: "app.yaml", body: "one"}, {name: "app.yaml", body: "two"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, _, err := loadGitSourceFS(makeGitArchive(t, test.entries)); err == nil {
+				t.Fatal("loadGitSourceFS() error = nil, want invalid archive error")
+			}
+		})
+	}
+}
+
+type gitArchiveEntry struct {
+	name     string
+	body     string
+	typeflag byte
+}
+
+func makeGitArchive(t *testing.T, entries []gitArchiveEntry) []byte {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, entry := range entries {
+		typeflag := entry.typeflag
+		if typeflag == 0 {
+			typeflag = tar.TypeReg
+		}
+		header := &tar.Header{Name: entry.name, Mode: 0o600, Size: int64(len(entry.body)), Typeflag: typeflag}
+		if typeflag == tar.TypeSymlink {
+			header.Linkname = entry.body
+			header.Size = 0
+		}
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if typeflag == tar.TypeReg {
+			if _, err := writer.Write([]byte(entry.body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	return archive.Bytes()
+}
 
 func TestBuildIgnoresUnreferencedFilesAndDirectories(t *testing.T) {
 	t.Parallel()

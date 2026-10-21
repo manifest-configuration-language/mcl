@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -78,7 +77,6 @@ type buildSource struct {
 	sourceMapDirectory string
 	buildDirectory     string
 	origin             string
-	removeRoot         bool
 }
 
 type overlay struct {
@@ -100,14 +98,10 @@ func Build(request Request) (result Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if source.removeRoot {
-		defer os.RemoveAll(source.root)
-	}
 	workingRoot, fileSystem, err := createOverlay(source.root, source.buildDirectory, source.filesystem)
 	if err != nil {
 		return Result{}, err
 	}
-	defer os.RemoveAll(workingRoot)
 	overlayValue := overlay{root: workingRoot, fileSystem: fileSystem}
 	resolverRoot := filepath.Join(workingRoot, filepath.FromSlash(source.buildDirectory))
 	if err := resolveRemoteReferences(resolverRoot, request.Dependencies, fileSystem); err != nil {
@@ -123,11 +117,11 @@ func Build(request Request) (result Result, err error) {
 
 		return Result{}, err
 	}
-	buildDir, err := validateOverlayDirectory(workingRoot, source.buildDirectory)
+	buildDir, err := validateOverlayDirectory(workingRoot, source.buildDirectory, fileSystem)
 	if err != nil {
 		return Result{}, err
 	}
-	_, overlayValue.injectedOriginAnnotations = enableOriginTracking(buildDir)
+	_, overlayValue.injectedOriginAnnotations = enableOriginTracking(fileSystem, buildDir)
 	overlayValue.buildDirectory = buildDir
 	options := krusty.MakeDefaultOptions()
 	options.LoadRestrictions = types.LoadRestrictionsRootOnly
@@ -222,17 +216,11 @@ func resolveSource(request Request) (buildSource, error) {
 		if err != nil {
 			return buildSource{}, err
 		}
-		temporaryTree, err := materializeGitTree(archive)
+		memoryFS, root, err := loadGitSourceFS(archive)
 		if err != nil {
 			return buildSource{}, err
 		}
-		root, err := filepath.EvalSymlinks(temporaryTree)
-		if err != nil {
-			_ = os.RemoveAll(temporaryTree)
-
-			return buildSource{}, fmt.Errorf("resolve temporary Kustomize Git tree: %w", err)
-		}
-		source.root, source.sourceMapRoot, source.sourceMapDirectory = root, root, "."
+		source.root, source.filesystem, source.sourceMapRoot, source.sourceMapDirectory = root, memoryFS, root, "."
 		source.buildDirectory = "."
 		source.origin = fmt.Sprintf("kustomize:%s@%s/%s", request.Source, request.Revision, request.Directory)
 	} else {
@@ -280,23 +268,19 @@ func resolveSource(request Request) (buildSource, error) {
 	return source, nil
 }
 
-func validateOverlayDirectory(overlayRoot, buildDirectory string) (string, error) {
-	root, err := filepath.EvalSymlinks(overlayRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolve temporary Kustomize source: %w", err)
-	}
-	dir, err := safepath.ResolveWithin(root, filepath.Join(root, filepath.FromSlash(buildDirectory)))
-	if err != nil {
-		return "", fmt.Errorf("resolve Kustomize directory: %w", err)
+func validateOverlayDirectory(overlayRoot, buildDirectory string, fileSystem filesys.FileSystem) (string, error) {
+	directory := filepath.Join(overlayRoot, filepath.FromSlash(buildDirectory))
+	if !pathWithin(overlayRoot, directory) || !fileSystem.IsDir(directory) {
+		return "", fmt.Errorf("resolve Kustomize directory: %q is not a directory within the source", buildDirectory)
 	}
 
-	return dir, nil
+	return directory, nil
 }
 
-func enableOriginTracking(root string) (bool, bool) {
+func enableOriginTracking(fileSystem filesys.FileSystem, root string) (bool, bool) {
 	for _, name := range konfig.RecognizedKustomizationFileNames() {
 		path := filepath.Join(root, name)
-		data, err := os.ReadFile(path)
+		data, err := fileSystem.ReadFile(path)
 		if err != nil {
 			continue
 		}
@@ -320,7 +304,7 @@ func enableOriginTracking(root string) (bool, bool) {
 			}
 			metadata.Content = append(metadata.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: types.OriginAnnotations})
 			formatted, err := yaml.Marshal(&document)
-			if err != nil || os.WriteFile(path, formatted, 0o600) != nil {
+			if err != nil || fileSystem.WriteFile(path, formatted) != nil {
 				return false, false
 			}
 
@@ -328,7 +312,7 @@ func enableOriginTracking(root string) (bool, bool) {
 		}
 		mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: "buildMetadata"}, &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: yamlStringTag, Value: types.OriginAnnotations}}})
 		formatted, err := yaml.Marshal(&document)
-		if err != nil || os.WriteFile(path, formatted, 0o600) != nil {
+		if err != nil || fileSystem.WriteFile(path, formatted) != nil {
 			return false, false
 		}
 

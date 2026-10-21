@@ -52,62 +52,42 @@ type remoteSourceRoot struct {
 }
 
 func createOverlay(sourceRoot, buildDirectory string, sourceFileSystem filesys.FileSystem) (string, *overlayFileSystem, error) {
-	temporaryRoot, err := os.MkdirTemp("", "mcl-kustomize-overlay-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("create temporary Kustomize overlay: %w", err)
-	}
-	overlayRoot, err := filepath.EvalSymlinks(temporaryRoot)
-	if err != nil {
-		_ = os.RemoveAll(temporaryRoot)
-
-		return "", nil, fmt.Errorf("resolve temporary Kustomize overlay: %w", err)
-	}
+	const overlayRoot = "/mcl-overlay"
 	overlay := &overlayFileSystem{
-		FileSystem: filesys.MakeFsOnDisk(), sourceFileSystem: sourceFileSystem, sourceRoot: sourceRoot, overlayRoot: overlayRoot, materialized: make(map[string]bool),
+		FileSystem: filesys.MakeFsInMemory(), sourceFileSystem: sourceFileSystem, sourceRoot: sourceRoot, overlayRoot: overlayRoot, materialized: make(map[string]bool),
 		sourceFiles: make(map[string][]byte),
+	}
+	if err := overlay.MkdirAll(overlayRoot); err != nil {
+		return "", nil, fmt.Errorf("create in-memory Kustomize overlay: %w", err)
 	}
 	if buildDirectory != "." {
 		cleanDirectory := filepath.Clean(filepath.FromSlash(buildDirectory))
 		if cleanDirectory == ".." || filepath.IsAbs(cleanDirectory) || strings.HasPrefix(cleanDirectory, ".."+string(filepath.Separator)) {
-			_ = os.RemoveAll(overlayRoot)
-
 			return "", nil, fmt.Errorf("kustomize directory escapes the source: %q", buildDirectory)
 		}
 		sourceDirectory := filepath.Join(sourceRoot, cleanDirectory)
 		if sourceFileSystem != nil {
 			if !sourceFileSystem.IsDir(sourceDirectory) {
-				_ = os.RemoveAll(overlayRoot)
-
 				return "", nil, fmt.Errorf("kustomize directory is not a directory: %q", buildDirectory)
 			}
 		} else {
 			if err := rejectKustomizeSourceSymlinks(sourceRoot, sourceDirectory); err != nil {
-				_ = os.RemoveAll(overlayRoot)
-
 				return "", nil, fmt.Errorf("resolve Kustomize directory: %w", err)
 			}
 			info, err := os.Stat(sourceDirectory)
 			if err != nil {
-				_ = os.RemoveAll(overlayRoot)
-
 				return "", nil, fmt.Errorf("resolve Kustomize directory: %w", err)
 			}
 			if !info.IsDir() {
-				_ = os.RemoveAll(overlayRoot)
-
 				return "", nil, fmt.Errorf("kustomize directory is not a directory: %q", buildDirectory)
 			}
 		}
-		if err := os.MkdirAll(filepath.Join(overlayRoot, cleanDirectory), 0o755); err != nil {
-			_ = os.RemoveAll(overlayRoot)
-
+		if err := overlay.MkdirAll(filepath.Join(overlayRoot, cleanDirectory)); err != nil {
 			return "", nil, fmt.Errorf("prepare Kustomize overlay directory: %w", err)
 		}
 	}
 	if sourceFileSystem == nil {
 		if err := rejectKustomizeSourceSymlinks(sourceRoot, sourceRoot); err != nil {
-			_ = os.RemoveAll(overlayRoot)
-
 			return "", nil, fmt.Errorf("resolve Kustomize source: %w", err)
 		}
 	}
@@ -173,12 +153,10 @@ func (fs *overlayFileSystem) ReadFile(path string) ([]byte, error) {
 	}
 	target := filepath.Join(fs.overlayRoot, relative)
 	if fs.materialized[relative] {
-		return os.ReadFile(target)
+		return fs.FileSystem.ReadFile(target)
 	}
-	if _, err := os.Lstat(target); err == nil {
-		return os.ReadFile(target)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	if fs.FileSystem.Exists(target) {
+		return fs.FileSystem.ReadFile(target)
 	}
 
 	return fs.readSourceFile(filepath.Join(fs.sourceRoot, relative), relative)
@@ -279,7 +257,7 @@ func (fs *overlayFileSystem) Open(path string) (filesys.File, error) {
 		return nil, err
 	}
 
-	return os.Open(path)
+	return fs.FileSystem.Open(path)
 }
 
 func (fs *overlayFileSystem) sourcePath(overlayPath string) (string, bool) {
@@ -350,10 +328,10 @@ func (fs *overlayFileSystem) readSourceFile(path, relative string) ([]byte, erro
 			fs.materialized[relative] = true
 			fs.sourceFiles[filepath.ToSlash(relative)] = bytes.Clone(data)
 			target := filepath.Join(fs.overlayRoot, relative)
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := fs.MkdirAll(filepath.Dir(target)); err != nil {
 				return nil, err
 			}
-			if err := os.WriteFile(target, data, 0o600); err != nil {
+			if err := fs.WriteFile(target, data); err != nil {
 				return nil, err
 			}
 		}
@@ -387,10 +365,10 @@ func (fs *overlayFileSystem) readSourceFile(path, relative string) ([]byte, erro
 		sourceRelative, _ := filepath.Rel(fs.sourceRoot, resolved)
 		fs.sourceFiles[filepath.ToSlash(sourceRelative)] = bytes.Clone(data)
 		target := filepath.Join(fs.overlayRoot, relative)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := fs.MkdirAll(filepath.Dir(target)); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+		if err := fs.WriteFile(target, data); err != nil {
 			return nil, err
 		}
 	}
@@ -459,60 +437,64 @@ func readLimitedFile(path string, maximum int64) ([]byte, error) {
 	return data, nil
 }
 
-func materializeGitTree(archive []byte) (string, error) {
-	root, err := os.MkdirTemp("", "mcl-kustomize-git-*")
-	if err != nil {
-		return "", fmt.Errorf("create temporary Kustomize tree: %w", err)
+func loadGitSourceFS(archive []byte) (filesys.FileSystem, string, error) {
+	const root = "/mcl-source"
+	memoryFS := filesys.MakeFsInMemory()
+	if _, err := writeGitTreeToFS(archive, root, memoryFS, false); err != nil {
+		return nil, "", err
 	}
-	failed := true
-	defer func() {
-		if failed {
-			_ = os.RemoveAll(root)
-		}
-	}()
+
+	return memoryFS, root, nil
+}
+
+func writeGitTreeToFS(archive []byte, root string, destination filesys.FileSystem, recordFiles bool) (map[string][]byte, error) {
 	reader := tar.NewReader(bytes.NewReader(archive))
+	files := make(map[string][]byte)
+	seenFiles := make(map[string]bool)
 	var totalBytes int64
 	fileCount := 0
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
-			break
+			return files, nil
 		}
 		if err != nil {
-			return "", fmt.Errorf("read cached Kustomize Git archive: %w", err)
+			return nil, fmt.Errorf("read cached Kustomize Git archive: %w", err)
 		}
 		name := path.Clean(header.Name)
 		if header.Typeflag != tar.TypeReg || name == "." || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") || header.Size < 0 {
-			return "", errors.New("cached Kustomize Git archive contains an invalid entry")
+			return nil, errors.New("cached Kustomize Git archive contains an invalid entry")
 		}
 		fileCount++
+		if fileCount > maxSourceFiles || header.Size > maxSourceBytes-totalBytes {
+			return nil, errors.New("cached Kustomize Git archive exceeds source limits")
+		}
 		totalBytes += header.Size
-		if fileCount > maxSourceFiles || totalBytes > maxSourceBytes {
-			return "", errors.New("cached Kustomize Git archive exceeds source limits")
+		if seenFiles[name] {
+			return nil, fmt.Errorf("cached Kustomize Git archive repeats file %q", name)
 		}
-		filePath := filepath.Join(root, filepath.FromSlash(name))
-		if !pathWithin(root, filePath) {
-			return "", errors.New("cached Kustomize Git archive escapes its temporary directory")
-		}
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-			return "", fmt.Errorf("create cached Kustomize directory: %w", err)
-		}
-		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, os.FileMode(header.Mode&0o755))
+		seenFiles[name] = true
+		data, err := io.ReadAll(io.LimitReader(reader, header.Size+1))
 		if err != nil {
-			return "", fmt.Errorf("write cached Kustomize file: %w", err)
+			return nil, fmt.Errorf("read cached Kustomize file %q: %w", name, err)
 		}
-		_, copyErr := io.CopyN(file, reader, header.Size)
-		closeErr := file.Close()
-		if copyErr != nil {
-			return "", fmt.Errorf("write cached Kustomize file: %w", copyErr)
+		if int64(len(data)) != header.Size {
+			return nil, fmt.Errorf("read cached Kustomize file %q: archive entry length does not match its header", name)
 		}
-		if closeErr != nil {
-			return "", fmt.Errorf("close cached Kustomize file: %w", closeErr)
+		target := filepath.Join(root, filepath.FromSlash(name))
+		if !pathWithin(root, target) {
+			return nil, errors.New("cached Kustomize Git archive escapes the in-memory source")
+		}
+		if err := destination.MkdirAll(filepath.Dir(target)); err != nil {
+			return nil, fmt.Errorf("create cached Kustomize directory: %w", err)
+		}
+		if err := destination.WriteFile(target, data); err != nil {
+			return nil, fmt.Errorf("write cached Kustomize file: %w", err)
+		}
+		if recordFiles {
+			files[filepath.ToSlash(name)] = data
 		}
 	}
-	failed = false
-
-	return root, nil
 }
 
 func pathWithin(root, target string) bool {
@@ -542,10 +524,10 @@ func resolveRemoteReferences(root string, dependencies *dependency.Lock, overlay
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		canonical, err := safepath.ResolveWithin(overlayFS.overlayRoot, current.directory)
-		if err != nil {
-			return fmt.Errorf("resolve Kustomize directory: %w", err)
+		if !pathWithin(overlayFS.overlayRoot, current.directory) || !overlayFS.IsDir(current.directory) {
+			return fmt.Errorf("resolve Kustomize directory: %q is outside the overlay or is not a directory", current.directory)
 		}
+		canonical := filepath.Clean(current.directory)
 		if seenDirectories[canonical] {
 			continue
 		}
@@ -594,34 +576,25 @@ func resolveRemoteReferences(root string, dependencies *dependency.Lock, overlay
 				if remoteBytes > maxRemoteBytes {
 					return "", fmt.Errorf("kustomize remote sources exceed the %d-byte aggregate archive limit", maxRemoteBytes)
 				}
-				remoteRoot, err := materializeGitTree(archive)
-				if err != nil {
-					return "", err
-				}
-				keepRemoteRoot := false
-				defer func() {
-					if !keepRemoteRoot {
-						_ = os.RemoveAll(remoteRoot)
-					}
-				}()
 				archiveDigest := content.SHA256(archive)
 				localName := ".mcl-remote-" + archiveDigest
 				targetRoot := filepath.Join(current.directory, localName)
-				if _, err := os.Lstat(targetRoot); err == nil {
+				if overlayFS.FileSystem.Exists(targetRoot) {
 					return "", fmt.Errorf("kustomize remote materialization path %q already exists", targetRoot)
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return "", fmt.Errorf("inspect Kustomize remote materialization path: %w", err)
 				}
-				if err := os.Rename(remoteRoot, targetRoot); err != nil {
+				remoteFiles, err := writeGitTreeToFS(archive, targetRoot, overlayFS.FileSystem, true)
+				if err != nil {
 					return "", fmt.Errorf("materialize Kustomize remote source: %w", err)
 				}
-				keepRemoteRoot = true
-				if !safepath.Within(overlayFS.sourceRoot, targetRoot) {
+				if !pathWithin(overlayFS.overlayRoot, targetRoot) {
 					return "", errors.New("kustomize remote source escapes the source directory")
 				}
-				relativeRoot, err := filepath.Rel(overlayFS.sourceRoot, targetRoot)
+				relativeRoot, err := filepath.Rel(overlayFS.overlayRoot, targetRoot)
 				if err != nil {
 					return "", errors.New("kustomize remote source escapes the source directory")
+				}
+				for name, data := range remoteFiles {
+					overlayFS.sourceFiles[filepath.ToSlash(filepath.Join(relativeRoot, filepath.FromSlash(name)))] = data
 				}
 				overlayFS.remoteRoots = append(overlayFS.remoteRoots, remoteSourceRoot{
 					repository: strings.TrimPrefix(parsed.source, "git+"),
@@ -663,7 +636,7 @@ func resolveRemoteReferences(root string, dependencies *dependency.Lock, overlay
 			if err != nil {
 				return fmt.Errorf("rewrite Kustomize configuration %q: %w", configPath, err)
 			}
-			if err := os.WriteFile(configPath, updated, 0o644); err != nil { //nolint:gosec // 元ファイルの権限を引き継ぐ意図で0644
+			if err := overlayFS.WriteFile(configPath, updated); err != nil {
 				return fmt.Errorf("write Kustomize configuration %q: %w", configPath, err)
 			}
 		}
