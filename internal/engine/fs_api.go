@@ -60,6 +60,7 @@ func LoadKubernetesResourceCatalogForProjectFS(projectRoot string, files fs.FS) 
 		return KubernetesResourceCatalog{}, fmt.Errorf("project root %q must be absolute", projectRoot)
 	}
 	root := filepath.Clean(projectRoot)
+
 	return loadKubernetesResourceCatalogWithFilesystem(root, newProjectFilesystem(root, files))
 }
 
