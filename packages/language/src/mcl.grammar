@@ -10,7 +10,7 @@ Statement {
   ExpressionStatement
 }
 
-BlockStatement { TypeRecordDeclaration | LetBlockDeclaration | LetNodeDeclaration | LetOverlayDeclaration | RuleDeclaration }
+BlockStatement { TypeRecordDeclaration | LetBlockDeclaration | LetNodeDeclaration | LetOverlayDeclaration | LetRemovalDeclaration | RuleDeclaration }
 
 ImportDeclaration { Export? kw<"import"> QuotedString kw<"as"> Identifier }
 Export { kw<"export"> }
@@ -20,6 +20,7 @@ LetDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" Expression }
 LetBlockDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" lineEnd Block }
 LetNodeDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" NodeExpression }
 LetOverlayDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" OverlayExpression }
+LetRemovalDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" RemovalExpression }
 TypeAnnotation { ":" TypeExpression }
 FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" ":" TypeExpression "=" Expression }
 ParameterList { Parameter ("," Parameter)* ","? }
@@ -56,6 +57,8 @@ UnaryExpression { (kw<"not"> | "-")? PostfixExpression }
 PostfixExpression { PrimaryExpression Postfix* }
 OverlayExpression { PrimaryExpression Postfix* Overlay }
 Overlay { kw<"with"> ":" lineEnd Block }
+RemovalExpression { PrimaryExpression Postfix* Removal }
+Removal { kw<"without"> ":" lineEnd Block }
 Postfix {
   CallArguments |
   "." MapKey |

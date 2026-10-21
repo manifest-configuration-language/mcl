@@ -1,0 +1,11 @@
+let base =
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - "ALL"
+  name: "api"
+let modified = base without:
+  - .securityContext.capabilities.drop
+emit base
+emit modified
