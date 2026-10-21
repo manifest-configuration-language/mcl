@@ -1,0 +1,4 @@
+emit 1
+validate each descendants(output, Int, minMatches = 0) using check
+validate each descendants(output, where = fn(value) => true, minMatches = 0) using check
+validate each descendants(output, select = bySchema(Int), minMatches = 0) using check

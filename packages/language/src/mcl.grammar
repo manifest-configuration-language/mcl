@@ -30,7 +30,10 @@ TypedParameter { Identifier ":" TypeExpression }
 RuleBlock { indent RequireStatement+ (dedent | eof) }
 RequireStatement { kw<"require"> Expression (kw<"message"> QuotedString)? lineEnd }
 EmitStatement { kw<"emit"> kw<"each">? Expression }
-ValidateStatement { kw<"validate"> Expression (kw<"each">)? kw<"using"> Identifier }
+ValidateStatement { kw<"validate"> (kw<"each"> DescendantsQuery | Expression) kw<"using"> Identifier }
+DescendantsQuery { kw<"descendants"> "(" kw<"output"> "," (TypeExpression | NamedQuerySelector) ("," kw<"minMatches"> "=" Number)? ")" }
+NamedQuerySelector { kw<"where"> "=" LambdaExpression | kw<"select"> "=" BySchemaSelector }
+BySchemaSelector { kw<"bySchema"> "(" TypeExpression ")" }
 ExpressionStatement { Expression }
 
 Block { indent BlockLine+ (dedent | eof) }
@@ -76,7 +79,7 @@ PrimaryExpression {
 }
 NodeExpression { kw<"node"> ":" lineEnd Block }
 IfExpression { kw<"if"> Expression ":" lineEnd Block (kw<"else"> ":" lineEnd Block)? }
-LambdaExpression { kw<"fn"> "(" ParameterList? ")" "=>" UnaryExpression }
+LambdaExpression { kw<"fn"> "(" ParameterList? ")" "=>" Expression }
 ListExpression { "[" (Expression ("," Expression)* ","?)? "]" }
 InlineMap { "{" (InlineMapEntry ("," InlineMapEntry)* ","?)? "}" }
 InlineMapEntry { MapKey ":" Expression }
