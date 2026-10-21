@@ -88,7 +88,7 @@ jobs:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
             ${{ steps.go-cache-paths.outputs.modules }}
-          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum', '**/*.go') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-
 
