@@ -92,7 +92,7 @@ InlineMap { "{" (InlineMapEntry ("," InlineMapEntry)* ","?)? "}" }
 InlineMapEntry { MapEntryKey ":" Expression }
 CallArguments { "(" (CallArgument ("," CallArgument)* ","? | lineEnd indent CallArgument ("," lineEnd? CallArgument)* ","? lineEnd dedent)? ")" }
 CallArgument { ((Identifier | kw<"key">) "=" )? (LambdaExpression | Expression) }
-BinaryOperator { Operator | Minus | kw<"and"> | kw<"or"> | kw<"in"> | kw<"is"> }
+BinaryOperator { Operator | Minus | kw<"and"> | kw<"or"> | kw<"in"> }
 
 @context trackIndent from "./layout.js"
 @external tokens indentation from "./layout.js" {
@@ -131,7 +131,7 @@ MapKeyword {
   kw<"import"> | kw<"as"> | kw<"export"> | kw<"type"> | kw<"let"> | kw<"fn"> | kw<"rule"> | kw<"emit"> |
   kw<"validate"> | kw<"require"> | kw<"message"> | kw<"using"> | kw<"in"> | kw<"each"> | kw<"descendants"> |
   kw<"where"> | kw<"select"> | kw<"bySchema"> | kw<"minMatches"> | kw<"requireEach"> | kw<"requireDescendants"> |
-  kw<"and"> | kw<"or"> | kw<"not"> | kw<"is"> | kw<"with"> | kw<"without"> | kw<"output"> | kw<"Any"> |
+  kw<"and"> | kw<"or"> | kw<"not"> | kw<"with"> | kw<"without"> | kw<"output"> | kw<"Any"> |
   kw<"Null"> | kw<"Bool"> | kw<"Int"> | kw<"Decimal"> | kw<"String"> | kw<"List"> | kw<"Map"> | kw<"schema"> |
   kw<"Function"> | kw<"Node"> | kw<"Schema"> | kw<"true"> | kw<"false"> | kw<"null">
 }

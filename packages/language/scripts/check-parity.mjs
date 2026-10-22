@@ -37,6 +37,7 @@ const validFixtures = [
   resolve(packageRoot, "parity-fixtures/advanced-constructs.mcl"),
   resolve(packageRoot, "parity-fixtures/multiline-string-escaped-delimiter.mcl"),
   resolve(packageRoot, "parity-fixtures/block-expressions.mcl"),
+  resolve(packageRoot, "parity-fixtures/keyword-identifier.mcl"),
 ];
 
 async function findMclFiles(directory) {
@@ -59,12 +60,13 @@ for (const fixturePath of validFixtures) {
   if (go.status !== 0) throw new Error(`Go parser rejected fixture ${fixture}: ${go.stderr}`);
 }
 
-const invalidFixture = "invalid.mcl";
-const invalidPath = resolve(packageRoot, "parity-fixtures", invalidFixture);
-const invalidSource = await readFile(invalidPath, "utf8");
-if (!hasSyntaxError(parser.parse(invalidSource))) {
-  throw new Error(`Lezer parser accepted invalid fixture ${invalidFixture}`);
+for (const invalidFixture of ["invalid.mcl", "invalid-unsupported-operator.mcl"]) {
+  const invalidPath = resolve(packageRoot, "parity-fixtures", invalidFixture);
+  const invalidSource = await readFile(invalidPath, "utf8");
+  if (!hasSyntaxError(parser.parse(invalidSource))) {
+    throw new Error(`Lezer parser accepted invalid fixture ${invalidFixture}`);
+  }
+  const go = spawnSync("go", ["run", "./cmd/mcl", "fmt", invalidPath], { cwd: repositoryRoot, encoding: "utf8" });
+  if (go.error || go.status === null) throw new Error(`Could not run Go parser for ${invalidFixture}: ${go.error}`);
+  if (go.status === 0) throw new Error(`Go parser accepted invalid fixture ${invalidFixture}`);
 }
-const go = spawnSync("go", ["run", "./cmd/mcl", "fmt", invalidPath], { cwd: repositoryRoot, encoding: "utf8" });
-if (go.error || go.status === null) throw new Error(`Could not run Go parser for ${invalidFixture}: ${go.error}`);
-if (go.status === 0) throw new Error(`Go parser accepted invalid fixture ${invalidFixture}`);

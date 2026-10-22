@@ -90,7 +90,7 @@
         },
         {
           "name": "keyword.operator.mcl",
-          "match": "\\b(?:and|or|not|is)\\b"
+          "match": "\\b(?:and|or|not)\\b"
         }
       ]
     },
