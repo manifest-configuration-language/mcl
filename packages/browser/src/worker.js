@@ -1,6 +1,5 @@
 let initialized;
 let runtimeAssets;
-let wasmMemory;
 let networkAccessDenied = false;
 const runtimeFetch = globalThis.fetch.bind(globalThis);
 const networkAPINames = [
@@ -58,7 +57,6 @@ async function initialize() {
     const go = new Go();
     const response = await runtimeFetch(runtimeAssets.wasmURL);
     if (!response.ok) throw new Error(`Unable to load MCL WebAssembly: ${response.status}`);
-    const instantiateStartedAt = performance.now();
     // Load the runtime before denying network APIs, then lock them before Go starts.
     denyNetworkAccess();
     let instance;
@@ -67,15 +65,9 @@ async function initialize() {
     } catch {
       ({ instance } = await WebAssembly.instantiate(await response.arrayBuffer(), go.importObject));
     }
-    const wasmInstantiateMs = performance.now() - instantiateStartedAt;
-    wasmMemory = instance.exports.mem;
     void go.run(instance);
     while (!globalThis.mclWasmReady) await new Promise((resolve) => setTimeout(resolve, 0));
-    postMessage({
-      type: "ready",
-      wasmInstantiateMs,
-      wasmMemoryBytes: wasmMemory.buffer.byteLength,
-    });
+    postMessage({ type: "ready" });
   })().catch((error) => {
     postMessage({ type: "fatal", message: error instanceof Error ? error.message : String(error) });
     throw error;
@@ -130,7 +122,6 @@ self.addEventListener("message", async (event) => {
       type: "response",
       requestId: message.requestId,
       value,
-      wasmMemoryBytes: wasmMemory.buffer.byteLength,
     });
   } catch (error) {
     postMessage({
