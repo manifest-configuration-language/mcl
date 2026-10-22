@@ -1,5 +1,7 @@
 import { maxProjectBytes, maxProjectFileBytes, maxProjectFiles, maxSourceBytes } from "./limits.js";
 
+export { maxProjectBytes, maxProjectFileBytes, maxProjectFiles, maxSourceBytes };
+
 const defaultInitializationTimeoutMs = 30_000;
 const defaultOperationTimeoutMs = 10_000;
 const wasmURL = new URL("../dist/mcl.wasm", import.meta.url).href;
