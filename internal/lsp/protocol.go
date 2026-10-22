@@ -210,7 +210,7 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 
 		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: map[string]any{
 			"capabilities": map[string]any{
-				"textDocumentSync":           map[string]any{"openClose": true, "change": 0, "save": true},
+				"textDocumentSync":           map[string]any{"openClose": true, "change": 1, "save": true},
 				"completionProvider":         map[string]any{"triggerCharacters": []string{"."}},
 				"documentFormattingProvider": true,
 				"definitionProvider":         true,

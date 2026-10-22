@@ -36,7 +36,7 @@ func TestRunPublishesDiagnosticsForOpenDocument(t *testing.T) {
 	defer session.close(t)
 	session.send(t, initializeRequest)
 	initialize := session.receive(t)
-	for _, expected := range []string{`"textDocumentSync":`, `"openClose":true`, `"change":0`} {
+	for _, expected := range []string{`"textDocumentSync":`, `"openClose":true`, `"change":1`} {
 		if !strings.Contains(initialize, expected) {
 			t.Errorf("initialize response does not contain %q: %s", expected, initialize)
 		}
