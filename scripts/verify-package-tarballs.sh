@@ -23,7 +23,7 @@ for package in browser language; do
   pack_json="$temporary_directory/$package-pack.json"
   (
     cd "$source_directory"
-    npm pack --ignore-scripts --pack-destination "$output_directory" --json > "$pack_json"
+    npm pack --pack-destination "$output_directory" --json > "$pack_json"
   )
   archive="$(node -e 'const fs = require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8"))[0].filename)' "$pack_json")"
   case "$package" in
