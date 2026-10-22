@@ -28,4 +28,4 @@ The wire format is described in [`protocol.schema.json`](https://github.com/mani
 
 `npm run test:browser` records WASM transfer size, initialization, render, cancellation, and linear-memory use in Chromium, Firefox, and WebKit. Chromium also loads and renders a 32 MiB project. [The performance baseline](https://github.com/manifest-configuration-language/mcl/blob/main/packages/browser/performance-baseline.json) records one local reference run. [The performance budget](https://github.com/manifest-configuration-language/mcl/blob/main/packages/browser/performance-budget.json) limits WASM size growth, linear memory to 192 MiB, initialization to 10 seconds, single-operation rendering and cancellation to 1 second, and Chromium's 32 MiB project load and render to 2 and 5 seconds.
 
-The [WebAssembly code size profile](./performance-profile.md) records package-level function body sizes and explains which WebAssembly sections it excludes.
+The [WebAssembly code size profile](https://github.com/manifest-configuration-language/mcl/blob/main/packages/browser/performance-profile.md) records package-level function body sizes and explains which WebAssembly sections it excludes.
