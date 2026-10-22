@@ -68,9 +68,28 @@ jobs:
           done
           release="$(gh release view "$release_tag" --json tagName,isDraft,assets)"
           version="${release_tag#v}"
-          jq -e --arg tag "$release_tag" --arg archive "mcl_${version}_linux_amd64.tar.gz" \
-            '.tagName == $tag and .isDraft == false and any(.assets[]; .name == "SHA256SUMS") and any(.assets[]; .name == $archive)' \
-            <<< "$release" >/dev/null
+          required_assets=(
+            "mcl_${version}_darwin_amd64.tar.gz"
+            "mcl_${version}_darwin_arm64.tar.gz"
+            "mcl_${version}_linux_amd64.tar.gz"
+            "mcl_${version}_linux_arm64.tar.gz"
+            "mcl_${version}_windows_amd64.zip"
+            "mcl_${version}_windows_arm64.zip"
+            "mcl_${version}_wasm.tar.gz"
+            "SHA256SUMS"
+          )
+          jq -e --arg tag "$release_tag" '.tagName == $tag and .isDraft == false' <<< "$release" >/dev/null
+          for asset in "${required_assets[@]}"; do
+            if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset)' <<< "$release" >/dev/null; then
+              printf 'Release %s is missing required asset %s\n' "$release_tag" "$asset" >&2
+              exit 1
+            fi
+          done
+          release_assets="$RUNNER_TEMP/release-assets"
+          mkdir -p "$release_assets"
+          gh release download "$release_tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'mcl_*' --pattern SHA256SUMS --dir "$release_assets"
+          (cd "$release_assets" && sha256sum --check SHA256SUMS)
 
       - name: Install browser package dependencies
         run: cd packages/browser && npm ci
