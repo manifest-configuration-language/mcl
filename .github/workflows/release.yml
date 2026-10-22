@@ -137,8 +137,17 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
             is_draft="$(jq -r '.isDraft' "$RUNNER_TEMP/existing-release.json")"
             if [ "$is_draft" != true ]; then
-              printf 'Release %s already exists and is not a draft.\n' "$tag" >&2
-              exit 1
+              existing_assets="$(mktemp -d)"
+              trap 'rm -rf "$existing_assets"' EXIT
+              gh release download "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --dir "$existing_assets" \
+                --pattern 'mcl_*' \
+                --pattern SHA256SUMS
+              cmp dist/SHA256SUMS "$existing_assets/SHA256SUMS"
+              (cd "$existing_assets" && sha256sum --check SHA256SUMS)
+              printf 'Release %s is already published with matching assets.\n' "$tag"
+              exit 0
             fi
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
           fi
