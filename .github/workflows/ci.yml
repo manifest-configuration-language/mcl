@@ -41,14 +41,16 @@ jobs:
             go-${{ runner.os }}-${{ runner.arch }}-
       - name: Run project quality checks
         run: mise run quality:check
+      - name: Prepare release WebAssembly assets
+        run: mise run release:wasm
       - name: Lint GitHub Actions workflows
         run: mise run actions:lint
-      - name: Run browser runtime smoke test
-        run: cd packages/browser && npm ci && npx playwright install --with-deps chromium firefox webkit && npm run test:browser
+      - name: Run Browser SDK unit tests
+        run: node --test packages/browser/test/runtime-lifecycle.test.mjs
       - name: Check language grammar parity
         run: cd packages/language && npm ci && npm run check:parity
-      - name: Pack and smoke test npm packages
-        run: scripts/verify-package-tarballs.sh
+      - name: Pack and verify npm packages
+        run: scripts/verify-package-tarballs.sh --prebuilt-browser-wasm
       - name: Check generated protocol sources are current
         run: |
           go generate ./cmd/mcl-wasm

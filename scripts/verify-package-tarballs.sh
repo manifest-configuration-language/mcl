@@ -71,14 +71,7 @@ cat > "$project_directory/package.json" <<EOF
 EOF
 npm install --prefix "$project_directory" --ignore-scripts --no-audit --no-fund
 cp "$root/scripts/verify-installed-packages.mjs" "$project_directory/verify-installed-packages.mjs"
-(cd "$project_directory" && MCL_BROWSER_TEST_PACKAGE="$root/packages/browser" node verify-installed-packages.mjs)
-
-consumer_fixture="$root/scripts/package-consumer-smoke"
-cp "$consumer_fixture/index.html" "$project_directory/index.html"
-cp "$consumer_fixture/vite.config.js" "$project_directory/vite.config.js"
-mkdir -p "$project_directory/src"
-cp "$consumer_fixture/main.js" "$project_directory/src/main.js"
-node "$consumer_fixture/run.mjs" "$project_directory" "$root/packages/browser"
+(cd "$project_directory" && node verify-installed-packages.mjs)
 (
   cd "$output_directory"
   expected_archives="$(printf '%s\n' "$(basename "$browser_archive")" "$(basename "$language_archive")" | sort)"

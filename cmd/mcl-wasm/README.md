@@ -1,6 +1,6 @@
 # Browser WebAssembly API
 
-`mcl.wasm`と対応するGo標準の`wasm_exec.js`は`mise run wasm:build`で生成します。Browser SDK、GitHub Release、ブラウザ検証は`packages/browser/scripts/build-wasm.mjs`の同じ成果物を利用します。この処理はGoの標準WASMビルド後にmise管理のBinaryen`wasm-opt -Oz`を実行し、最適化前後で小さい方を採用します。最適化ツールの失敗はビルド失敗になります。GoまたはBinaryenを更新するときは`mise.toml`の固定バージョンを更新してください。
+`mcl.wasm`と対応するGo標準の`wasm_exec.js`は`mise run wasm:build`で生成します。Browser SDKとGitHub Releaseは`packages/browser/scripts/build-wasm.mjs`の同じ成果物を利用します。この処理はGoの標準WASMビルド後にmise管理のBinaryen`wasm-opt -Oz`を実行し、最適化前後で小さい方を採用します。最適化ツールの失敗はビルド失敗になります。GoまたはBinaryenを更新するときは`mise.toml`の固定バージョンを更新してください。
 
 Web WorkerでGoの`wasm_exec.js`を読み込み、Goの実行開始後に`globalThis.mclWasmReady`を待ってから`globalThis.mclWasm.run(json)`を呼び出します。`run`はJSON文字列を受け取り、JSON文字列を同期的に返します。
 
@@ -36,4 +36,4 @@ Workerは`wasm_exec.js`とWASMを読み込んだ後、Go WASMの実行開始前�
 
 ## サイズ確認
 
-`mise run wasm:check`は最終WASMを使い、raw、gzip、Brotliサイズを回帰予算と比較し、起動時間、レンダー時間、CLI互換性を確認します。ブラウザーテストも同じビルドスクリプトで生成したWASMを使います。サイズ基準は`packages/browser/performance-budget.json`で管理します。
+`mise run wasm:check`はWASMをビルドし、モジュールをコンパイルできることと、WASMおよび対応する`wasm_exec.js`が生成されたことを確認します。言語処理の正しさとCLIとの整合性はGoのテストで確認します。

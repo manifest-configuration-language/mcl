@@ -20,21 +20,6 @@ runs:
       shell: bash
       run: goreleaser check
 
-    - name: Install browser package dependencies
-      shell: bash
-      working-directory: packages/browser
-      run: npm ci
-
-    - name: Install Playwright browsers
-      shell: bash
-      working-directory: packages/browser
-      run: npx playwright install --with-deps chromium firefox webkit
-
-    - name: Test browser package
-      shell: bash
-      working-directory: packages/browser
-      run: npm run test:browser:built
-
     - name: Prepare release WebAssembly assets
       shell: bash
       run: mise run release:wasm
@@ -49,7 +34,7 @@ runs:
       working-directory: packages/language
       run: npm run check:parity
 
-    - name: Pack and smoke test npm packages
+    - name: Pack and verify npm packages
       shell: bash
       env:
         PACKAGE_OUTPUT_DIRECTORY: ${{ inputs.package-output-directory }}

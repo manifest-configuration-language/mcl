@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { createMclRuntime } from "../src/index.js";
 
 class FakeWorker {
@@ -58,7 +59,7 @@ const runtimeWithWorkers = (makeWorker, options = {}) => {
   return { runtime, workers };
 };
 
-export async function testRuntimeLifecycle() {
+test("Browser SDK runtime lifecycle", async () => {
   {
     let attempts = 0;
     const { runtime, workers } = runtimeWithWorkers(() => new FakeWorker({

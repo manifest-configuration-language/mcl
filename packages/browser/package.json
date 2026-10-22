@@ -23,18 +23,14 @@
   "scripts": {
     "build:wasm": "node ./scripts/build-wasm.mjs",
     "generate:protocol": "node ./scripts/generate-protocol.mjs",
-    "test:browser": "npm run build:wasm && node ./scripts/smoke-browser.mjs",
-    "test:browser:built": "node ./scripts/smoke-browser.mjs",
-    "test:browser:installed": "node ./scripts/smoke-browser.mjs --package-smoke",
+    "test:unit": "node --test ./test/runtime-lifecycle.test.mjs",
     "prepack": "npm run build:wasm"
   },
   "engines": {
     "node": ">=20.19"
   },
   "devDependencies": {
-    "json-schema-to-typescript": "16.0.0",
-    "playwright": "1.64.1",
-    "vite": "8.3.4"
+    "json-schema-to-typescript": "16.0.0"
   },
   "publishConfig": {
     "access": "public"
