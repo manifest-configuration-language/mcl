@@ -22,7 +22,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: write
       actions: write
@@ -153,8 +153,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
-        run: >-
-          gh workflow run publish-packages.yml
-          --repo "$GITHUB_REPOSITORY"
-          --ref "$DEFAULT_BRANCH"
-          -f "release_tag=$RELEASE_TAG"
+        run: |
+          set -euo pipefail
+          run_name="Publish npm packages $RELEASE_TAG"
+          dispatch_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          gh workflow run publish-packages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$DEFAULT_BRANCH" \
+            -f "release_tag=$RELEASE_TAG"
+
+          deadline=$((SECONDS + 300))
+          run_id=""
+          while [ -z "$run_id" ]; do
+            runs="$(gh run list --workflow publish-packages.yml --event workflow_dispatch \
+              --branch "$DEFAULT_BRANCH" --limit 20 --json databaseId,displayTitle,createdAt)"
+            run_id="$(jq -r --arg title "$run_name" --arg after "$dispatch_time" \
+              '[.[] | select(.displayTitle == $title and .createdAt >= $after)] | sort_by(.createdAt) | last | .databaseId // empty' \
+              <<< "$runs")"
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for npm publishing workflow to start." >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          gh run watch "$run_id" --exit-status --interval 10

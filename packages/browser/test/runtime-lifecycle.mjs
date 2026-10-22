@@ -88,6 +88,18 @@ export async function testRuntimeLifecycle() {
   }
 
   {
+    const { runtime, workers } = runtimeWithWorkers((index) => new FakeWorker({
+      configure(worker) { if (index !== 0) ready(worker); },
+      run(worker, request) { respond(worker, request.requestId); },
+    }), { initializationTimeoutMs: 100, operationTimeoutMs: 10 });
+    await assert.rejects(runtime.parse("type A = string"), (error) => error.code === "MCL-WASM-TIMEOUT");
+    assert.equal(workers[0].terminated, true, "operation timeout should cover worker initialization");
+    assert.equal((await runtime.parse("type A = string")).operation, "parse");
+    assert.equal(workers.length, 2, "timing out initialization should allow a fresh Worker retry");
+    runtime.dispose();
+  }
+
+  {
     const initStarted = deferred();
     const { runtime, workers } = runtimeWithWorkers((index) => new FakeWorker({
       configure(worker) { if (index === 0) initStarted.resolve(); else ready(worker); },

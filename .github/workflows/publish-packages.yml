@@ -1,4 +1,5 @@
 name: Publish npm Packages
+run-name: Publish npm packages ${{ inputs.release_tag }}
 
 on:
   workflow_dispatch:

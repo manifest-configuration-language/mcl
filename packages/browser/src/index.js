@@ -101,57 +101,67 @@ export function createMclRuntime(options = {}) {
     const run = async () => {
       if (disposed) throw new Error("MCL runtime has been disposed");
       if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-      await waitUntilReady(requestOptions.signal);
-      if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-      const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
-      const requestId = ++sequence;
       const timeoutMs = requestOptions.timeoutMs ?? options.operationTimeoutMs ?? defaultOperationTimeoutMs;
-      const currentWorker = worker;
-      const currentGeneration = workerGeneration;
-      return new Promise((resolve, reject) => {
-        let settled = false;
-        const cleanup = () => {
-          clearTimeout(timer);
-          currentWorker.removeEventListener("message", onMessage);
-          currentWorker.removeEventListener("error", onError);
-          requestOptions.signal?.removeEventListener("abort", onAbort);
-        };
-        const finish = (callback, value) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          if (stopCurrent === stop) stopCurrent = undefined;
-          callback(value);
-        };
-        const onMessage = (event) => {
-          if (worker !== currentWorker || workerGeneration !== currentGeneration) return;
-          const response = event.data;
-          if (response?.type !== "response" || response.requestId !== requestId) return;
-          if (!response.value.ok) finish(reject, new MclRuntimeError(response.value.error));
-          else if (operation === "lint") finish(resolve, { operation, diagnostics: response.value.result });
-          else finish(resolve, { operation, ...response.value.result });
-        };
-        const onError = (event) => stop(new Error(event.message || "MCL worker failed"));
-        const onAbort = () => stop(new DOMException("The operation was aborted", "AbortError"));
-        const stop = (error) => {
-          finish(reject, error);
-          currentWorker.terminate();
-          if (worker === currentWorker) {
-            worker = undefined;
-            ready = undefined;
+      const timeoutError = new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL operation timed out" });
+      let timer;
+      try {
+        timer = setTimeout(() => {
+          if (stopCurrent) stopCurrent(timeoutError);
+          else stopInitialization?.(timeoutError);
+        }, timeoutMs);
+        await waitUntilReady(requestOptions.signal);
+        if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
+        const requestId = ++sequence;
+        const currentWorker = worker;
+        const currentGeneration = workerGeneration;
+        return await new Promise((resolve, reject) => {
+          let settled = false;
+          const cleanup = () => {
+            clearTimeout(timer);
+            currentWorker.removeEventListener("message", onMessage);
+            currentWorker.removeEventListener("error", onError);
+            requestOptions.signal?.removeEventListener("abort", onAbort);
+          };
+          const finish = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (stopCurrent === stop) stopCurrent = undefined;
+            callback(value);
+          };
+          const onMessage = (event) => {
+            if (worker !== currentWorker || workerGeneration !== currentGeneration) return;
+            const response = event.data;
+            if (response?.type !== "response" || response.requestId !== requestId) return;
+            if (!response.value.ok) finish(reject, new MclRuntimeError(response.value.error));
+            else if (operation === "lint") finish(resolve, { operation, diagnostics: response.value.result });
+            else finish(resolve, { operation, ...response.value.result });
+          };
+          const onError = (event) => stop(new Error(event.message || "MCL worker failed"));
+          const onAbort = () => stop(new DOMException("The operation was aborted", "AbortError"));
+          const stop = (error) => {
+            finish(reject, error);
+            currentWorker.terminate();
+            if (worker === currentWorker) {
+              worker = undefined;
+              ready = undefined;
+            }
+          };
+          currentWorker.addEventListener("message", onMessage);
+          currentWorker.addEventListener("error", onError);
+          requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
+          stopCurrent = stop;
+          try {
+            currentWorker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint }, preparedFiles.transferables);
+          } catch (error) {
+            stop(error);
           }
-        };
-        const timer = setTimeout(() => stop(new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL operation timed out" })), timeoutMs);
-        currentWorker.addEventListener("message", onMessage);
-        currentWorker.addEventListener("error", onError);
-        requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
-        stopCurrent = stop;
-        try {
-          currentWorker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint }, preparedFiles.transferables);
-        } catch (error) {
-          stop(error);
-        }
-      });
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        throw error;
+      }
     };
     const result = queue.then(run, run);
     queue = result.catch(() => {});
