@@ -54,10 +54,15 @@ func typedExpressionFromAnalysis(expression Expr, analysis TypeAnalysis, known b
 			inference := result.analysisFacts.FunctionInference
 			if inference == nil {
 				inference = &FunctionInference{Body: lambda.Body, Bindings: maps.Clone(state.StaticTypes)}
+			} else {
+				clonedInference := *inference
+				clonedInference.Bindings = maps.Clone(inference.Bindings)
+				inference = &clonedInference
 			}
-			typedBody := result
-			typedBody.analysisFacts.FunctionInference = nil
-			inference.TypedBody = &typedBody
+			if result.operand != nil {
+				typedBody := *result.operand
+				inference.TypedBody = &typedBody
+			}
 			result.analysisFacts.FunctionInference = inference
 		}
 	}

@@ -652,6 +652,7 @@ let values =
   - 1
   - 2
   - 3
+let increment = fn(value) => value + 1
 let arithmetic = ref(config).count + 1
 let comparison = ref(config).count == 2
 let conjunction = ref(config).enabled and true
@@ -661,10 +662,11 @@ let selected = if ref(config).enabled:
 else:
   "disabled"
 let mapped = lists.map(values, fn(value) => value + ref(config).count)
+let mappedNamed = lists.map(values, increment)
+let mappedValue = mappedNamed[0] + 1
 let filtered = lists.filter(values, fn(value) => value == ref(config).count)
 let single = lists.exactlyOne(values, fn(value) => value == ref(config).count)
 let itemCount = len(ref(config).items)
-let increment = fn(value) => value + 1
 let called = increment(ref(config).count)
 emit config
 emit arithmetic
@@ -673,6 +675,7 @@ emit conjunction
 emit fallback
 emit selected
 emit len(mapped)
+emit mappedValue
 emit len(filtered)
 emit single
 emit itemCount
