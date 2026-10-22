@@ -120,23 +120,5 @@ jobs:
           {"private":true,"dependencies":{"@mcl/browser":"$MCL_VERSION","@mcl/language":"$MCL_VERSION"}}
           EOF
           npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
-          (
-            cd "$smoke_directory"
-            node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { readFile, stat } from 'node:fs/promises';
-          import { createMclRuntime, MclRuntimeError } from '@mcl/browser';
-          import { mclLanguageSupport, parser } from '@mcl/language';
-
-          const browserPackage = JSON.parse(await readFile('./node_modules/@mcl/browser/package.json', 'utf8'));
-          const languagePackage = JSON.parse(await readFile('./node_modules/@mcl/language/package.json', 'utf8'));
-          assert.equal(browserPackage.version, process.env.MCL_VERSION);
-          assert.equal(languagePackage.version, process.env.MCL_VERSION);
-          assert.equal(typeof createMclRuntime, 'function');
-          assert.equal(typeof MclRuntimeError, 'function');
-          assert.ok(mclLanguageSupport());
-          assert.ok(parser.parse('let value = "published"').length > 1);
-          assert.ok((await stat('./node_modules/@mcl/browser/dist/mcl.wasm')).size > 0);
-          assert.ok((await stat('./node_modules/@mcl/browser/dist/wasm_exec.js')).size > 0);
-          NODE
-          )
+          cp "$GITHUB_WORKSPACE/scripts/verify-installed-packages.mjs" "$smoke_directory/verify-installed-packages.mjs"
+          (cd "$smoke_directory" && node verify-installed-packages.mjs)
