@@ -50,6 +50,8 @@ release:
     owner: manifest-configuration-language
     name: mcl
   name_template: "MCL {{ .Version }}"
+  draft: true
+  replace_existing_draft: true
   extra_files:
     - glob: ./.build/release-assets/mcl_*_wasm.tar.gz
 

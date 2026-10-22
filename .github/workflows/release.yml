@@ -114,3 +114,25 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: dist/mcl_*
+
+  publish:
+    needs: [release, attest]
+    if: ${{ always() && needs.release.result == 'success' && (needs.attest.result == 'success' || needs.attest.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish attested release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          is_draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+          if [ "$is_draft" != true ]; then
+            printf 'Expected release %s to remain a draft until asset attestation succeeds.\n' "$tag" >&2
+            exit 1
+          fi
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
