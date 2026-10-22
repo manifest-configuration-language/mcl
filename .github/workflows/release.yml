@@ -93,14 +93,9 @@ jobs:
       - name: Build release assets
         env:
           MCL_VERSION: ${{ steps.target.outputs.version }}
+          MCL_RELEASE_MODE: release
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          rm -rf dist .build/release-assets
-          mise run release:wasm:archive
-          goreleaser release --clean
-          cp ".build/release-assets/mcl_${MCL_VERSION}_wasm.tar.gz" dist/
-          (cd dist && sha256sum --check SHA256SUMS)
+        run: mise run release:package
 
       - name: Upload release assets
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

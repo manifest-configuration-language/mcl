@@ -73,6 +73,11 @@ set -eu
 version="${MCL_VERSION:?MCL_VERSION must be set to a release version}"
 rm -rf dist .build/release-assets
 mise run release:wasm:archive
-mise run release:cli
+case "${MCL_RELEASE_MODE:-snapshot}" in
+  snapshot) mise run release:cli ;;
+  release) goreleaser release --clean ;;
+  *) printf 'Unsupported MCL_RELEASE_MODE: %s\n' "$MCL_RELEASE_MODE" >&2; exit 1 ;;
+esac
 cp ".build/release-assets/mcl_${version}_wasm.tar.gz" dist/
+(cd dist && sha256sum --check SHA256SUMS)
 '''
