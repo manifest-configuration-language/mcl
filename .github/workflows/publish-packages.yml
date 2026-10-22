@@ -136,20 +136,7 @@ jobs:
       - name: Pack and smoke test release archives
         env:
           MCL_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          browser_archive="$RUNNER_TEMP/mcl-browser-${MCL_VERSION}.tgz"
-          language_archive="$RUNNER_TEMP/mcl-language-${MCL_VERSION}.tgz"
-          (cd packages/browser && npm pack --pack-destination "$RUNNER_TEMP")
-          (cd packages/language && npm pack --pack-destination "$RUNNER_TEMP")
-          smoke_directory="$(mktemp -d)"
-          trap 'rm -rf "$smoke_directory"' EXIT
-          cat > "$smoke_directory/package.json" <<EOF
-          {"private":true,"dependencies":{"@mcl/browser":"file:$browser_archive","@mcl/language":"file:$language_archive"}}
-          EOF
-          npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
-          cp scripts/verify-installed-packages.mjs "$smoke_directory/verify-installed-packages.mjs"
-          (cd "$smoke_directory" && node verify-installed-packages.mjs)
+        run: scripts/verify-package-tarballs.sh
       - name: Check npm package versions are available
         env:
           MCL_VERSION: ${{ steps.release.outputs.version }}

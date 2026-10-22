@@ -82,21 +82,7 @@ jobs:
           if (missing.length) throw new Error(`Language package is missing: ${missing.join(', ')}`);
           NODE
       - name: Smoke test installed npm package archives
-        run: |
-          set -euo pipefail
-          smoke_directory="$(mktemp -d)"
-          trap 'rm -rf "$smoke_directory"' EXIT
-          (cd packages/browser && npm pack --ignore-scripts --pack-destination "$smoke_directory" --json > "$smoke_directory/browser-pack.json")
-          (cd packages/language && npm pack --ignore-scripts --pack-destination "$smoke_directory" --json > "$smoke_directory/language-pack.json")
-          browser_archive="$(node -p "JSON.parse(require('node:fs').readFileSync('$smoke_directory/browser-pack.json', 'utf8'))[0].filename")"
-          language_archive="$(node -p "JSON.parse(require('node:fs').readFileSync('$smoke_directory/language-pack.json', 'utf8'))[0].filename")"
-          mkdir -p "$smoke_directory/project"
-          cat > "$smoke_directory/project/package.json" <<EOF
-          {"private":true,"dependencies":{"@mcl/browser":"file:$smoke_directory/$browser_archive","@mcl/language":"file:$smoke_directory/$language_archive"}}
-          EOF
-          npm install --prefix "$smoke_directory/project" --ignore-scripts --no-audit --no-fund
-          cp "$GITHUB_WORKSPACE/scripts/verify-installed-packages.mjs" "$smoke_directory/project/verify-installed-packages.mjs"
-          (cd "$smoke_directory/project" && node verify-installed-packages.mjs)
+        run: scripts/verify-package-tarballs.sh
       - name: Run release checks
         run: mise run quality:check
       - name: Validate GoReleaser configuration
