@@ -12,6 +12,8 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
 
+const testDeploymentSource = "./deployment"
+
 func TestLoadGitSourceFSUsesValidatedInMemoryTree(t *testing.T) {
 	t.Parallel()
 
@@ -126,7 +128,7 @@ func TestBuildIgnoresUnreferencedFilesAndDirectories(t *testing.T) {
 	}
 
 	result, err := Build(Request{
-		Source:       "./deployment",
+		Source:       testDeploymentSource,
 		Directory:    "overlays/production",
 		ProjectRoot:  projectRoot,
 		SourcePath:   filepath.Join(projectRoot, "main.mcl"),
@@ -152,7 +154,7 @@ func TestBuildReadsRootRelativeProjectFS(t *testing.T) {
 		"deployment/base/deployment.yaml":    &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")},
 	}
 	result, err := Build(Request{
-		Source: "./deployment", Directory: "base", ProjectRoot: projectRoot,
+		Source: testDeploymentSource, Directory: "base", ProjectRoot: projectRoot,
 		SourcePath: filepath.Join(projectRoot, "main.mcl"), SourceFS: project,
 		Dependencies: &dependency.Lock{},
 	})
@@ -179,7 +181,7 @@ func TestBuildPreservesHostPathProvenanceForInjectedFS(t *testing.T) {
 		"deployment/base/deployment.yaml":    &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")},
 	}
 	result, err := Build(Request{
-		Source: "./deployment", Directory: "base", ProjectRoot: projectRoot,
+		Source: testDeploymentSource, Directory: "base", ProjectRoot: projectRoot,
 		SourcePath: filepath.Join(projectRoot, "main.mcl"), SourceFS: project, SourcePathsOSBacked: true,
 		Dependencies: &dependency.Lock{},
 	})
@@ -218,7 +220,7 @@ func TestBuildRejectsReferencedFileOverInputLimit(t *testing.T) {
 	}
 
 	_, err = Build(Request{
-		Source:       "./deployment",
+		Source:       testDeploymentSource,
 		Directory:    ".",
 		ProjectRoot:  projectRoot,
 		SourcePath:   filepath.Join(projectRoot, "main.mcl"),
