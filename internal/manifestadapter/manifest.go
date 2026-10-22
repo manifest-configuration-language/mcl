@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -22,8 +21,11 @@ type Request struct {
 	ProjectRoot  string
 	SourcePath   string
 	Dependencies *dependency.Lock
-	// SourceFS optionally supplies project files through root-relative io/fs paths.
+	// SourceFS supplies project files through root-relative io/fs paths.
 	SourceFS fs.FS
+	// SourceRoot identifies the OS project root when SourceFS is OS-backed. It is
+	// used to resolve symlinks before the corresponding root-relative FS read.
+	SourceRoot string
 }
 
 // Resultは読み込んだManifestとsource情報を保持します。
@@ -49,33 +51,11 @@ func Load(request Request) (Result, error) {
 	if filepath.IsAbs(request.Source) {
 		return Result{}, errors.New("manifest.load accepts only local relative sources")
 	}
-	if request.SourceFS != nil {
-		return loadFromSourceFS(request)
-	}
-	path, err := filepath.EvalSymlinks(filepath.Join(filepath.Dir(request.SourcePath), filepath.FromSlash(request.Source)))
-	if err != nil {
-		return Result{}, fmt.Errorf("resolve Manifest source: %w", err)
-	}
-	if !safepath.Within(request.ProjectRoot, path) {
-		return Result{}, errors.New("manifest source escapes the project directory")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return Result{}, fmt.Errorf("stat Manifest source: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return Result{}, errors.New("manifest source must be a regular file")
-	}
-	data, err := readLimitedFile(path)
-	if err != nil {
-		return Result{}, fmt.Errorf("read Manifest source: %w", err)
-	}
-	relativePath, err := filepath.Rel(request.ProjectRoot, path)
-	if err != nil {
-		return Result{}, fmt.Errorf("relativize Manifest source: %w", err)
+	if request.SourceFS == nil {
+		return Result{}, errors.New("manifest.load requires a project filesystem")
 	}
 
-	return Result{YAML: data, LocalSourcePath: path, Origin: filepath.ToSlash(relativePath)}, nil
+	return loadFromSourceFS(request)
 }
 
 func loadFromSourceFS(request Request) (Result, error) {
@@ -91,6 +71,29 @@ func loadFromSourceFS(request Request) (Result, error) {
 	if !fs.ValidPath(relativePath) {
 		return Result{}, errors.New("manifest source escapes the project directory")
 	}
+	localPath := filepath.Join(request.ProjectRoot, filepath.FromSlash(relativePath))
+	if request.SourceRoot != "" {
+		root, err := filepath.EvalSymlinks(request.SourceRoot)
+		if err != nil {
+			return Result{}, fmt.Errorf("resolve project root: %w", err)
+		}
+		resolved, err := safepath.ResolveWithin(root, localPath)
+		if err != nil {
+			if errors.Is(err, safepath.ErrOutsideRoot) {
+				return Result{}, errors.New("manifest source escapes the project directory")
+			}
+			return Result{}, fmt.Errorf("resolve Manifest source: %w", err)
+		}
+		relativePath, err := filepath.Rel(root, resolved)
+		if err != nil {
+			return Result{}, fmt.Errorf("relativize Manifest source: %w", err)
+		}
+		relativePath = filepath.ToSlash(relativePath)
+		if !fs.ValidPath(relativePath) {
+			return Result{}, errors.New("manifest source escapes the project directory")
+		}
+		localPath = resolved
+	}
 	info, err := fs.Stat(request.SourceFS, relativePath)
 	if err != nil {
 		return Result{}, fmt.Errorf("stat Manifest source: %w", err)
@@ -102,8 +105,6 @@ func loadFromSourceFS(request Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read Manifest source: %w", err)
 	}
-	localPath := filepath.Join(request.ProjectRoot, filepath.FromSlash(relativePath))
-
 	return Result{YAML: data, LocalSourcePath: localPath, Origin: relativePath}, nil
 }
 
@@ -119,24 +120,6 @@ func readLimitedSourceFS(files fs.FS, name string) ([]byte, error) {
 	}
 	if int64(len(data)) > maxManifestBytes {
 		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", name, maxManifestBytes)
-	}
-
-	return data, nil
-}
-
-func readLimitedFile(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, maxManifestBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxManifestBytes {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", path, maxManifestBytes)
 	}
 
 	return data, nil

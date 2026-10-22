@@ -20,8 +20,11 @@ func manifestLoad(arguments []RuntimeValue, state *EvaluationState) (RuntimeValu
 	request := manifestadapter.Request{
 		Source: arguments[0].TextValue(), ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies,
 	}
-	if state.Module.filesystem != nil && !state.Module.filesystem.osBacked {
-		request.SourceFS = state.Module.filesystem.files
+	if filesystem := state.Module.filesystem; filesystem != nil {
+		request.SourceFS = filesystem.files
+		if filesystem.osBacked {
+			request.SourceRoot = filesystem.root
+		}
 	}
 	loaded, err := manifestadapter.Load(request)
 	if err != nil {
