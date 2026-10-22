@@ -159,11 +159,11 @@ jobs:
             registry_error="$RUNNER_TEMP/${package}-registry-check.txt"
             if registry_integrity="$(npm view "@mcl/$package@$MCL_VERSION" dist.integrity 2>"$registry_error")"; then
               if [ "$registry_integrity" != "$expected_integrity" ]; then
-                printf 'Published @mcl/%s@%s does not match this run’s tarball (expected %s, found %s).\n' \
+                printf "Published @mcl/%s@%s does not match this run's tarball (expected %s, found %s).\n" \
                   "$package" "$MCL_VERSION" "$expected_integrity" "$registry_integrity" >&2
                 exit 1
               fi
-              printf 'Verified existing @mcl/%s@%s against this run’s tarball.\n' "$package" "$MCL_VERSION"
+              printf "Verified existing @mcl/%s@%s against this run's tarball.\n" "$package" "$MCL_VERSION"
             elif ! grep -Eq 'E404|404 Not Found' "$registry_error"; then
               cat "$registry_error" >&2
               printf 'Could not verify npm package availability for @mcl/%s@%s.\n' "$package" "$MCL_VERSION" >&2
