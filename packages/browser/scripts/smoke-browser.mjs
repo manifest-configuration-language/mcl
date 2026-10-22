@@ -11,6 +11,7 @@ import { testRuntimeLifecycle } from "../test/runtime-lifecycle.mjs";
 const performanceBudget = JSON.parse(
   await readFile(new URL("../performance-budget.json", import.meta.url), "utf8"),
 );
+const packageSmoke = process.argv.includes("--package-smoke");
 const timingBudgets = {
   initializationMs: performanceBudget.maxInitializationMs,
   firstRenderMs: performanceBudget.maxFirstRenderMs,
@@ -79,7 +80,8 @@ try {
   }
   if (!ready) throw new Error("Vite smoke server did not become ready");
 
-  for (const browserType of [chromium, firefox, webkit]) {
+  const browserTypes = packageSmoke ? [chromium] : [chromium, firefox, webkit];
+  for (const browserType of browserTypes) {
     const browser = await browserType.launch({ headless: true });
     try {
       const page = await browser.newPage();
@@ -91,7 +93,7 @@ try {
       });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error") pageErrors.push(message.text()); });
-      const benchmark = browserType.name() === "chromium" ? "?large-project" : "";
+      const benchmark = packageSmoke ? "?package-smoke" : browserType.name() === "chromium" ? "?large-project" : "";
       await page.goto(`http://127.0.0.1:4173/${benchmark}`);
       try {
         await page.locator("#result[data-status='passed']").waitFor({ timeout: 60_000 });
@@ -100,22 +102,24 @@ try {
         throw new Error(`${error.message}\nBrowser: ${browserType.name()}\nPage: ${body}\nBrowser errors: ${pageErrors.join("\n")}\nVite: ${serverOutput.join("")}`);
       }
       if (pageErrors.length) throw new Error(`${browserType.name()}: ${pageErrors.join("\n")}`);
-      const metrics = await page.locator("#result").evaluate((output) => JSON.parse(output.dataset.metrics));
       if (!Number.isInteger(wasmBytes)) throw new Error(`${browserType.name()}: WebAssembly response size was not captured`);
-      const metricNames = ["initializationMs", "firstRenderMs", "repeatRenderMs", "cancellationMs", "wasmMemoryBytes"];
-      if (browserType.name() === "chromium") {
-        metricNames.push("largeProjectLoadMs", "largeProjectRenderMs");
-      }
-      for (const name of metricNames) {
-        if (!Number.isFinite(metrics[name])) throw new Error(`${browserType.name()}: ${name} was not captured`);
-        const limit = timingBudgets[name];
-        if (limit !== undefined && metrics[name] > limit)
-          throw new Error(`${browserType.name()}: ${name} ${metrics[name]} ms exceeds the ${limit}-ms budget`);
-      }
-      if (metrics.wasmMemoryBytes > performanceBudget.maxWasmMemoryBytes) {
-        throw new Error(
-          `${browserType.name()}: WebAssembly memory ${metrics.wasmMemoryBytes} bytes exceeds the ${performanceBudget.maxWasmMemoryBytes}-byte budget`,
-        );
+      const metrics = await page.locator("#result").evaluate((output) => JSON.parse(output.dataset.metrics));
+      if (!packageSmoke) {
+        const metricNames = ["initializationMs", "firstRenderMs", "repeatRenderMs", "cancellationMs", "wasmMemoryBytes"];
+        if (browserType.name() === "chromium") {
+          metricNames.push("largeProjectLoadMs", "largeProjectRenderMs");
+        }
+        for (const name of metricNames) {
+          if (!Number.isFinite(metrics[name])) throw new Error(`${browserType.name()}: ${name} was not captured`);
+          const limit = timingBudgets[name];
+          if (limit !== undefined && metrics[name] > limit)
+            throw new Error(`${browserType.name()}: ${name} ${metrics[name]} ms exceeds the ${limit}-ms budget`);
+        }
+        if (metrics.wasmMemoryBytes > performanceBudget.maxWasmMemoryBytes) {
+          throw new Error(
+            `${browserType.name()}: WebAssembly memory ${metrics.wasmMemoryBytes} bytes exceeds the ${performanceBudget.maxWasmMemoryBytes}-byte budget`,
+          );
+        }
       }
       console.log(`${browserType.name()} ${JSON.stringify({ wasmBytes, ...metrics })}`);
     } finally {

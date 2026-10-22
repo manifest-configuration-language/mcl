@@ -1,4 +1,4 @@
-import { createMclRuntime, MclRuntimeError } from "../src/index.js";
+import { createMclRuntime, MclRuntimeError } from "@mcl/browser";
 import source from "./app/main.mcl?raw";
 import resourceModule from "./app/modules/resource.mcl?raw";
 import schema from "./app/schema.json?raw";
@@ -14,14 +14,17 @@ import kustomizeDeployment from "../../../cmd/mcl-wasm/testdata/examples/adapter
 
 const output = document.querySelector("#result");
 async function run() {
+  const packageSmoke = new URLSearchParams(location.search).has("package-smoke");
   let worker;
   let workerStartedAt;
   let wasmMemoryBytes;
   const initializationTimes = [];
-  const runtime = createMclRuntime({
+  const runtimeOptions = {
     initializationTimeoutMs: 60_000,
     operationTimeoutMs: 60_000,
-    workerFactory: () => {
+  };
+  if (!packageSmoke) {
+    runtimeOptions.workerFactory = () => {
       worker = new Worker(new URL("../src/worker.js", import.meta.url), { type: "module" });
       workerStartedAt = performance.now();
       worker.addEventListener("message", (event) => {
@@ -29,20 +32,24 @@ async function run() {
         if (Number.isInteger(event.data?.wasmMemoryBytes)) wasmMemoryBytes = event.data.wasmMemoryBytes;
       });
       return worker;
-    },
-  });
-  const project = runtime.openProject({ "app/main.mcl": source, "app/modules/resource.mcl": resourceModule });
-  const controller = new AbortController();
-  const cancellationStartedAt = performance.now();
-  const cancelled = project.render({ entrypoint: "app/main.mcl", signal: controller.signal });
-  setTimeout(() => controller.abort(), 1);
-  try {
-    await cancelled;
-    throw new Error("Expected the first render to be cancelled during WebAssembly initialization");
-  } catch (error) {
-    if (error.name !== "AbortError") throw error;
+    };
   }
-  const cancellationMs = performance.now() - cancellationStartedAt;
+  const runtime = createMclRuntime(runtimeOptions);
+  const project = runtime.openProject({ "app/main.mcl": source, "app/modules/resource.mcl": resourceModule });
+  let cancellationMs;
+  if (!packageSmoke) {
+    const controller = new AbortController();
+    const cancellationStartedAt = performance.now();
+    const cancelled = project.render({ entrypoint: "app/main.mcl", signal: controller.signal });
+    setTimeout(() => controller.abort(), 1);
+    try {
+      await cancelled;
+      throw new Error("Expected the first render to be cancelled during WebAssembly initialization");
+    } catch (error) {
+      if (error.name !== "AbortError") throw error;
+    }
+    cancellationMs = performance.now() - cancellationStartedAt;
+  }
 
   const parsed = await project.parse({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
   if (!Number.isInteger(parsed.declarations) || parsed.declarations < 1) {
@@ -70,6 +77,18 @@ async function run() {
   const firstRenderMs = performance.now() - firstRenderStartedAt;
   if (!result.yaml.includes("mcl-browser-smoke") || !result.yaml.includes('key: "value"')) {
     throw new Error(`Unexpected render output: ${result.yaml}`);
+  }
+
+  const timeoutProject = runtime.openProject({ "main.mcl": 'emit "timeout-recovery"\n' });
+  try {
+    await timeoutProject.render({ timeoutMs: 0 });
+    throw new Error("Expected the Browser operation to time out");
+  } catch (error) {
+    if (!(error instanceof MclRuntimeError) || error.code !== "MCL-WASM-TIMEOUT") throw error;
+  }
+  const recoveredResult = await timeoutProject.render({ timeoutMs: 60_000 });
+  if (!recoveredResult.yaml.includes('"timeout-recovery"')) {
+    throw new Error(`The Browser runtime did not recover after a timed-out operation: ${recoveredResult.yaml}`);
   }
 
   const adapterProjects = [
@@ -106,6 +125,34 @@ async function run() {
         throw new Error(`${adapter.name} adapter output is missing ${JSON.stringify(expected)}: ${adapterResult.yaml}`);
       }
     }
+  }
+
+  const sharedEntrypoint = 'import "modules/shared.mcl" as shared\nemit shared.value\n';
+  const firstIsolatedProject = runtime.openProject({
+    "main.mcl": sharedEntrypoint,
+    "modules/shared.mcl": 'export let value = "first-project"\n',
+    "modules/private.mcl": 'export let value = "private-project-file"\n',
+  });
+  const firstIsolatedResult = await firstIsolatedProject.render({ timeoutMs: 60_000 });
+  if (!firstIsolatedResult.yaml.includes('"first-project"')) {
+    throw new Error(`Unexpected first project output: ${firstIsolatedResult.yaml}`);
+  }
+  const secondIsolatedProject = runtime.openProject({
+    "main.mcl": sharedEntrypoint,
+    "modules/shared.mcl": 'export let value = "second-project"\n',
+  });
+  const secondIsolatedResult = await secondIsolatedProject.render({ timeoutMs: 60_000 });
+  if (!secondIsolatedResult.yaml.includes('"second-project"')) {
+    throw new Error(`Project files leaked between projects: ${secondIsolatedResult.yaml}`);
+  }
+  const missingProjectFile = runtime.openProject({
+    "main.mcl": 'import "modules/private.mcl" as leftover\nemit leftover.value\n',
+  });
+  try {
+    await missingProjectFile.render({ timeoutMs: 60_000 });
+    throw new Error("A file from a previous project remained in the Browser filesystem");
+  } catch (error) {
+    if (!(error instanceof MclRuntimeError)) throw error;
   }
 
   const importedFailureProject = runtime.openProject({
@@ -172,18 +219,20 @@ emit config`;
       throw new Error("Binary project files were not reusable after transfer");
     }
   }
-  const networkBlocked = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Network isolation probe timed out")), 5000);
-    const onMessage = (event) => {
-      if (event.data?.type !== "network-probe-result" || event.data.requestId !== "network-probe") return;
-      clearTimeout(timer);
-      worker.removeEventListener("message", onMessage);
-      resolve(event.data.blocked);
-    };
-    worker.addEventListener("message", onMessage);
-    worker.postMessage({ type: "network-probe", requestId: "network-probe", url: "https://example.com/" });
-  });
-  if (!await networkBlocked) throw new Error("MCL worker allowed an external network request");
+  if (!packageSmoke) {
+    const networkBlocked = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Network isolation probe timed out")), 5000);
+      const onMessage = (event) => {
+        if (event.data?.type !== "network-probe-result" || event.data.requestId !== "network-probe") return;
+        clearTimeout(timer);
+        worker.removeEventListener("message", onMessage);
+        resolve(event.data.blocked);
+      };
+      worker.addEventListener("message", onMessage);
+      worker.postMessage({ type: "network-probe", requestId: "network-probe", url: "https://example.com/" });
+    });
+    if (!await networkBlocked) throw new Error("MCL worker allowed an external network request");
+  }
   runtime.dispose();
   try {
     await runtime.parse(source);

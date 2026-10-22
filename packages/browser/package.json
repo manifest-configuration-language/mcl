@@ -19,6 +19,7 @@
     "build:wasm": "node ./scripts/build-wasm.mjs",
     "generate:protocol": "node ./scripts/generate-protocol.mjs",
     "test:browser": "npm run build:wasm && node ./scripts/smoke-browser.mjs",
+    "test:browser:installed": "node ./scripts/smoke-browser.mjs --package-smoke",
     "prepack": "npm run build:wasm"
   },
   "engines": {

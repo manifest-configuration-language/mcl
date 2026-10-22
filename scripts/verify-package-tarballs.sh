@@ -26,3 +26,5 @@ EOF
 npm install --prefix "$project_directory" --ignore-scripts --no-audit --no-fund
 cp "$root/scripts/verify-installed-packages.mjs" "$project_directory/verify-installed-packages.mjs"
 (cd "$project_directory" && node verify-installed-packages.mjs)
+MCL_BROWSER_PACKAGE="$project_directory/node_modules/@mcl/browser" \
+  npm run --prefix "$root/packages/browser" test:browser:installed
