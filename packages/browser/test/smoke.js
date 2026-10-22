@@ -7,6 +7,7 @@ const output = document.querySelector("#result");
 async function run() {
   let worker;
   let workerStartedAt;
+  let wasmMemoryBytes;
   const initializationTimes = [];
   const runtime = createMclRuntime({
     initializationTimeoutMs: 60_000,
@@ -16,6 +17,7 @@ async function run() {
       workerStartedAt = performance.now();
       worker.addEventListener("message", (event) => {
         if (event.data?.type === "ready") initializationTimes.push(performance.now() - workerStartedAt);
+        if (Number.isInteger(event.data?.wasmMemoryBytes)) wasmMemoryBytes = event.data.wasmMemoryBytes;
       });
       return worker;
     },
@@ -63,6 +65,25 @@ async function run() {
   const repeatRenderStartedAt = performance.now();
   await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
   const repeatRenderMs = performance.now() - repeatRenderStartedAt;
+
+  let largeProjectMetrics;
+  if (new URLSearchParams(location.search).has("large-project")) {
+    const largeFile = new Uint8Array(16 * 1024 * 1024);
+    const largeProjectStartedAt = performance.now();
+    const largeProject = runtime.openProject({
+      "main.mcl": 'emit "large-project-smoke"\n',
+      "fixtures/payload-1.bin": largeFile,
+      "fixtures/payload-2.bin": largeFile,
+    });
+    const largeProjectLoadMs = performance.now() - largeProjectStartedAt;
+    const largeProjectRenderStartedAt = performance.now();
+    const largeProjectResult = await largeProject.render({ timeoutMs: 60_000 });
+    const largeProjectRenderMs = performance.now() - largeProjectRenderStartedAt;
+    if (!largeProjectResult.yaml.includes('"large-project-smoke"')) {
+      throw new Error(`Unexpected large project output: ${largeProjectResult.yaml}`);
+    }
+    largeProjectMetrics = { largeProjectLoadMs, largeProjectRenderMs };
+  }
   const binarySource = `type BinaryConfig = schema("./schemas/config.json")
 
 let config: BinaryConfig =
@@ -101,6 +122,8 @@ emit config`;
     firstRenderMs,
     repeatRenderMs,
     cancellationMs,
+    wasmMemoryBytes,
+    ...largeProjectMetrics,
   });
   output.textContent = output.dataset.metrics;
 }

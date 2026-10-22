@@ -3,5 +3,6 @@
     "raw": 113125411,
     "gzip": 19600102
   },
-  "maxGrowthPercent": 10
+  "maxGrowthPercent": 10,
+  "maxWasmMemoryBytes": 201326592
 }

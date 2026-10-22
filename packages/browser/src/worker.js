@@ -1,5 +1,6 @@
 let initialized;
 let runtimeAssets;
+let wasmMemory;
 let networkAccessDenied = false;
 const runtimeFetch = globalThis.fetch.bind(globalThis);
 
@@ -21,6 +22,7 @@ async function initialize() {
     } catch {
       ({ instance } = await WebAssembly.instantiate(await response.arrayBuffer(), go.importObject));
     }
+    wasmMemory = instance.exports.mem;
     void go.run(instance);
     while (!globalThis.mclWasmReady) await new Promise((resolve) => setTimeout(resolve, 0));
     postMessage({ type: "ready" });
@@ -78,7 +80,12 @@ self.addEventListener("message", async (event) => {
       files: encodedFiles.files,
     };
     const value = JSON.parse(globalThis.mclWasm.run(JSON.stringify(request), encodedFiles.binaryFiles));
-    postMessage({ type: "response", requestId: message.requestId, value });
+    postMessage({
+      type: "response",
+      requestId: message.requestId,
+      value,
+      wasmMemoryBytes: wasmMemory.buffer.byteLength,
+    });
   } catch (error) {
     postMessage({
       type: "response",

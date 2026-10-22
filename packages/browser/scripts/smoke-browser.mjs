@@ -1,8 +1,12 @@
 import { chromium, firefox, webkit } from "playwright";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { testRuntimeLifecycle } from "../test/runtime-lifecycle.mjs";
 
+const performanceBudget = JSON.parse(
+  await readFile(new URL("../performance-budget.json", import.meta.url), "utf8"),
+);
 await testRuntimeLifecycle();
 
 const server = spawn("./node_modules/.bin/vite", ["--config", "test/vite.config.js", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {
@@ -40,7 +44,8 @@ try {
       });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error") pageErrors.push(message.text()); });
-      await page.goto("http://127.0.0.1:4173/");
+      const benchmark = browserType.name() === "chromium" ? "?large-project" : "";
+      await page.goto(`http://127.0.0.1:4173/${benchmark}`);
       try {
         await page.locator("#result[data-status='passed']").waitFor({ timeout: 60_000 });
       } catch (error) {
@@ -50,8 +55,17 @@ try {
       if (pageErrors.length) throw new Error(`${browserType.name()}: ${pageErrors.join("\n")}`);
       const metrics = await page.locator("#result").evaluate((output) => JSON.parse(output.dataset.metrics));
       if (!Number.isInteger(wasmBytes)) throw new Error(`${browserType.name()}: WebAssembly response size was not captured`);
-      for (const name of ["initializationMs", "firstRenderMs", "repeatRenderMs", "cancellationMs"]) {
+      const metricNames = ["initializationMs", "firstRenderMs", "repeatRenderMs", "cancellationMs", "wasmMemoryBytes"];
+      if (browserType.name() === "chromium") {
+        metricNames.push("largeProjectLoadMs", "largeProjectRenderMs");
+      }
+      for (const name of metricNames) {
         if (!Number.isFinite(metrics[name])) throw new Error(`${browserType.name()}: ${name} was not captured`);
+      }
+      if (metrics.wasmMemoryBytes > performanceBudget.maxWasmMemoryBytes) {
+        throw new Error(
+          `${browserType.name()}: WebAssembly memory ${metrics.wasmMemoryBytes} bytes exceeds the ${performanceBudget.maxWasmMemoryBytes}-byte budget`,
+        );
       }
       console.log(`${browserType.name()} ${JSON.stringify({ wasmBytes, ...metrics })}`);
     } finally {

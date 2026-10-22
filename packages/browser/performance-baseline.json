@@ -1,0 +1,37 @@
+{
+  "capturedAt": "2026-10-22",
+  "environment": {
+    "platform": "Darwin arm64",
+    "node": "v26.8.2",
+    "playwright": "1.64.1"
+  },
+  "measurements": {
+    "chromium": {
+      "wasmBytes": 113125411,
+      "initializationMs": 322.3,
+      "firstRenderMs": 0.9,
+      "repeatRenderMs": 1.2,
+      "cancellationMs": 1.3,
+      "wasmMemoryBytes": 120324096,
+      "largeProjectBytes": 33554432,
+      "largeProjectLoadMs": 3.4,
+      "largeProjectRenderMs": 17
+    },
+    "firefox": {
+      "wasmBytes": 113125411,
+      "initializationMs": 538,
+      "firstRenderMs": 2,
+      "repeatRenderMs": 0,
+      "cancellationMs": 2,
+      "wasmMemoryBytes": 86507520
+    },
+    "webkit": {
+      "wasmBytes": 113125411,
+      "initializationMs": 383,
+      "firstRenderMs": 2,
+      "repeatRenderMs": 1,
+      "cancellationMs": 4,
+      "wasmMemoryBytes": 86507520
+    }
+  }
+}
