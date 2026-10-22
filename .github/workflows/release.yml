@@ -72,6 +72,7 @@ jobs:
         env:
           MCL_VERSION: ${{ steps.target.outputs.version }}
           MCL_RELEASE_MODE: release
+          MCL_RELEASE_ASSETS_STAGED: true
           GITHUB_TOKEN: ${{ github.token }}
         run: mise run release:package
 

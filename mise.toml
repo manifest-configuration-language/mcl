@@ -44,16 +44,6 @@ run = "node ./cmd/mcl-wasm/check.mjs"
 description = "Build the Browser SDK WebAssembly runtime"
 run = "node ./packages/browser/scripts/build-wasm.mjs"
 
-[tasks."release:cli"]
-description = "Build and archive CLI and WebAssembly release assets with GoReleaser"
-run = '''
-set -eu
-: "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
-mise run wasm:build
-mise run release:wasm
-goreleaser release --snapshot --clean
-'''
-
 [tasks."release:wasm"]
 description = "Stage the Browser SDK WebAssembly release assets"
 run = '''
@@ -69,10 +59,17 @@ gzip -dc .build/release-assets/mcl.wasm.gz | cmp - packages/browser/dist/mcl.was
 description = "Package CLI and WebAssembly release assets with checksums"
 run = '''
 set -eu
-rm -rf dist .build/release-assets
+rm -rf dist
+if [ "${MCL_RELEASE_ASSETS_STAGED:-false}" != true ]; then
+  mise run wasm:build
+  mise run release:wasm
+fi
 case "${MCL_RELEASE_MODE:-snapshot}" in
-  snapshot) mise run release:cli ;;
-  release) mise run release:wasm && goreleaser release --clean ;;
+  snapshot)
+    : "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+    goreleaser release --snapshot --clean
+    ;;
+  release) goreleaser release --clean ;;
   *) printf 'Unsupported MCL_RELEASE_MODE: %s\n' "$MCL_RELEASE_MODE" >&2; exit 1 ;;
 esac
 (cd dist && sha256sum --check SHA256SUMS)
