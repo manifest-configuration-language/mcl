@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
@@ -61,38 +60,45 @@ func (filesystem *rootFilesystem) writeFileAtomic(name string, data []byte) erro
 	return filesystem.writer.WriteFileAtomic(name, data)
 }
 
-func (filesystem *rootFilesystem) stat(name string) (fs.FileInfo, error) {
+func (filesystem *rootFilesystem) stat(name string) (info fs.FileInfo, err error) {
 	if !fs.ValidPath(name) {
 		return nil, fs.ErrInvalid
 	}
 	if filesystem.osBacked {
-		return os.Lstat(filepath.Join(filesystem.root, filepath.FromSlash(name)))
+		root, err := os.OpenRoot(filesystem.root)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			err = errors.Join(err, root.Close())
+		}()
+
+		return root.Lstat(filepath.FromSlash(name))
 	}
 
 	return fs.Stat(filesystem.files, name)
 }
 
-func (filesystem *rootFilesystem) readLimitedFile(name string, maximumSize int64) ([]byte, error) {
+func (filesystem *rootFilesystem) readLimitedFile(name string, maximumSize int64) (data []byte, err error) {
 	if !fs.ValidPath(name) {
 		return nil, fs.ErrInvalid
 	}
+	var root *os.Root
 	if filesystem.osBacked {
-		path := filepath.Join(filesystem.root, filepath.FromSlash(name))
-		resolved, err := safepath.ResolveWithin(filesystem.root, path)
+		root, err = os.OpenRoot(filesystem.root)
 		if err != nil {
 			return nil, err
 		}
-		root, err := filepath.EvalSymlinks(filesystem.root)
-		if err != nil {
-			return nil, err
-		}
-		relative, err := filepath.Rel(root, resolved)
-		if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return nil, safepath.ErrOutsideRoot
-		}
-		name = filepath.ToSlash(relative)
+		defer func() {
+			err = errors.Join(err, root.Close())
+		}()
 	}
-	file, err := filesystem.files.Open(name)
+	var file fs.File
+	if root != nil {
+		file, err = root.Open(filepath.FromSlash(name))
+	} else {
+		file, err = filesystem.files.Open(name)
+	}
 	if err != nil {
 		return nil, err
 	}
