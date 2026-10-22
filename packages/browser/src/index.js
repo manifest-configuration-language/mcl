@@ -109,6 +109,7 @@ export function createMclRuntime(options = {}) {
       const timeoutError = new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL operation timed out" });
       let timer;
       try {
+        if (timeoutMs <= 0) throw timeoutError;
         timer = setTimeout(() => {
           if (stopCurrent) stopCurrent(timeoutError);
           else stopInitialization?.(timeoutError);
