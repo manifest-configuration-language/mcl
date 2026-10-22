@@ -23,9 +23,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
     permissions:
       contents: write
-      actions: write
       id-token: write
       attestations: write
     steps:
@@ -157,11 +158,19 @@ jobs:
             --generate-notes \
             "${release_flags[@]}"
 
+  publish_packages:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
       - name: Dispatch npm package publishing
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
           run_name="Publish npm packages $RELEASE_TAG"

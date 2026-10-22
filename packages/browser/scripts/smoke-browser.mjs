@@ -1,7 +1,11 @@
 import { chromium, firefox, webkit } from "playwright";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { createGzip } from "node:zlib";
 import { testRuntimeLifecycle } from "../test/runtime-lifecycle.mjs";
 
 const performanceBudget = JSON.parse(
@@ -19,6 +23,37 @@ for (const [metric, limit] of Object.entries(timingBudgets)) {
   if (!Number.isSafeInteger(limit) || limit <= 0)
     throw new Error(`The ${metric} performance budget is invalid.`);
 }
+const wasmPath = new URL("../dist/mcl.wasm", import.meta.url);
+const wasmSizeBudget = performanceBudget.baselineBytes;
+if (
+  !Number.isSafeInteger(wasmSizeBudget?.raw) ||
+  wasmSizeBudget.raw <= 0 ||
+  !Number.isSafeInteger(wasmSizeBudget?.gzip) ||
+  wasmSizeBudget.gzip <= 0 ||
+  !Number.isFinite(performanceBudget.maxGrowthPercent) ||
+  performanceBudget.maxGrowthPercent < 0
+) {
+  throw new Error("The WebAssembly size budget is invalid.");
+}
+const wasmRawBytes = (await stat(wasmPath)).size;
+let wasmGzipBytes = 0;
+await pipeline(
+  createReadStream(wasmPath),
+  createGzip({ level: 9, mtime: 0 }),
+  new Writable({ write(chunk, _encoding, callback) { wasmGzipBytes += chunk.length; callback(); } }),
+);
+for (const [format, actual, baseline] of [
+  ["raw", wasmRawBytes, wasmSizeBudget.raw],
+  ["gzip", wasmGzipBytes, wasmSizeBudget.gzip],
+]) {
+  const limit = baseline * (1 + performanceBudget.maxGrowthPercent / 100);
+  if (actual > limit) {
+    throw new Error(
+      `WebAssembly ${format} size ${actual} bytes exceeds the ${limit}-byte budget (${performanceBudget.maxGrowthPercent}% growth).`,
+    );
+  }
+}
+console.log(`WebAssembly size ${JSON.stringify({ raw: wasmRawBytes, gzip: wasmGzipBytes })}`);
 await testRuntimeLifecycle();
 
 const server = spawn("./node_modules/.bin/vite", ["--config", "test/vite.config.js", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {
