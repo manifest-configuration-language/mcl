@@ -82,6 +82,7 @@ func loadFromSourceFS(request Request) (Result, error) {
 			if errors.Is(err, safepath.ErrOutsideRoot) {
 				return Result{}, errors.New("manifest source escapes the project directory")
 			}
+
 			return Result{}, fmt.Errorf("resolve Manifest source: %w", err)
 		}
 		resolvedRelativePath, err := filepath.Rel(root, resolved)
@@ -105,6 +106,7 @@ func loadFromSourceFS(request Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read Manifest source: %w", err)
 	}
+
 	return Result{YAML: data, LocalSourcePath: localPath, Origin: relativePath}, nil
 }
 

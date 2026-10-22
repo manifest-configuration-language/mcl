@@ -75,6 +75,7 @@ func createOverlay(sourceRoot, buildDirectory string, sourceFileSystem filesys.F
 			return "", nil, fmt.Errorf("prepare Kustomize overlay directory: %w", err)
 		}
 	}
+
 	return overlayRoot, overlay, nil
 }
 
@@ -153,6 +154,7 @@ func (fs *overlayFileSystem) Exists(path string) bool {
 	if !ok {
 		return false
 	}
+
 	return fs.sourceFileSystem.Exists(source)
 }
 
@@ -168,6 +170,7 @@ func (fs *overlayFileSystem) IsDir(path string) bool {
 	if err != nil || isManagedDirectory(relative) {
 		return false
 	}
+
 	return fs.sourceFileSystem.IsDir(source)
 }
 
