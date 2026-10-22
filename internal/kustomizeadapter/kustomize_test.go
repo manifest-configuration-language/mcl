@@ -196,7 +196,7 @@ func TestBuildPreservesHostPathProvenanceForInjectedFS(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsReferencedFileOverInputLimit(t *testing.T) {
+func TestBuildRejectsSourceFilesystemOverInputLimit(t *testing.T) {
 	t.Parallel()
 
 	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
@@ -230,7 +230,7 @@ func TestBuildRejectsReferencedFileOverInputLimit(t *testing.T) {
 		SourceFS:     os.DirFS(projectRoot),
 		Dependencies: &dependency.Lock{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "inputs exceed") {
-		t.Fatalf("Build() error = %v, want referenced input size diagnostic", err)
+	if err == nil || !strings.Contains(err.Error(), "source exceeds") {
+		t.Fatalf("Build() error = %v, want source filesystem size diagnostic", err)
 	}
 }
