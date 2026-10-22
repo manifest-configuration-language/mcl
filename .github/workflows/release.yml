@@ -196,7 +196,22 @@ jobs:
         run: |
           node scripts/publish-npm-packages.mjs "$RUNNER_TEMP/mcl-npm-packages" "$MCL_VERSION"
 
-      - name: Smoke test published packages
+      - name: Wait for npm registry propagation
+        env:
+          MCL_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          attempt=1
+          while ! npm view "@manifest-configuration-language/browser@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view "@manifest-configuration-language/language@$MCL_VERSION" version >/dev/null 2>&1; do
+            if [ "$attempt" -ge 20 ]; then
+              printf 'npm registry did not expose all MCL %s packages within five minutes.\n' "$MCL_VERSION" >&2
+              exit 1
+            fi
+            sleep 15
+            attempt=$((attempt + 1))
+          done
+
+      - name: Install and verify published packages
         env:
           MCL_VERSION: ${{ needs.release.outputs.version }}
         run: |
