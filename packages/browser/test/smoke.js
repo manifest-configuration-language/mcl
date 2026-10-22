@@ -271,18 +271,32 @@ emit config`;
     }
   }
   if (!packageSmoke) {
-    const networkBlocked = new Promise((resolve, reject) => {
+    const networkProbe = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Network isolation probe timed out")), 5000);
       const onMessage = (event) => {
         if (event.data?.type !== "network-probe-result" || event.data.requestId !== "network-probe") return;
         clearTimeout(timer);
         worker.removeEventListener("message", onMessage);
-        resolve(event.data.blocked);
+        resolve(event.data);
       };
       worker.addEventListener("message", onMessage);
       worker.postMessage({ type: "network-probe", requestId: "network-probe", url: "https://example.com/" });
     });
-    if (!await networkBlocked) throw new Error("MCL worker allowed an external network request");
+    const networkResult = await networkProbe;
+    if (!networkResult.fetchBlocked) throw new Error("MCL worker allowed fetch network access");
+    const nestedWorkerAPIs = ["Worker", "SharedWorker", "importScripts"];
+    const missingNestedWorkerBlocks = networkResult.availableAPIs.filter(
+      (name) => nestedWorkerAPIs.includes(name) && !networkResult.blockedAPIs.includes(name),
+    );
+    if (missingNestedWorkerBlocks.length > 0) {
+      throw new Error(`MCL worker left nested worker APIs enabled: ${missingNestedWorkerBlocks.join(", ")}`);
+    }
+    const missingNetworkBlocks = networkResult.availableAPIs.filter(
+      (name) => !nestedWorkerAPIs.includes(name) && !networkResult.blockedAPIs.includes(name),
+    );
+    if (missingNetworkBlocks.length > 0) {
+      throw new Error(`MCL worker did not disable network APIs: ${missingNetworkBlocks.join(", ")}`);
+    }
   }
   runtime.dispose();
   try {

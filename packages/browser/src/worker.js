@@ -3,6 +3,52 @@ let runtimeAssets;
 let wasmMemory;
 let networkAccessDenied = false;
 const runtimeFetch = globalThis.fetch.bind(globalThis);
+const networkAPINames = [
+  "Worker",
+  "SharedWorker",
+  "XMLHttpRequest",
+  "WebSocket",
+  "EventSource",
+  "WebTransport",
+  "WebSocketStream",
+  "RTCPeerConnection",
+  "importScripts",
+];
+const originalFetch = globalThis.fetch;
+const originalNetworkAPIs = new Map(
+  networkAPINames
+    .filter((name) => typeof globalThis[name] === "function")
+    .map((name) => [name, globalThis[name]]),
+);
+
+function denyNetworkAccess() {
+  globalThis.fetch = () => Promise.reject(new TypeError("Network access is disabled in the MCL runtime"));
+  for (const [name] of originalNetworkAPIs) {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      writable: true,
+      value: function MclNetworkAccessDenied() {
+        throw new TypeError("Network access is disabled in the MCL runtime");
+      },
+    });
+  }
+  networkAccessDenied = true;
+}
+
+async function probeNetworkAccess(url) {
+  let fetchBlocked = false;
+  try {
+    await globalThis.fetch(url);
+  } catch {
+    fetchBlocked = true;
+  }
+
+  const availableAPIs = ["fetch", ...originalNetworkAPIs.keys()];
+  const blockedAPIs = availableAPIs.filter(
+    (name) => name === "fetch" ? globalThis.fetch !== originalFetch : globalThis[name] !== originalNetworkAPIs.get(name),
+  );
+  return { fetchBlocked, availableAPIs, blockedAPIs };
+}
 
 async function initialize() {
   if (initialized) return initialized;
@@ -12,10 +58,8 @@ async function initialize() {
     const go = new Go();
     const response = await runtimeFetch(runtimeAssets.wasmURL);
     if (!response.ok) throw new Error(`Unable to load MCL WebAssembly: ${response.status}`);
-    // The only network request available to the worker is the SDK-owned WASM load.
-    // Deny fetch before starting Go so evaluated projects cannot race initialization.
-    globalThis.fetch = () => Promise.reject(new TypeError("Network access is disabled in the MCL runtime"));
-    networkAccessDenied = true;
+    // Load the runtime before denying network APIs, then lock them before Go starts.
+    denyNetworkAccess();
     let instance;
     try {
       ({ instance } = await WebAssembly.instantiateStreaming(response.clone(), go.importObject));
@@ -54,12 +98,8 @@ function encodeFiles(files) {
 self.addEventListener("message", async (event) => {
   const message = event.data;
   if (message?.type === "network-probe" && networkAccessDenied) {
-    try {
-      await fetch(message.url);
-      postMessage({ type: "network-probe-result", requestId: message.requestId, blocked: false });
-    } catch {
-      postMessage({ type: "network-probe-result", requestId: message.requestId, blocked: true });
-    }
+    const result = await probeNetworkAccess(message.url);
+    postMessage({ type: "network-probe-result", requestId: message.requestId, ...result });
     return;
   }
   if (message?.type === "configure") {
