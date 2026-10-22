@@ -31,13 +31,13 @@
       "type": "object",
       "description": "Binary files omit content and are supplied in the optional second run argument under the same path.",
       "properties": {
-        "encoding": { "enum": ["utf8", "base64", "binary"] },
+        "encoding": { "enum": ["utf8", "binary"] },
         "content": { "type": "string" }
       },
       "required": ["encoding"],
       "allOf": [
         {
-          "if": { "properties": { "encoding": { "enum": ["utf8", "base64"] } }, "required": ["encoding"] },
+          "if": { "properties": { "encoding": { "const": "utf8" } }, "required": ["encoding"] },
           "then": { "required": ["content"] }
         },
         {

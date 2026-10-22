@@ -5,7 +5,7 @@ export type MCLWebAssemblyRequestAndResponseProtocol = Request | Response;
  * Binary files omit content and are supplied in the optional second run argument under the same path.
  */
 export type FileInput = {
-  encoding: "utf8" | "base64" | "binary";
+  encoding: "utf8" | "binary";
   content?: string;
 };
 export type LintResult = LintDiagnostic[];

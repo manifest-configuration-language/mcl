@@ -44,7 +44,6 @@ type FileInput struct {
 
 type FileInputEncoding string
 
-const FileInputEncodingBase64 FileInputEncoding = "base64"
 const FileInputEncodingBinary FileInputEncoding = "binary"
 const FileInputEncodingUtf8 FileInputEncoding = "utf8"
 

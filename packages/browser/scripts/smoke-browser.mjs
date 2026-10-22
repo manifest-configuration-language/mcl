@@ -7,6 +7,18 @@ import { testRuntimeLifecycle } from "../test/runtime-lifecycle.mjs";
 const performanceBudget = JSON.parse(
   await readFile(new URL("../performance-budget.json", import.meta.url), "utf8"),
 );
+const timingBudgets = {
+  initializationMs: performanceBudget.maxInitializationMs,
+  firstRenderMs: performanceBudget.maxFirstRenderMs,
+  repeatRenderMs: performanceBudget.maxRepeatRenderMs,
+  cancellationMs: performanceBudget.maxCancellationMs,
+  largeProjectLoadMs: performanceBudget.maxLargeProjectLoadMs,
+  largeProjectRenderMs: performanceBudget.maxLargeProjectRenderMs,
+};
+for (const [metric, limit] of Object.entries(timingBudgets)) {
+  if (!Number.isSafeInteger(limit) || limit <= 0)
+    throw new Error(`The ${metric} performance budget is invalid.`);
+}
 await testRuntimeLifecycle();
 
 const server = spawn("./node_modules/.bin/vite", ["--config", "test/vite.config.js", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {
@@ -61,6 +73,9 @@ try {
       }
       for (const name of metricNames) {
         if (!Number.isFinite(metrics[name])) throw new Error(`${browserType.name()}: ${name} was not captured`);
+        const limit = timingBudgets[name];
+        if (limit !== undefined && metrics[name] > limit)
+          throw new Error(`${browserType.name()}: ${name} ${metrics[name]} ms exceeds the ${limit}-ms budget`);
       }
       if (metrics.wasmMemoryBytes > performanceBudget.maxWasmMemoryBytes) {
         throw new Error(

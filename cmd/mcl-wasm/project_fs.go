@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -86,15 +85,6 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 				return nil, fmt.Errorf("project file %q is missing JSON content", relativePath)
 			}
 			content = []byte(*input.Content)
-		case wasmprotocol.FileInputEncodingBase64:
-			if input.Content == nil {
-				return nil, fmt.Errorf("project file %q is missing JSON content", relativePath)
-			}
-			decoded, err := base64.StdEncoding.DecodeString(*input.Content)
-			if err != nil {
-				return nil, fmt.Errorf("decode project file %q: invalid base64 content", relativePath)
-			}
-			content = decoded
 		case wasmprotocol.FileInputEncodingBinary:
 			if input.Content != nil {
 				return nil, fmt.Errorf("binary project file %q cannot include JSON content", relativePath)
@@ -106,7 +96,7 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 			}
 			binaryCount++
 		default:
-			return nil, fmt.Errorf("project file %q encoding must be utf8, base64, or binary", relativePath)
+			return nil, fmt.Errorf("project file %q encoding must be utf8 or binary", relativePath)
 		}
 		if len(content) > maxProjectFileBytes {
 			return nil, fmt.Errorf("project file %q exceeds the %d-byte limit", relativePath, maxProjectFileBytes)

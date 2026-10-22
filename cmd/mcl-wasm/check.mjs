@@ -126,6 +126,27 @@ try {
   };
   const manifestResult = invoke('render', manifestSource, manifestFiles);
   if (!manifestResult.ok || !manifestResult.result.yaml.includes('name:')) fail(`local manifest adapter check failed: ${JSON.stringify(manifestResult)}`);
+  const runAdapterParity = (name, inputSource, files, wasmResult) => {
+    if (!wasmResult.ok) fail(`local ${name} adapter check failed: ${JSON.stringify(wasmResult)}`);
+    const adapterProject = path.join(buildDirectory, `${name.toLowerCase()}-adapter-project`);
+    mkdirSync(adapterProject, { recursive: true });
+    writeFileSync(path.join(adapterProject, 'main.mcl'), inputSource);
+    for (const [relativePath, content] of Object.entries(files)) {
+      const filePath = path.join(adapterProject, relativePath);
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, content);
+    }
+    const nativeResult = spawnSync('go', ['run', './cmd/mcl', 'render', path.join(adapterProject, 'main.mcl')], {
+      cwd: workspace,
+      encoding: 'utf8',
+    });
+    if (nativeResult.status !== 0) fail(`${name} adapter CLI render failed: ${nativeResult.stderr || nativeResult.stdout}`);
+    if (nativeResult.stdout !== wasmResult.result.yaml) {
+      fail(`${name} adapter CLI/WASM render output differs: CLI=${nativeResult.stdout} WASM=${wasmResult.result.yaml}`);
+    }
+    console.log(`${name} adapter CLI/WASM output matches`);
+  };
+  runAdapterParity('Manifest', manifestSource, manifestFiles, manifestResult);
 
   const importedSource = 'import "./modules.mcl" as modules\nemit modules.resource';
   const importResult = invoke('render', importedSource, { 'modules.mcl': 'export let resource =\n  apiVersion: "v1"\n  kind: "ConfigMap"\n  metadata:\n    name: "imported"\n' });
@@ -144,14 +165,14 @@ try {
     'chart/templates/deployment.yaml': readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/adapters/helm/chart/templates/deployment.yaml'), 'utf8'),
   };
   const helmResult = invoke('render', helmSource, helmFiles);
-  if (!helmResult.ok) fail(`local Helm adapter check failed: ${JSON.stringify(helmResult)}`);
+  runAdapterParity('Helm', helmSource, helmFiles, helmResult);
 
   const kustomizeSource = readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/adapters/kustomize/main.mcl'), 'utf8');
   const kustomizeFiles = Object.fromEntries(['fixtures/base/Kustomization', 'fixtures/base/deployment.yaml'].map((relativePath) => [
     relativePath, readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/adapters/kustomize', relativePath), 'utf8'),
   ]));
   const kustomizeResult = invoke('render', kustomizeSource, kustomizeFiles);
-  if (!kustomizeResult.ok) fail(`local Kustomize adapter check failed: ${JSON.stringify(kustomizeResult)}`);
+  runAdapterParity('Kustomize', kustomizeSource, kustomizeFiles, kustomizeResult);
 
   const additionalResourceSource = 'let resource =\n  apiVersion: "example.test/v1"\n  kind: "Widget"\n  metadata:\n    name: "sample"\nemit resource\n';
   const additionalResourceFiles = {

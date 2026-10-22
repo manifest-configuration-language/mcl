@@ -1,8 +1,14 @@
 {
   "baselineBytes": {
-    "raw": 113125411,
-    "gzip": 19600102
+    "raw": 113123563,
+    "gzip": 19600313
   },
   "maxGrowthPercent": 10,
-  "maxWasmMemoryBytes": 201326592
+  "maxWasmMemoryBytes": 201326592,
+  "maxInitializationMs": 10000,
+  "maxFirstRenderMs": 1000,
+  "maxRepeatRenderMs": 1000,
+  "maxCancellationMs": 1000,
+  "maxLargeProjectLoadMs": 2000,
+  "maxLargeProjectRenderMs": 5000
 }

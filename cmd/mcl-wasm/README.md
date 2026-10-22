@@ -13,7 +13,7 @@
   "source": "emit resource\n",
   "files": {
     "mcl.toml": { "encoding": "utf8", "content": "" },
-    "schemas/widget.json": { "encoding": "base64", "content": "eyJ0eXBlIjoib2JqZWN0In0=" }
+    "schemas/widget.json": { "encoding": "utf8", "content": "{\"type\":\"object\"}" }
   }
 }
 ```

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"io/fs"
 	"strings"
@@ -19,7 +18,6 @@ func TestNewProjectFilesSupportsJSONAndBinaryFiles(t *testing.T) {
 
 	files := map[string]wasmprotocol.FileInput{
 		"text.txt":     {Encoding: wasmprotocol.FileInputEncodingUtf8, Content: new("MCL")},
-		"legacy.bin":   {Encoding: wasmprotocol.FileInputEncodingBase64, Content: new(base64.StdEncoding.EncodeToString([]byte{0, 1, 2}))},
 		"transfer.bin": {Encoding: wasmprotocol.FileInputEncodingBinary},
 	}
 	project, err := newProjectFiles("emit {}", files, map[string][]byte{"transfer.bin": {3, 4, 5}}, "main.mcl")
@@ -29,7 +27,6 @@ func TestNewProjectFilesSupportsJSONAndBinaryFiles(t *testing.T) {
 
 	for name, want := range map[string][]byte{
 		"text.txt":     []byte("MCL"),
-		"legacy.bin":   {0, 1, 2},
 		"transfer.bin": {3, 4, 5},
 	} {
 		got, err := fs.ReadFile(project, name)
@@ -70,6 +67,13 @@ func TestNewProjectFilesRequiresMatchingBinaryMetadata(t *testing.T) {
 			},
 			binary:     map[string][]byte{binaryTestPath: {1}},
 			wantErrSub: "cannot include JSON content",
+		},
+		{
+			name: "unsupported encoding",
+			files: map[string]wasmprotocol.FileInput{
+				binaryTestPath: {Encoding: "base64", Content: new("AA==")},
+			},
+			wantErrSub: "encoding must be utf8 or binary",
 		},
 	}
 	for _, test := range tests {
