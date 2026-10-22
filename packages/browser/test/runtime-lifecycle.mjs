@@ -174,6 +174,37 @@ export async function testRuntimeLifecycle() {
   }
 
   {
+    const firstRun = deferred();
+    let postedRequests = 0;
+    const { runtime, workers } = runtimeWithWorkers(() => new FakeWorker({
+      configure: ready,
+      run(worker, request) {
+        postedRequests++;
+        firstRun.resolve({ worker, request });
+        if (postedRequests > 1) respond(worker, request.requestId);
+      },
+    }));
+    const first = runtime.parse("first");
+    const { worker, request } = await firstRun.promise;
+    const controller = new AbortController();
+    const queued = runtime.parse("second", { signal: controller.signal });
+    controller.abort();
+    const rejection = assert.rejects(queued, { name: "AbortError" });
+    const rejectedPromptly = await Promise.race([
+      rejection.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    assert.equal(postedRequests, 1, "an aborted queued operation should not post a Worker request");
+    respond(worker, request.requestId);
+    await first;
+    await rejection;
+    assert.equal(rejectedPromptly, true, "queued cancellation should not wait for the active operation");
+    assert.equal(postedRequests, 1);
+    runtime.dispose();
+    assert.equal(workers.length, 1);
+  }
+
+  {
     const runPosted = deferred();
     const { runtime, workers } = runtimeWithWorkers(() => new FakeWorker({
       configure: ready,

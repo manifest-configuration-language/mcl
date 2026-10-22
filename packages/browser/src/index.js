@@ -98,6 +98,8 @@ export function createMclRuntime(options = {}) {
   }
 
   async function execute(operation, source, files, requestOptions = {}, entrypoint = "main.mcl") {
+    const signal = requestOptions.signal;
+    if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
     const run = async () => {
       if (disposed) throw new Error("MCL runtime has been disposed");
       if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
@@ -165,7 +167,15 @@ export function createMclRuntime(options = {}) {
     };
     const result = queue.then(run, run);
     queue = result.catch(() => {});
-    return result;
+    if (!signal) return result;
+
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    return Promise.race([result, aborted]).finally(() => signal.removeEventListener("abort", onAbort));
   }
 
   function openProject(files) {
