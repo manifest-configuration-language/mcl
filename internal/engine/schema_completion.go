@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"math"
 	"net/url"
@@ -29,10 +30,6 @@ func SchemaFieldCompletions(path, source, placeholder string) []string {
 
 // SchemaFieldCompletionsWithErrorは型定義とSchema依存だけを解析し、候補または解析エラーを返します。
 func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string, error) {
-	module, err := ParseAST(source)
-	if err != nil {
-		return nil, err
-	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -45,14 +42,31 @@ func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string
 	if err != nil {
 		return nil, err
 	}
-	dependencies, err := dependency.Open(context.Background(), root, false, dependencyToolchainIdentity())
+	files := newOSProjectFilesystem(root)
+	dependencies, err := schemaCompletionDependencies(root, files)
 	if err != nil {
 		return nil, err
 	}
-	loader := schemaAnalysisLoader{
-		root: root, files: newOSProjectFilesystem(root), entry: modulePath, entrySource: source, dependencies: dependencies,
-		cache: make(map[string]map[string]ResolvedType), active: make(map[string]bool), analysis: &TypeAnalysisContext{},
+
+	return schemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root, files, dependencies)
+}
+
+// SchemaFieldCompletionsWithErrorForProjectFSはfs.FS上のMCLファイルとSchemaからフィールド補完候補を返します。
+func SchemaFieldCompletionsWithErrorForProjectFS(projectRoot, entryPath, source, placeholder string, projectFiles fs.FS) ([]string, error) {
+	root, modulePath, files, dependencies, err := schemaCompletionProjectFS(projectRoot, entryPath, projectFiles)
+	if err != nil {
+		return nil, err
 	}
+
+	return schemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root, files, dependencies)
+}
+
+func schemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root string, files *projectFilesystem, dependencies *dependency.Lock) ([]string, error) {
+	module, err := ParseAST(source)
+	if err != nil {
+		return nil, err
+	}
+	loader := newSchemaCompletionLoader(root, modulePath, source, files, dependencies)
 	types, err := loader.analyze(modulePath, true)
 	if err != nil {
 		return nil, err
@@ -67,7 +81,7 @@ func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string
 			continue
 		}
 		typeExpr := semanticTypeFromSyntax(*declaration.Annotation)
-		if err := loadSchemaTypesWithFilesystem(&typeExpr, root, modulePath, dependencies, loader.files, loader.analysis); err != nil {
+		if err := loadSchemaTypesWithFilesystem(&typeExpr, root, modulePath, dependencies, files, loader.analysis); err != nil {
 			return nil, err
 		}
 		schema := schemaForType(typeExpr, types, make(map[string]bool), loader.analysis)
@@ -99,11 +113,6 @@ func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string
 
 // SchemaTypeFieldsは型注釈とネストしたフィールド経路に対応するSchemaのプロパティ名を返します。
 func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]string, error) {
-	probeSource := "let __mcl_schema_type_probe: " + annotation + " = {}\n"
-	module, err := ParseAST(probeSource)
-	if err != nil {
-		return nil, err
-	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -116,14 +125,32 @@ func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]st
 	if err != nil {
 		return nil, err
 	}
-	dependencies, err := dependency.Open(context.Background(), root, false, dependencyToolchainIdentity())
+	files := newOSProjectFilesystem(root)
+	dependencies, err := schemaCompletionDependencies(root, files)
 	if err != nil {
 		return nil, err
 	}
-	loader := schemaAnalysisLoader{
-		root: root, files: newOSProjectFilesystem(root), entry: modulePath, entrySource: source, dependencies: dependencies,
-		cache: make(map[string]map[string]ResolvedType), active: make(map[string]bool), analysis: &TypeAnalysisContext{},
+
+	return schemaTypeFieldsWithFilesystem(modulePath, source, annotation, fieldPath, root, files, dependencies)
+}
+
+// SchemaTypeFieldsForProjectFSはfs.FS上のMCLファイルとSchemaから型のフィールド候補を返します。
+func SchemaTypeFieldsForProjectFS(projectRoot, entryPath, source, annotation string, fieldPath []string, projectFiles fs.FS) ([]string, error) {
+	root, modulePath, files, dependencies, err := schemaCompletionProjectFS(projectRoot, entryPath, projectFiles)
+	if err != nil {
+		return nil, err
 	}
+
+	return schemaTypeFieldsWithFilesystem(modulePath, source, annotation, fieldPath, root, files, dependencies)
+}
+
+func schemaTypeFieldsWithFilesystem(modulePath, source, annotation string, fieldPath []string, root string, files *projectFilesystem, dependencies *dependency.Lock) ([]string, error) {
+	probeSource := "let __mcl_schema_type_probe: " + annotation + " = {}\n"
+	module, err := ParseAST(probeSource)
+	if err != nil {
+		return nil, err
+	}
+	loader := newSchemaCompletionLoader(root, modulePath, source, files, dependencies)
 	types, err := loader.analyze(modulePath, true)
 	if err != nil {
 		return nil, err
@@ -133,7 +160,7 @@ func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]st
 		return nil, errors.New("schema type probe has no annotation")
 	}
 	typeExpr := semanticTypeFromSyntax(*declaration.Annotation)
-	if err := loadSchemaTypesWithFilesystem(&typeExpr, root, modulePath, dependencies, loader.files, loader.analysis); err != nil {
+	if err := loadSchemaTypesWithFilesystem(&typeExpr, root, modulePath, dependencies, files, loader.analysis); err != nil {
 		return nil, err
 	}
 	schema := schemaForType(typeExpr, types, make(map[string]bool), loader.analysis)
@@ -175,6 +202,42 @@ func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]st
 	slices.Sort(fields)
 
 	return fields, nil
+}
+
+func schemaCompletionProjectFS(projectRoot, entryPath string, projectFiles fs.FS) (string, string, *projectFilesystem, *dependency.Lock, error) {
+	if projectFiles == nil {
+		return "", "", nil, nil, errors.New("project filesystem is required")
+	}
+	if !filepath.IsAbs(projectRoot) {
+		return "", "", nil, nil, fmt.Errorf("project root %q must be absolute", projectRoot)
+	}
+	if !validProjectPath(entryPath) {
+		return "", "", nil, nil, fmt.Errorf("invalid project entry path %q", entryPath)
+	}
+	root := filepath.Clean(projectRoot)
+	files := newProjectFilesystem(root, projectFiles)
+	modulePath := filepath.Join(root, filepath.FromSlash(entryPath))
+	dependencies, err := schemaCompletionDependencies(root, files)
+	if err != nil {
+		return "", "", nil, nil, err
+	}
+
+	return root, modulePath, files, dependencies, nil
+}
+
+func schemaCompletionDependencies(root string, files *projectFilesystem) (*dependency.Lock, error) {
+	if files.osBacked {
+		return dependency.Open(context.Background(), root, false, dependencyToolchainIdentity())
+	}
+
+	return dependency.OpenWithFS(context.Background(), root, false, dependencyToolchainIdentity(), files.files)
+}
+
+func newSchemaCompletionLoader(root, modulePath, source string, files *projectFilesystem, dependencies *dependency.Lock) schemaAnalysisLoader {
+	return schemaAnalysisLoader{
+		root: root, files: files, entry: modulePath, entrySource: source, dependencies: dependencies,
+		cache: make(map[string]map[string]ResolvedType), active: make(map[string]bool), analysis: &TypeAnalysisContext{},
+	}
 }
 
 func KubernetesSchemaFieldCompletions(source, placeholder string) []string {
@@ -449,10 +512,6 @@ func literalMapString(expression Expr, key string) (string, bool) {
 }
 
 func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
-	module, err := ParseAST(source)
-	if err != nil {
-		return nil
-	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil
@@ -465,7 +524,27 @@ func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
 	if err != nil {
 		return nil
 	}
-	dependencies, err := dependency.Open(context.Background(), root, false, dependencyToolchainIdentity())
+	files := newOSProjectFilesystem(root)
+	dependencies, err := schemaCompletionDependencies(root, files)
+	if err != nil {
+		return nil
+	}
+
+	return helmSchemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root, files, dependencies)
+}
+
+// HelmSchemaFieldCompletionsForProjectFSはfs.FS上のHelm chartからvaluesの補完候補を返します。
+func HelmSchemaFieldCompletionsForProjectFS(projectRoot, entryPath, source, placeholder string, projectFiles fs.FS) []string {
+	root, modulePath, files, dependencies, err := schemaCompletionProjectFS(projectRoot, entryPath, projectFiles)
+	if err != nil {
+		return nil
+	}
+
+	return helmSchemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root, files, dependencies)
+}
+
+func helmSchemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root string, files *projectFilesystem, dependencies *dependency.Lock) []string {
+	module, err := ParseAST(source)
 	if err != nil {
 		return nil
 	}
@@ -495,11 +574,11 @@ func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
 		if strings.Contains(chartSource, "://") || filepath.IsAbs(chartSource) {
 			return nil
 		}
-		chartPath, resolveErr := filepath.EvalSymlinks(filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(chartSource)))
+		chartPath, resolveErr := files.resolveReadPath(filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(chartSource)))
 		if resolveErr != nil || !pathWithin(root, chartPath) {
 			return nil
 		}
-		schemaPath, resolveErr := filepath.EvalSymlinks(filepath.Join(chartPath, "values.schema.json"))
+		schemaPath, resolveErr := files.resolveReadPath(filepath.Join(chartPath, "values.schema.json"))
 		if resolveErr != nil || !pathWithin(root, schemaPath) {
 			return nil
 		}
@@ -507,7 +586,7 @@ func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
 		if resolveErr != nil {
 			return nil
 		}
-		schema, err = compileSchema(filepath.ToSlash(relativeSchema), root, modulePath, dependencies)
+		schema, err = compileSchema(filepath.ToSlash(relativeSchema), root, modulePath, dependencies, files)
 	}
 	if err != nil {
 		return nil

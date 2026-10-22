@@ -3,8 +3,10 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
@@ -81,5 +83,47 @@ func TestSchemaFieldCompletionsWithErrorDistinguishesNoCandidatesFromFailure(t *
 	_, err = SchemaFieldCompletionsWithError(filepath.Join(t.TempDir(), "main.mcl"), "let =", "placeholder")
 	if err == nil {
 		t.Fatal("expected a parse error to be returned")
+	}
+}
+
+func TestSchemaCompletionsUseInjectedProjectFilesystem(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-schema-completions")
+	files := fstest.MapFS{
+		"types/types.mcl":                &fstest.MapFile{Data: []byte(`export type Config = schema("schemas/config.json")`)},
+		"types/schemas/config.json":      &fstest.MapFile{Data: []byte(`{"$ref":"definitions.json#/$defs/Config"}`)},
+		"types/schemas/definitions.json": &fstest.MapFile{Data: []byte(`{"$defs":{"Config":{"type":"object","properties":{"name":{"type":"string"},"nested":{"type":"object","properties":{"child":{"type":"string"}}}}}}}`)},
+	}
+	source := `import "./types/types.mcl" as types
+let value: types.Config =
+  nested:
+    __mcl_completion__: null
+`
+	fields, err := SchemaFieldCompletionsWithErrorForProjectFS(root, "main.mcl", source, "__mcl_completion__", files)
+	if err != nil || !slices.Contains(fields, "child") {
+		t.Fatalf("schema completions = %v, %v; want child from the injected schema", fields, err)
+	}
+	fields, err = SchemaTypeFieldsForProjectFS(root, "main.mcl", `import "./types/types.mcl" as types`, "types.Config", []string{"nested"}, files)
+	if err != nil || !slices.Contains(fields, "child") {
+		t.Fatalf("schema type fields = %v, %v; want child from imported schema references", fields, err)
+	}
+}
+
+func TestHelmSchemaCompletionsUseInjectedProjectFilesystem(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-helm-schema-completions")
+	files := fstest.MapFS{
+		"charts/app/values.schema.json": &fstest.MapFile{Data: []byte(`{"$ref":"definitions.json#/$defs/Values"}`)},
+		"charts/app/definitions.json":   &fstest.MapFile{Data: []byte(`{"$defs":{"Values":{"type":"object","properties":{"nested":{"type":"object","properties":{"child":{"type":"string"}}}}}}}`)},
+	}
+	source := `import "std:helm" as helm
+let options =
+  values:
+    nested:
+      __mcl_completion__: null
+let rendered = helm.render("charts/app", options)`
+	fields := HelmSchemaFieldCompletionsForProjectFS(root, "main.mcl", source, "__mcl_completion__", files)
+	if !slices.Contains(fields, "child") {
+		t.Fatalf("Helm schema completions = %v; want child from injected chart schema", fields)
 	}
 }
