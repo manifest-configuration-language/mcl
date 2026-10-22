@@ -189,12 +189,11 @@ export function createMclRuntime(options = {}) {
     for (const [filePath, content] of entries) {
       if (!isSafeRelativePath(filePath)) throw new TypeError(`Invalid project file path: ${filePath}`);
       if (typeof content !== "string" && !(content instanceof Uint8Array)) throw new TypeError(`Project file ${filePath} must be a string or Uint8Array`);
-      const copy = typeof content === "string" ? content : new Uint8Array(content);
-      const fileBytes = typeof copy === "string" ? new TextEncoder().encode(copy).byteLength : copy.byteLength;
+      const fileBytes = typeof content === "string" ? new TextEncoder().encode(content).byteLength : content.byteLength;
       if (fileBytes > maxProjectFileBytes) throw new RangeError(`Project file ${filePath} exceeds the ${maxProjectFileBytes}-byte limit`);
       totalBytes += fileBytes;
       if (totalBytes > maxProjectBytes) throw new RangeError(`Project files exceed the ${maxProjectBytes}-byte limit`);
-      projectFiles[filePath] = copy;
+      projectFiles[filePath] = typeof content === "string" ? content : new Uint8Array(content);
     }
 
     const sourcePaths = Object.keys(projectFiles).filter((filePath) => filePath.endsWith(".mcl")).sort();
