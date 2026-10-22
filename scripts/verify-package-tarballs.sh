@@ -9,6 +9,11 @@ mkdir -p "$output_directory"
 output_directory="$(cd "$output_directory" && pwd)"
 for package in browser language; do
   version="$(node -p "require('$root/packages/$package/package.json').version")"
+  if [[ -n "${MCL_VERSION:-}" && "$version" != "$MCL_VERSION" ]]; then
+    printf 'Package @mcl/%s version %s does not match expected MCL version %s.\n' \
+      "$package" "$version" "$MCL_VERSION" >&2
+    exit 1
+  fi
   rm -f "$output_directory/mcl-$package-$version.tgz"
 done
 rm -f "$output_directory/SHA512SUMS"
