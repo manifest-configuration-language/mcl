@@ -1,9 +1,9 @@
-# @mcl/browser
+# @manifest-configuration-language/browser
 
-`@mcl/browser` runs MCL parse, lint, format, check, evaluate, and render operations in a dedicated Web Worker. Its `prepack` step builds the WASM binary and copies the matching `wasm_exec.js` from the active Go toolchain so both runtime assets ship together.
+`@manifest-configuration-language/browser` runs MCL parse, lint, format, check, evaluate, and render operations in a dedicated Web Worker. Its `prepack` step uses the shared WASM build script, which builds with the active Go toolchain, applies the mise-pinned Binaryen `wasm-opt -Oz`, selects the smaller binary, and copies the matching Go `wasm_exec.js` so both runtime assets ship together. GitHub Release assets use this same output. Update the Go and Binaryen pins in the repository's `mise.toml` when upgrading either tool.
 
 ```js
-import { createMclRuntime } from "@mcl/browser";
+import { createMclRuntime } from "@manifest-configuration-language/browser";
 
 const runtime = createMclRuntime();
 try {

@@ -5,7 +5,7 @@ import { readFile, stat } from "node:fs/promises";
 import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { createGzip } from "node:zlib";
+import { brotliCompressSync, constants as zlibConstants, createGzip } from "node:zlib";
 import { testRuntimeLifecycle } from "../test/runtime-lifecycle.mjs";
 
 const performanceBudget = JSON.parse(
@@ -31,6 +31,8 @@ if (
   wasmSizeBudget.raw <= 0 ||
   !Number.isSafeInteger(wasmSizeBudget?.gzip) ||
   wasmSizeBudget.gzip <= 0 ||
+  !Number.isSafeInteger(wasmSizeBudget?.brotli) ||
+  wasmSizeBudget.brotli <= 0 ||
   !Number.isFinite(performanceBudget.maxGrowthPercent) ||
   performanceBudget.maxGrowthPercent < 0
 ) {
@@ -43,9 +45,13 @@ await pipeline(
   createGzip({ level: 9, mtime: 0 }),
   new Writable({ write(chunk, _encoding, callback) { wasmGzipBytes += chunk.length; callback(); } }),
 );
+const wasmBrotliBytes = brotliCompressSync(await readFile(wasmPath), {
+  params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9 },
+}).byteLength;
 for (const [format, actual, baseline] of [
   ["raw", wasmRawBytes, wasmSizeBudget.raw],
   ["gzip", wasmGzipBytes, wasmSizeBudget.gzip],
+  ["brotli", wasmBrotliBytes, wasmSizeBudget.brotli],
 ]) {
   const limit = baseline * (1 + performanceBudget.maxGrowthPercent / 100);
   if (actual > limit) {
@@ -54,7 +60,7 @@ for (const [format, actual, baseline] of [
     );
   }
 }
-console.log(`WebAssembly size ${JSON.stringify({ raw: wasmRawBytes, gzip: wasmGzipBytes })}`);
+console.log(`WebAssembly size ${JSON.stringify({ raw: wasmRawBytes, gzip: wasmGzipBytes, brotli: wasmBrotliBytes })}`);
 await testRuntimeLifecycle();
 
 const server = spawn("./node_modules/.bin/vite", ["--config", "test/vite.config.js", "--host", "127.0.0.1", "--port", "4173", "--strictPort"], {

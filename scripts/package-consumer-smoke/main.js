@@ -1,8 +1,8 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createMclRuntime } from "@mcl/browser";
-import { mclLanguageSupport, parser } from "@mcl/language";
-import grammar from "@mcl/language/textmate" with { type: "json" };
+import { createMclRuntime } from "@manifest-configuration-language/browser";
+import { mclLanguageSupport, parser } from "@manifest-configuration-language/language";
+import grammar from "@manifest-configuration-language/language/textmate" with { type: "json" };
 
 const output = document.querySelector("#result");
 const source = `let configMap =

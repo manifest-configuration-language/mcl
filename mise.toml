@@ -4,6 +4,7 @@ golangci-lint = "2.15.0"
 node = "24.22.0"
 jactionlint = "2.2.0"
 goreleaser = "2.18.3"
+"aqua:WebAssembly/binaryen" = "133"
 "aqua:anchore/syft" = "1.54.1"
 
 [tasks."actions:lint"]
@@ -39,30 +40,29 @@ depends = ["test", "check", "lint", "go:format:check", "wasm:check"]
 description = "Build and verify the browser WebAssembly runtime"
 run = "node ./cmd/mcl-wasm/check.mjs"
 
+[tasks."wasm:build"]
+description = "Build the Browser SDK WebAssembly runtime"
+run = "node ./packages/browser/scripts/build-wasm.mjs"
+
 [tasks."release:cli"]
 description = "Build and archive CLI and WebAssembly release assets with GoReleaser"
-depends = ["release:wasm"]
 run = '''
 set -eu
 : "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+mise run wasm:build
+mise run release:wasm
 goreleaser release --snapshot --clean
 '''
 
 [tasks."release:wasm"]
-description = "Build Playground WebAssembly release assets"
+description = "Stage the Browser SDK WebAssembly release assets"
 run = '''
 set -eu
 mkdir -p .build/release-assets
-if [ -n "${MCL_RELEASE_WASM_SOURCE:-}" ]; then
-  test -f "$MCL_RELEASE_WASM_SOURCE/mcl.wasm"
-  test -f "$MCL_RELEASE_WASM_SOURCE/wasm_exec.js"
-  cp "$MCL_RELEASE_WASM_SOURCE/mcl.wasm" .build/release-assets/mcl.wasm
-  cp "$MCL_RELEASE_WASM_SOURCE/wasm_exec.js" .build/release-assets/wasm_exec.js
-else
-  GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o .build/release-assets/mcl.wasm ./cmd/mcl-wasm
-  cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .build/release-assets/wasm_exec.js
-fi
+cp packages/browser/dist/mcl.wasm .build/release-assets/mcl.wasm
+cp packages/browser/dist/wasm_exec.js .build/release-assets/wasm_exec.js
 gzip -9 -n -f .build/release-assets/mcl.wasm
+gzip -dc .build/release-assets/mcl.wasm.gz | cmp - packages/browser/dist/mcl.wasm
 '''
 
 [tasks."release:package"]

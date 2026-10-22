@@ -118,8 +118,8 @@ jobs:
         run: |
           set -euo pipefail
           package_directory="$RUNNER_TEMP/mcl-npm-packages"
-          expected_files="mcl-browser-${MCL_VERSION}.tgz
-          mcl-language-${MCL_VERSION}.tgz
+          expected_files="manifest-configuration-language-browser-${MCL_VERSION}.tgz
+          manifest-configuration-language-language-${MCL_VERSION}.tgz
           SHA512SUMS"
           actual_files="$(for file in "$package_directory"/*; do [ -f "$file" ] && basename "$file"; done | sort)"
           if [ "$actual_files" != "$(printf '%s\n' "$expected_files" | sort)" ]; then
@@ -136,23 +136,23 @@ jobs:
           publish_list="$RUNNER_TEMP/packages-to-publish.txt"
           : > "$publish_list"
           for package in browser language; do
-            tarball="$RUNNER_TEMP/mcl-npm-packages/mcl-${package}-${MCL_VERSION}.tgz"
+            tarball="$RUNNER_TEMP/mcl-npm-packages/manifest-configuration-language-${package}-${MCL_VERSION}.tgz"
             if [ ! -f "$tarball" ]; then
               printf 'Expected package tarball is missing: %s\n' "$tarball" >&2
               exit 1
             fi
             expected_integrity="sha512-$(node -e 'const fs = require("node:fs"); const crypto = require("node:crypto"); process.stdout.write(crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' "$tarball")"
             registry_error="$RUNNER_TEMP/${package}-registry-check.txt"
-            if registry_integrity="$(npm view "@mcl/$package@$MCL_VERSION" dist.integrity 2>"$registry_error")"; then
+            if registry_integrity="$(npm view "@manifest-configuration-language/$package@$MCL_VERSION" dist.integrity 2>"$registry_error")"; then
               if [ "$registry_integrity" != "$expected_integrity" ]; then
-                printf "Published @mcl/%s@%s does not match this run's tarball (expected %s, found %s).\n" \
+                printf "Published @manifest-configuration-language/%s@%s does not match this run's tarball (expected %s, found %s).\n" \
                   "$package" "$MCL_VERSION" "$expected_integrity" "$registry_integrity" >&2
                 exit 1
               fi
-              printf "Verified existing @mcl/%s@%s against this run's tarball.\n" "$package" "$MCL_VERSION"
+              printf "Verified existing @manifest-configuration-language/%s@%s against this run's tarball.\n" "$package" "$MCL_VERSION"
             elif ! grep -Eq 'E404|404 Not Found' "$registry_error"; then
               cat "$registry_error" >&2
-              printf 'Could not verify npm package availability for @mcl/%s@%s.\n' "$package" "$MCL_VERSION" >&2
+              printf 'Could not verify npm package availability for @manifest-configuration-language/%s@%s.\n' "$package" "$MCL_VERSION" >&2
               exit 1
             else
               printf '%s\n' "$package" >> "$publish_list"
@@ -167,7 +167,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r package; do
             [ -n "$package" ] || continue
-            npm publish "$RUNNER_TEMP/mcl-npm-packages/mcl-${package}-${MCL_VERSION}.tgz" --access public --provenance
+            npm publish "$RUNNER_TEMP/mcl-npm-packages/manifest-configuration-language-${package}-${MCL_VERSION}.tgz" --access public --provenance
           done < "$PUBLISH_LIST"
 
       - name: Smoke test published packages
@@ -178,7 +178,7 @@ jobs:
           smoke_directory="$(mktemp -d)"
           trap 'rm -rf "$smoke_directory"' EXIT
           cat > "$smoke_directory/package.json" <<EOF
-          {"private":true,"dependencies":{"@mcl/browser":"$MCL_VERSION","@mcl/language":"$MCL_VERSION"}}
+          {"private":true,"dependencies":{"@manifest-configuration-language/browser":"$MCL_VERSION","@manifest-configuration-language/language":"$MCL_VERSION"}}
           EOF
           npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
           (cd "$smoke_directory" && npm audit signatures)

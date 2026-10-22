@@ -1,6 +1,6 @@
 {
-  "name": "@mcl/browser",
-  "version": "0.1.0",
+  "name": "@manifest-configuration-language/browser",
+  "version": "0.1.1",
   "description": "Run MCL projects in a browser Web Worker using the Go WebAssembly runtime.",
   "repository": {
     "type": "git",
@@ -24,6 +24,7 @@
     "build:wasm": "node ./scripts/build-wasm.mjs",
     "generate:protocol": "node ./scripts/generate-protocol.mjs",
     "test:browser": "npm run build:wasm && node ./scripts/smoke-browser.mjs",
+    "test:browser:built": "node ./scripts/smoke-browser.mjs",
     "test:browser:installed": "node ./scripts/smoke-browser.mjs --package-smoke",
     "prepack": "npm run build:wasm"
   },

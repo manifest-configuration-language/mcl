@@ -1,4 +1,4 @@
-import { createMclRuntime, MclRuntimeError } from "@mcl/browser";
+import { createMclRuntime, MclRuntimeError } from "@manifest-configuration-language/browser";
 import source from "./app/main.mcl?raw";
 import resourceModule from "./app/modules/resource.mcl?raw";
 import schema from "./app/schema.json?raw";

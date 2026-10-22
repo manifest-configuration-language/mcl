@@ -1,10 +1,10 @@
-# @mcl/language
+# @manifest-configuration-language/language
 
-`@mcl/language` contains the MCL TextMate grammar and a Lezer-backed CodeMirror `LanguageSupport` export with standard bracket completion.
+`@manifest-configuration-language/language` contains the MCL TextMate grammar and a Lezer-backed CodeMirror `LanguageSupport` export with standard bracket completion.
 
 ```js
-import { mclLanguageSupport } from "@mcl/language";
-import mclTextMateGrammar from "@mcl/language/textmate" with { type: "json" };
+import { mclLanguageSupport } from "@manifest-configuration-language/language";
+import mclTextMateGrammar from "@manifest-configuration-language/language/textmate" with { type: "json" };
 
 const support = mclLanguageSupport();
 ```

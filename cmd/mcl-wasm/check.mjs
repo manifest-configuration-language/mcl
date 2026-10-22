@@ -12,24 +12,22 @@ const maxRenderMs = 3000;
 const workspace = process.cwd();
 const sizeBudget = JSON.parse(readFileSync(path.join(workspace, 'packages/browser/performance-budget.json'), 'utf8'));
 const buildDirectory = mkdtempSync(path.join(tmpdir(), 'mcl-wasm-check-'));
-const wasmPath = path.join(buildDirectory, 'mcl.wasm');
+const wasmPath = path.join(workspace, 'packages/browser/dist/mcl.wasm');
 let exitCode = 0;
 const fail = (message) => { throw new Error(message); };
 
 try {
-  const env = { ...process.env, GOOS: 'js', GOARCH: 'wasm', CGO_ENABLED: '0' };
-  const build = spawnSync('go', ['build', '-trimpath', '-ldflags=-s -w', '-o', wasmPath, './cmd/mcl-wasm'], {
+  const build = spawnSync('node', ['./packages/browser/scripts/build-wasm.mjs'], {
     cwd: workspace,
-    env,
     encoding: 'utf8',
   });
-  if (build.status !== 0) fail(build.stderr || build.stdout || 'Go WebAssembly build failed');
+  if (build.status !== 0) fail(build.stderr || build.stdout || 'Browser WebAssembly build failed');
 
   const wasm = readFileSync(wasmPath);
   const gzipBytes = gzipSync(wasm, { level: 9 }).byteLength;
-  const brotliBytes = brotliCompressSync(wasm, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } }).byteLength;
+  const brotliBytes = brotliCompressSync(wasm, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 9 } }).byteLength;
   console.log(`mcl.wasm raw=${wasm.byteLength} bytes gzip=${gzipBytes} bytes brotli=${brotliBytes} bytes`);
-  for (const [format, size] of Object.entries({ raw: wasm.byteLength, gzip: gzipBytes })) {
+  for (const [format, size] of Object.entries({ raw: wasm.byteLength, gzip: gzipBytes, brotli: brotliBytes })) {
     const baseline = sizeBudget.baselineBytes[format];
     const maximum = Math.ceil(baseline * (1 + sizeBudget.maxGrowthPercent / 100));
     if (size > maximum) fail(`WASM ${format} size ${size} bytes exceeds the ${maximum}-byte budget (${sizeBudget.maxGrowthPercent}% growth from ${baseline})`);

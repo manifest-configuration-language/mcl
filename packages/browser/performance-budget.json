@@ -1,7 +1,8 @@
 {
   "baselineBytes": {
-    "raw": 113123563,
-    "gzip": 19600313
+    "raw": 113148111,
+    "gzip": 19601613,
+    "brotli": 14197323
   },
   "maxGrowthPercent": 10,
   "maxWasmMemoryBytes": 201326592,

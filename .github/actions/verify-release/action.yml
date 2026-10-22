@@ -33,7 +33,11 @@ runs:
     - name: Test browser package
       shell: bash
       working-directory: packages/browser
-      run: npm run test:browser
+      run: npm run test:browser:built
+
+    - name: Prepare release WebAssembly assets
+      shell: bash
+      run: mise run release:wasm
 
     - name: Install language package dependencies
       shell: bash
@@ -52,11 +56,7 @@ runs:
         MCL_VERSION: ${{ inputs.expected-version }}
       run: |
         if [[ -n "$PACKAGE_OUTPUT_DIRECTORY" ]]; then
-          scripts/verify-package-tarballs.sh "$PACKAGE_OUTPUT_DIRECTORY"
+          scripts/verify-package-tarballs.sh "$PACKAGE_OUTPUT_DIRECTORY" --prebuilt-browser-wasm
         else
-          scripts/verify-package-tarballs.sh
+          scripts/verify-package-tarballs.sh --prebuilt-browser-wasm
         fi
-
-    - name: Select verified browser runtime assets
-      shell: bash
-      run: printf 'MCL_RELEASE_WASM_SOURCE=%s/packages/browser/dist\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"

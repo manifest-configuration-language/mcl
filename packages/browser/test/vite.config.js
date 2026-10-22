@@ -12,7 +12,7 @@ export default defineConfig({
   root: resolve(packageRoot, "test"),
   resolve: {
     alias: {
-      "@mcl/browser": resolve(browserPackageRoot ?? packageRoot, "src/index.js"),
+      "@manifest-configuration-language/browser": resolve(browserPackageRoot ?? packageRoot, "src/index.js"),
     },
   },
   server: {

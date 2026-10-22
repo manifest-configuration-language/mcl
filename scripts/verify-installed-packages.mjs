@@ -3,13 +3,13 @@ import { spawnSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createMclRuntime, MclRuntimeError } from "@mcl/browser";
-import { mclLanguageSupport, parser } from "@mcl/language";
-import grammar from "@mcl/language/textmate" with { type: "json" };
+import { createMclRuntime, MclRuntimeError } from "@manifest-configuration-language/browser";
+import { mclLanguageSupport, parser } from "@manifest-configuration-language/language";
+import grammar from "@manifest-configuration-language/language/textmate" with { type: "json" };
 
 const projectRoot = process.cwd();
-const browserPackageRoot = join(projectRoot, "node_modules/@mcl/browser");
-const languagePackageRoot = join(projectRoot, "node_modules/@mcl/language");
+const browserPackageRoot = join(projectRoot, "node_modules/@manifest-configuration-language/browser");
+const languagePackageRoot = join(projectRoot, "node_modules/@manifest-configuration-language/language");
 const browserManifest = JSON.parse(
   await readFile(join(browserPackageRoot, "package.json"), "utf8"),
 );
@@ -27,7 +27,7 @@ assert.equal(typeof MclRuntimeError, "function");
 assert.ok(mclLanguageSupport());
 assert.ok(parser.parse('let value = "installed"').length > 1);
 assert.equal(grammar.scopeName, "source.mcl");
-assert.equal(import.meta.resolve("@mcl/browser"), pathToFileURL(join(browserPackageRoot, "src/index.js")).href);
+assert.equal(import.meta.resolve("@manifest-configuration-language/browser"), pathToFileURL(join(browserPackageRoot, "src/index.js")).href);
 assert.ok((await stat(join(browserPackageRoot, "src/worker.js"))).size > 0);
 assert.ok((await stat(join(browserPackageRoot, "dist/mcl.wasm"))).size > 0);
 assert.ok((await stat(join(browserPackageRoot, "dist/wasm_exec.js"))).size > 0);
