@@ -1,0 +1,4 @@
+let integerExponent = 1e3
+let fractionalExponent = 1.2E-3
+let negativeExponent = -2.5e+4
+emit integerExponent + fractionalExponent + negativeExponent

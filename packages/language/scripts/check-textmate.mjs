@@ -54,6 +54,7 @@ const lines = tokenize([
   "let is = 1",
   "foo#bar",
   "foo #bar",
+  "1e3 1.2E-3 2.5e+4",
 ]);
 
 assertToken(lines[0], "# Keep this comment", "comment.line.number-sign.mcl");
@@ -78,5 +79,8 @@ assertToken(lines[5], "filter", "entity.name.function.mcl");
 assertToken(lines[7], "multiline text", "string.quoted.multi.double.mcl");
 assertToken(lines[8], "emit", "keyword.control.mcl");
 assertToken(lines[9], "is", "variable.other.mcl");
+assertToken(lines[12], "1e3", "constant.numeric.mcl");
+assertToken(lines[12], "1.2E-3", "constant.numeric.mcl");
+assertToken(lines[12], "2.5e+4", "constant.numeric.mcl");
 
 registry.dispose();

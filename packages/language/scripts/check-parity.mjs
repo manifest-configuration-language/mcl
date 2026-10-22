@@ -38,6 +38,7 @@ const validFixtures = [
   resolve(packageRoot, "parity-fixtures/multiline-string-escaped-delimiter.mcl"),
   resolve(packageRoot, "parity-fixtures/block-expressions.mcl"),
   resolve(packageRoot, "parity-fixtures/keyword-identifier.mcl"),
+  resolve(packageRoot, "parity-fixtures/numbers.mcl"),
 ];
 
 async function findMclFiles(directory) {

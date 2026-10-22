@@ -105,8 +105,8 @@ BinaryOperator { Operator | Minus | kw<"and"> | kw<"or"> | kw<"in"> }
   @precedence { NegativeNumber, Minus }
   Identifier { $[A-Za-z_] $[A-Za-z0-9_]* }
   ListMarker { "-" $[ \t]+ }
-  NegativeNumber { "-" $[0-9]+ ("." $[0-9]+)? }
-  Number { $[0-9]+ ("." $[0-9]+)? }
+  NegativeNumber { "-" $[0-9]+ ("." $[0-9]+)? ($[eE] $[+-]? $[0-9]+)? }
+  Number { $[0-9]+ ("." $[0-9]+)? ($[eE] $[+-]? $[0-9]+)? }
   QuotedString { "\"" ("\\" _ | !["\\\n\r])* "\"" }
   MultiString { "\"\"\"" (!["] | "\"" !["] | "\"\"" !["])* "\"\"\"" }
   Comment { "#" ![\n\r]* }

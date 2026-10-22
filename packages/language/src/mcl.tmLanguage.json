@@ -130,7 +130,7 @@
       "patterns": [
         {
           "name": "constant.numeric.mcl",
-          "match": "\\b\\d+(?:\\.\\d+)?\\b"
+          "match": "\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b"
         }
       ]
     },
