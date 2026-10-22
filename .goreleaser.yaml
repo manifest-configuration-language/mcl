@@ -35,6 +35,16 @@ archives:
       - goos: windows
         formats:
           - zip
+  - id: wasm
+    meta: true
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_wasm"
+    files:
+      - src: ./.build/release-assets/mcl.wasm.gz
+        dst: mcl.wasm.gz
+      - src: ./.build/release-assets/wasm_exec.js
+        dst: wasm_exec.js
 
 sboms:
   - artifacts: archive
@@ -42,8 +52,6 @@ sboms:
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
-  extra_files:
-    - glob: ./.build/release-assets/mcl_*_wasm.tar.gz
 
 release:
   github:
@@ -52,8 +60,6 @@ release:
   name_template: "MCL {{ .Version }}"
   draft: true
   replace_existing_draft: true
-  extra_files:
-    - glob: ./.build/release-assets/mcl_*_wasm.tar.gz
 
 changelog:
   use: github-native
