@@ -163,6 +163,7 @@ func (s *server) readMessage() ([]byte, error) {
 			if errors.Is(err, bufio.ErrBufferFull) {
 				return nil, errors.New("header line exceeds maximum size")
 			}
+
 			return nil, err
 		}
 		headerSize += len(line)
