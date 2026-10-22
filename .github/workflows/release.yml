@@ -17,8 +17,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    outputs:
-      tag: ${{ steps.target.outputs.tag }}
     permissions:
       contents: write
       id-token: write
@@ -57,7 +55,6 @@ jobs:
               exit 1
             fi
           done
-          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "version=${release_tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Set up mise
@@ -113,45 +110,3 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: dist/mcl_*
-
-  publish_packages:
-    needs: release
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Dispatch npm package publishing
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_TAG: ${{ needs.release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          run_name="Publish npm packages $RELEASE_TAG"
-          dispatch_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          gh workflow run publish-packages.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$DEFAULT_BRANCH" \
-            -f "release_tag=$RELEASE_TAG"
-
-          deadline=$((SECONDS + 300))
-          run_id=""
-          while [ -z "$run_id" ]; do
-            runs="$(gh run list --workflow publish-packages.yml --event workflow_dispatch \
-              --branch "$DEFAULT_BRANCH" --limit 20 --json databaseId,displayTitle,createdAt)"
-            run_id="$(jq -r --arg title "$run_name" --arg after "$dispatch_time" \
-              '[.[] | select(.displayTitle == $title and .createdAt >= $after)] | sort_by(.createdAt) | last | .databaseId // empty' \
-              <<< "$runs")"
-            if [ -n "$run_id" ]; then
-              break
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "Timed out waiting for npm publishing workflow to start." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-
-          gh run watch "$run_id" --exit-status --interval 10

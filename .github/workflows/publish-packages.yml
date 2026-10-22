@@ -1,7 +1,13 @@
 name: Publish npm Packages
-run-name: Publish npm packages ${{ inputs.release_tag }}
+run-name: Publish npm packages ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.run_id }}
 
 on:
+  # This workflow checks only release metadata from the completed run, rejects non-push and fork runs,
+  # and verifies that both the checked-out commit and matching version tag equal the upstream SHA.
+  # jactionlint ignore=dangerous-triggers
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -12,12 +18,13 @@ on:
 permissions: {}
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.event.workflow_run.head_sha || inputs.release_tag || github.ref }}
   cancel-in-progress: false
   queue: max
 
 jobs:
   publish:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -26,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
           persist-credentials: false
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
@@ -37,6 +44,11 @@ jobs:
         id: release
         env:
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          UPSTREAM_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          UPSTREAM_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -48,27 +60,47 @@ jobs:
             fi
             release_tag="$RELEASE_TAG_INPUT"
           else
-            release_tag="$GITHUB_REF_NAME"
+            if [ "$UPSTREAM_EVENT" != push ] || [ "$UPSTREAM_CONCLUSION" != success ] || [ "$UPSTREAM_HEAD_REPOSITORY" != "$CURRENT_REPOSITORY" ]; then
+              echo "Only successful Release workflows from this repository can publish packages." >&2
+              exit 1
+            fi
+            release_tag=""
           fi
-          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            printf 'Invalid release tag: %s\n' "$release_tag" >&2
-            exit 1
-          fi
-          if ! git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null; then
-            printf 'Release tag %s is not present in the checked out source.\n' "$release_tag" >&2
-            exit 1
-          fi
-          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
-          echo "version=${release_tag#v}" >> "$GITHUB_OUTPUT"
           for package in browser language; do
             version="$(node -p "require('./packages/${package}/package.json').version")"
-            if [ "v$version" != "$release_tag" ]; then
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+              printf 'Invalid %s package version: %s\n' "$package" "$version" >&2
+              exit 1
+            fi
+            if [ -n "$release_tag" ] && [ "v$version" != "$release_tag" ]; then
               printf 'Tag %s does not match %s package version %s\n' "$release_tag" "$package" "$version" >&2
               exit 1
             fi
           done
+          browser_version="$(node -p "require('./packages/browser/package.json').version")"
+          language_version="$(node -p "require('./packages/language/package.json').version")"
+          if [ "$browser_version" != "$language_version" ]; then
+            printf 'Package versions do not match: browser=%s language=%s\n' "$browser_version" "$language_version" >&2
+            exit 1
+          fi
+          version="$browser_version"
+          release_tag="v$version"
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            checked_out_sha="$(git rev-parse 'HEAD^{commit}')"
+            tag_sha="$(git rev-parse --verify "refs/tags/$release_tag^{commit}")"
+            if [ "$checked_out_sha" != "$UPSTREAM_HEAD_SHA" ] || [ "$tag_sha" != "$UPSTREAM_HEAD_SHA" ]; then
+              printf 'Release tag %s does not resolve to the completed Release commit %s.\n' "$release_tag" "$UPSTREAM_HEAD_SHA" >&2
+              exit 1
+            fi
+          else
+            if ! git rev-parse -q --verify "refs/tags/$release_tag^{commit}" >/dev/null; then
+              printf 'Release tag %s is not present in the checked out source.\n' "$release_tag" >&2
+              exit 1
+            fi
+          fi
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           release="$(gh release view "$release_tag" --json tagName,isDraft,assets)"
-          version="${release_tag#v}"
           required_assets=(
             "mcl_${version}_darwin_amd64.tar.gz"
             "mcl_${version}_darwin_arm64.tar.gz"
