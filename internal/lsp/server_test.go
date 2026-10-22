@@ -253,6 +253,48 @@ func TestRunRejectsOversizedMessages(t *testing.T) {
 	}
 }
 
+func TestReadMessageBoundsHeaders(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "oversized line",
+			input:   "X: " + strings.Repeat("a", maximumHeaderSize) + "\n",
+			wantErr: true,
+		},
+		{
+			name:    "oversized total headers",
+			input:   "Content-Length: 0\r\n" + strings.Repeat("X: a\r\n", maximumHeaderSize/6),
+			wantErr: true,
+		},
+		{
+			name:    "duplicate content length",
+			input:   "Content-Length: 0\r\nContent-Length: 0\r\n\r\n",
+			wantErr: true,
+		},
+		{
+			name:  "valid message",
+			input: "Content-Length: 2\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\nok",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := server{reader: bufio.NewReaderSize(strings.NewReader(tt.input), maximumHeaderSize)}
+			body, err := s.readMessage()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("readMessage() error = %v, wantErr %t", err, tt.wantErr)
+			}
+			if err == nil && string(body) != "ok" {
+				t.Fatalf("readMessage() body = %q, want %q", body, "ok")
+			}
+		})
+	}
+}
+
 func TestRunRefreshesDiagnosticsAfterChangesAndClose(t *testing.T) {
 	t.Parallel()
 	session := newTestLSPConnection()

@@ -17,7 +17,10 @@ import (
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
-const maximumMessageSize = 8 << 20
+const (
+	maximumMessageSize = 8 << 20
+	maximumHeaderSize  = 8 << 10
+)
 
 // JSON-RPCとURI、MCL構文で共通して使う固定値。
 const (
@@ -94,7 +97,7 @@ type formattingParams struct {
 }
 
 func Run(input io.Reader, output io.Writer) error {
-	s := server{reader: bufio.NewReader(input), writer: output, documents: make(map[string]documentState), diagnosticURIs: make(map[string]struct{})}
+	s := server{reader: bufio.NewReaderSize(input, maximumHeaderSize), writer: output, documents: make(map[string]documentState), diagnosticURIs: make(map[string]struct{})}
 	defer func() {
 		if s.diagnosticCancel != nil {
 			s.diagnosticCancel()
@@ -153,17 +156,28 @@ func Run(input io.Reader, output io.Writer) error {
 
 func (s *server) readMessage() ([]byte, error) {
 	contentLength := -1
+	headerSize := 0
 	for {
-		line, err := s.reader.ReadString('\n')
+		line, err := s.reader.ReadSlice('\n')
 		if err != nil {
+			if errors.Is(err, bufio.ErrBufferFull) {
+				return nil, errors.New("header line exceeds maximum size")
+			}
 			return nil, err
 		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
+		headerSize += len(line)
+		if headerSize > maximumHeaderSize {
+			return nil, errors.New("headers exceed maximum size")
+		}
+		headerLine := strings.TrimRight(string(line), "\r\n")
+		if headerLine == "" {
 			break
 		}
-		name, value, ok := strings.Cut(line, ":")
+		name, value, ok := strings.Cut(headerLine, ":")
 		if ok && strings.EqualFold(name, "Content-Length") {
+			if contentLength >= 0 {
+				return nil, errors.New("duplicate Content-Length header")
+			}
 			contentLength, err = strconv.Atoi(strings.TrimSpace(value))
 			if err != nil || contentLength < 0 || contentLength > maximumMessageSize {
 				return nil, errors.New("invalid Content-Length header")
