@@ -41,7 +41,7 @@ func kustomizeBuild(arguments []RuntimeValue, state *EvaluationState) (RuntimeVa
 	} else if input.revision.Kind() != String || input.revision.TextValue() != "" {
 		return RuntimeValue{}, errors.New("local Kustomize source requires an empty revision")
 	}
-	result, err := kustomizeadapter.Build(kustomizeadapter.Request{Source: input.source, Revision: input.revision.TextValue(), Directory: input.directory, ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies, SourceFS: files.files, SourceOSBacked: files.osBacked})
+	result, err := kustomizeadapter.Build(kustomizeadapter.Request{Source: input.source, Revision: input.revision.TextValue(), Directory: input.directory, ProjectRoot: projectRoot, SourcePath: sourcePath, Dependencies: dependencies, SourceFS: files.files})
 	if err != nil {
 		if diagnostic, ok := kustomizeConfigSourceDiagnostic(err, files); ok {
 			return RuntimeValue{}, diagnostic
