@@ -122,6 +122,7 @@ func ResolveImportPath(importer, modulePath string) (string, error) {
 type DependentMCLSourceIndex struct {
 	root         string
 	searchRoots  []string
+	files        *projectFilesystem
 	hashes       map[string][sha256.Size]byte
 	modules      map[string]ModuleAST
 	dependencies map[string][]string
@@ -138,7 +139,23 @@ func (index *DependentMCLSourceIndex) Sources(target string, workspaceRoots []st
 	if err != nil {
 		return nil, err
 	}
-	diskSources, err := collectDependentSources(canonical, root, searchRoots)
+
+	return index.sourcesForFilesystem(canonical, root, searchRoots, newOSProjectFilesystem(root), overlays)
+}
+
+// SourcesForProjectFS snapshots an injected project filesystem and returns sources that depend on targetPath.
+// Paths use an absolute logical project root and slash-separated root-relative module paths.
+func (index *DependentMCLSourceIndex) SourcesForProjectFS(projectRoot, targetPath string, files fs.FS, overlays map[string]string) (map[string]string, error) {
+	filesystem, canonical, root, searchRoots, err := dependentProjectFSscope(projectRoot, targetPath, files)
+	if err != nil {
+		return nil, err
+	}
+
+	return index.sourcesForFilesystem(canonical, root, searchRoots, filesystem, overlays)
+}
+
+func (index *DependentMCLSourceIndex) sourcesForFilesystem(canonical, root string, searchRoots []string, filesystem *projectFilesystem, overlays map[string]string) (map[string]string, error) {
+	diskSources, err := collectDependentSourcesWithFilesystem(filesystem, canonical, root, searchRoots)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +202,7 @@ func (index *DependentMCLSourceIndex) Sources(target string, workspaceRoots []st
 		}
 	}
 	for path, module := range modules {
-		graph := moduleGraph{root: root}
+		graph := moduleGraph{root: root, files: filesystem}
 		resolvedDependencies := make([]string, 0)
 		imports, err := graph.imports(path, module)
 		if err != nil {
@@ -212,6 +229,7 @@ func (index *DependentMCLSourceIndex) Sources(target string, workspaceRoots []st
 
 	index.root = root
 	index.searchRoots = slices.Clone(searchRoots)
+	index.files = filesystem
 	index.hashes = hashes
 	index.modules = modules
 	index.dependencies = dependencies
@@ -303,11 +321,29 @@ func (index *DependentMCLSourceIndex) SourcesFromIndex(target string, workspaceR
 	if err != nil {
 		return nil, err
 	}
-	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) {
+	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) || index.files == nil || !index.files.osBacked {
 		return index.Sources(target, workspaceRoots, overlays)
 	}
+
+	return index.sourcesFromIndex(canonical, root, searchRoots, index.files, overlays)
+}
+
+// SourcesFromProjectFSIndex applies overlays to the last snapshot created from the supplied filesystem.
+// If no compatible snapshot exists, it creates a complete snapshot first.
+func (index *DependentMCLSourceIndex) SourcesFromProjectFSIndex(projectRoot, targetPath string, files fs.FS, overlays map[string]string) (map[string]string, error) {
+	filesystem, canonical, root, searchRoots, err := dependentProjectFSscope(projectRoot, targetPath, files)
+	if err != nil {
+		return nil, err
+	}
+	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) || index.files == nil || index.files.osBacked {
+		return index.sourcesForFilesystem(canonical, root, searchRoots, filesystem, overlays)
+	}
+
+	return index.sourcesFromIndex(canonical, root, searchRoots, filesystem, overlays)
+}
+
+func (index *DependentMCLSourceIndex) sourcesFromIndex(canonical, root string, searchRoots []string, files *projectFilesystem, overlays map[string]string) (map[string]string, error) {
 	diskSources := maps.Clone(index.diskSources)
-	files := newOSProjectFilesystem(root)
 	overlaySources, nextOverlayPaths, err := applyDependentOverlays(diskSources, root, searchRoots, overlays)
 	if err != nil {
 		return nil, err
@@ -338,12 +374,12 @@ func (index *DependentMCLSourceIndex) SourcesFromIndex(target string, workspaceR
 			changed[path] = struct{}{}
 		}
 	}
+	index.files = files
 	if err := index.applySnapshotChanges(diskSources, effectiveSources, nextOverlayPaths, changed); err != nil {
 		index.initialized = false
 
 		return nil, err
 	}
-
 	return dependentModuleSources(canonical, index.sources, index.importers)
 }
 
@@ -364,11 +400,14 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 		return nil
 	}
 	diskSources := maps.Clone(index.diskSources)
-	files := newOSProjectFilesystem(index.root)
+	files := index.files
+	if files == nil {
+		files = newOSProjectFilesystem(index.root)
+	}
 	effectiveSources := maps.Clone(index.sources)
 	changed := make(map[string]struct{}, len(changes))
 	for _, change := range changes {
-		path, err := canonicalWatchedModulePath(change.Path, change.Deleted, diskSources)
+		path, err := canonicalWatchedModulePath(change.Path, change.Deleted, diskSources, files)
 		if err != nil {
 			index.initialized = false
 
@@ -382,15 +421,17 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 		if filepath.Ext(path) != ".mcl" || !safepath.Within(index.root, path) || !pathWithinAny(index.searchRoots, path) {
 			continue
 		}
-		moduleRoot, rootErr := discoverProjectRoot(filepath.Dir(path))
-		if rootErr != nil || moduleRoot != index.root {
-			if _, wasIndexed := diskSources[path]; wasIndexed {
-				index.initialized = false
+		if files.osBacked {
+			moduleRoot, rootErr := discoverProjectRoot(filepath.Dir(path))
+			if rootErr != nil || moduleRoot != index.root {
+				if _, wasIndexed := diskSources[path]; wasIndexed {
+					index.initialized = false
 
-				return nil
+					return nil
+				}
+
+				continue
 			}
-
-			continue
 		}
 		if ignoredRenameSourcePath(path, index.searchRoots) {
 			if _, overlaid := index.overlayPaths[path]; overlaid {
@@ -462,12 +503,15 @@ func ignoredRenameSourcePath(path string, searchRoots []string) bool {
 	return false
 }
 
-func canonicalWatchedModulePath(path string, deleted bool, diskSources map[string]string) (string, error) {
+func canonicalWatchedModulePath(path string, deleted bool, diskSources map[string]string, files *projectFilesystem) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	absolute = filepath.Clean(absolute)
+	if !files.osBacked {
+		return absolute, nil
+	}
 	directory, err := filepath.EvalSymlinks(filepath.Dir(absolute))
 	if err != nil {
 		return "", fmt.Errorf("resolve changed module directory %q: %w", absolute, err)
@@ -527,7 +571,7 @@ func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources 
 		if !exists {
 			continue
 		}
-		resolved, err := resolveModuleDependencies(path, module, index.root)
+		resolved, err := resolveModuleDependencies(path, module, index.root, index.files)
 		if err != nil {
 			return err
 		}
@@ -549,7 +593,7 @@ func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources 
 			if !exists {
 				continue
 			}
-			if _, err := resolveModuleDependencies(importer, module, index.root); err != nil {
+			if _, err := resolveModuleDependencies(importer, module, index.root, index.files); err != nil {
 				return err
 			}
 		}
@@ -574,8 +618,8 @@ func cloneImporters(importers map[string][]string) map[string][]string {
 	return cloned
 }
 
-func resolveModuleDependencies(path string, module ModuleAST, root string) ([]string, error) {
-	graph := moduleGraph{root: root}
+func resolveModuleDependencies(path string, module ModuleAST, root string, files *projectFilesystem) ([]string, error) {
+	graph := moduleGraph{root: root, files: files}
 	dependencies := make([]string, 0)
 	imports, err := graph.imports(path, module)
 	if err != nil {
@@ -599,30 +643,10 @@ func DependentMCLSources(target string, workspaceRoots []string, overlays map[st
 // DependentMCLSourcesForProjectFS returns project modules that directly or indirectly import targetPath.
 // Project and target paths use an absolute logical root and slash-separated root-relative names.
 func DependentMCLSourcesForProjectFS(projectRoot, targetPath string, files fs.FS) (map[string]string, error) {
-	if files == nil {
-		return nil, errors.New("project filesystem is required")
-	}
-	if !filepath.IsAbs(projectRoot) {
-		return nil, fmt.Errorf("project root %q must be absolute", projectRoot)
-	}
-	if !validProjectPath(targetPath) || filepath.Ext(targetPath) != ".mcl" {
-		return nil, fmt.Errorf("invalid project target path %q", targetPath)
-	}
-	root := filepath.Clean(projectRoot)
-	target := filepath.Join(root, filepath.FromSlash(targetPath))
-	filesystem := newProjectFilesystem(root, files)
-	relative, err := filesystem.relativePath(target)
+	filesystem, target, root, searchRoots, err := dependentProjectFSscope(projectRoot, targetPath, files)
 	if err != nil {
 		return nil, err
 	}
-	info, err := fs.Stat(filesystem.files, relative)
-	if err != nil {
-		return nil, fmt.Errorf("inspect target module %q: %w", target, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("target module %q must be a regular file", target)
-	}
-	searchRoots := []string{root}
 	sources, err := collectDependentSourcesWithFilesystem(filesystem, target, root, searchRoots)
 	if err != nil {
 		return nil, err
@@ -644,6 +668,34 @@ func DependentMCLSourcesForProjectFS(projectRoot, targetPath string, files fs.FS
 	}
 
 	return dependentModuleSources(target, sources, importers)
+}
+
+func dependentProjectFSscope(projectRoot, targetPath string, files fs.FS) (*projectFilesystem, string, string, []string, error) {
+	if files == nil {
+		return nil, "", "", nil, errors.New("project filesystem is required")
+	}
+	if !filepath.IsAbs(projectRoot) {
+		return nil, "", "", nil, fmt.Errorf("project root %q must be absolute", projectRoot)
+	}
+	if !validProjectPath(targetPath) || filepath.Ext(targetPath) != ".mcl" {
+		return nil, "", "", nil, fmt.Errorf("invalid project target path %q", targetPath)
+	}
+	root := filepath.Clean(projectRoot)
+	target := filepath.Join(root, filepath.FromSlash(targetPath))
+	filesystem := newProjectFilesystem(root, files)
+	relative, err := filesystem.relativePath(target)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	info, err := fs.Stat(filesystem.files, relative)
+	if err != nil {
+		return nil, "", "", nil, fmt.Errorf("inspect target module %q: %w", target, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", "", nil, fmt.Errorf("target module %q must be a regular file", target)
+	}
+
+	return filesystem, target, root, []string{root}, nil
 }
 
 func dependentSourceScope(target string, workspaceRoots []string) (string, string, []string, error) {
