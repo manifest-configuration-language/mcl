@@ -91,6 +91,43 @@ async function run() {
     throw new Error(`The Browser runtime did not recover after a timed-out operation: ${recoveredResult.yaml}`);
   }
 
+  const workerBeforeCancellation = worker;
+  const cancellationPayload = new Uint8Array(16 * 1024 * 1024);
+  const activeEvaluationProject = runtime.openProject({
+    "main.mcl": 'emit "cancelled-binary-project"\n',
+    "fixtures/payload-1.bin": cancellationPayload,
+    "fixtures/payload-2.bin": cancellationPayload,
+  });
+  const cancellationController = new AbortController();
+  const activeEvaluation = activeEvaluationProject.render({ signal: cancellationController.signal, timeoutMs: 60_000 });
+  setTimeout(() => cancellationController.abort(), 1);
+  try {
+    await activeEvaluation;
+    throw new Error("Expected the active Browser evaluation to be cancelled");
+  } catch (error) {
+    if (error.name !== "AbortError") throw error;
+  }
+  const postCancellationResult = await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
+  if (!packageSmoke && worker === workerBeforeCancellation) {
+    throw new Error("The Browser runtime reused the Worker after cancelling an active evaluation");
+  }
+  if (!postCancellationResult.yaml.includes("mcl-browser-smoke")) {
+    throw new Error(`The Browser runtime did not recover after cancelling an active evaluation: ${postCancellationResult.yaml}`);
+  }
+
+  try {
+    runtime.openProject({ "../outside.mcl": 'emit "unsafe"\n' });
+    throw new Error("The Browser runtime accepted a project path outside the project root");
+  } catch (error) {
+    if (!(error instanceof TypeError) || !error.message.includes("Invalid project file path")) throw error;
+  }
+  try {
+    runtime.openProject({ "main.mcl": 'emit "oversized"\n', "payload.bin": new Uint8Array(16 * 1024 * 1024 + 1) });
+    throw new Error("The Browser runtime accepted a project file above the per-file size limit");
+  } catch (error) {
+    if (!(error instanceof RangeError) || !error.message.includes("16777216")) throw error;
+  }
+
   const adapterProjects = [
     {
       name: "Manifest",
