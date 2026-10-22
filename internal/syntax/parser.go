@@ -134,8 +134,8 @@ func ParseAST(source string) (ModuleAST, error) {
 }
 
 func parseASTWithTokens(source string) (ModuleAST, []sourceToken, error) {
-	if len(source) > maxMCLSourceBytes {
-		return ModuleAST{}, nil, fmt.Errorf("MCL source exceeds the %d-byte limit", maxMCLSourceBytes)
+	if len(source) > MaxSourceBytes {
+		return ModuleAST{}, nil, fmt.Errorf("MCL source exceeds the %d-byte limit", MaxSourceBytes)
 	}
 	tokens, err := lexSource(source)
 	if err != nil {

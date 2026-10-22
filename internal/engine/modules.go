@@ -14,9 +14,10 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
+	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
 
-const maxMCLSourceBytes = 16 << 20
+const maxMCLSourceBytes = syntax.MaxSourceBytes
 
 // resolveModuleLinkはモジュールファイルのシンボリックリンクを解決する。解決できない場合はfalseを返す。
 func resolveModuleLink(path string) (string, bool) {

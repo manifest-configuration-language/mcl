@@ -8,8 +8,10 @@ import (
 	"strings"
 )
 
+// MaxSourceBytes is the maximum size of an MCL source file.
+const MaxSourceBytes = 16 << 20
+
 const (
-	maxMCLSourceBytes            = 16 << 20
 	maxIterations                = 100_000
 	maxNumericCoefficientDigits  = 4096
 	maxMaterializedNumericDigits = 16384
