@@ -95,7 +95,7 @@ type Request struct {
 	Operation RequestOperation `json:"operation" yaml:"operation" mapstructure:"operation"`
 
 	// RequestID corresponds to the JSON schema field "requestId".
-	RequestID interface{} `json:"requestId,omitempty,omitzero" yaml:"requestId,omitempty" mapstructure:"requestId,omitempty"`
+	RequestID *uint64 `json:"requestId,omitempty,omitzero" yaml:"requestId,omitempty" mapstructure:"requestId,omitempty"`
 
 	// Revision corresponds to the JSON schema field "revision".
 	Revision *uint64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
@@ -124,7 +124,7 @@ type Response struct {
 	Ok bool `json:"ok" yaml:"ok" mapstructure:"ok"`
 
 	// RequestID corresponds to the JSON schema field "requestId".
-	RequestID interface{} `json:"requestId" yaml:"requestId" mapstructure:"requestId"`
+	RequestID uint64 `json:"requestId" yaml:"requestId" mapstructure:"requestId"`
 
 	// Result corresponds to the JSON schema field "result".
 	Result interface{} `json:"result,omitempty,omitzero" yaml:"result,omitempty" mapstructure:"result,omitempty"`

@@ -83,13 +83,13 @@ try {
     }
 
     return JSON.parse(globalThis.mclWasm.run(JSON.stringify({
-      requestId: `${operation}-request`, revision: 9, operation, source: inputSource,
+      requestId: 1, revision: 9, operation, source: inputSource,
       files: Object.fromEntries(Object.entries(files).map(([relativePath, content]) => [relativePath, { encoding: 'utf8', content }])),
     })));
   };
   for (const operation of ['parse', 'lint', 'format', 'evaluate', 'check']) {
     const response = invoke(operation);
-    if (!response.ok || response.requestId !== `${operation}-request` || response.revision !== 9) {
+    if (!response.ok || response.requestId !== 1 || response.revision !== 9) {
       fail(`${operation} protocol check failed: ${JSON.stringify(response)}`);
     }
   }

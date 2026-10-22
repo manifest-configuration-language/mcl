@@ -6,7 +6,7 @@
 
 ```json
 {
-  "requestId": "request-1",
+  "requestId": 1,
   "revision": 12,
   "operation": "render",
   "entrypoint": "app/main.mcl",

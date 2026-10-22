@@ -56,7 +56,11 @@ func handle(raw string, binaryArgument js.Value) string {
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
 	}
-	result := response{RequestID: input.RequestID, Revision: input.Revision}
+	var requestID uint64
+	if input.RequestID != nil {
+		requestID = *input.RequestID
+	}
+	result := response{RequestID: requestID, Revision: input.Revision}
 	if len(input.Source) > maxSourceBytes {
 		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", maxSourceBytes)}
 		return marshal(result)

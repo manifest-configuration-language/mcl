@@ -11,7 +11,7 @@ export type FileInput = {
 export type LintResult = LintDiagnostic[];
 
 export interface Request {
-  requestId?: unknown;
+  requestId?: number;
   revision?: number;
   operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render";
   /**
@@ -30,7 +30,7 @@ export interface Request {
   };
 }
 export interface Response {
-  requestId: unknown;
+  requestId: number;
   revision?: number;
   ok: boolean;
   result?: ParseResult | LintResult | FormatResult | CheckResult | EvaluateResult | RenderResult;
