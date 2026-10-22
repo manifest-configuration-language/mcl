@@ -30,6 +30,9 @@ const schemeHTTPS = "https"
 
 const maxKustomizeSourceBytes = 16 << 20
 
+// ErrRemoteDependencyUnavailable marks a remote dependency that cannot be loaded from the local lock cache.
+var ErrRemoteDependencyUnavailable = errors.New("remote dependency is unavailable offline")
+
 type Lock struct {
 	identity ToolchainIdentity
 	//nolint:containedctx // Lockは同一の依存更新処理で使う取得Contextを共有します。
@@ -340,7 +343,7 @@ func (lock *Lock) loadRemote(source, category string, entries map[string]string)
 	}
 	digest, exists := entries[source]
 	if !exists {
-		return nil, fmt.Errorf("%s URL %q is not locked; run mcl update", category, source)
+		return nil, fmt.Errorf("%w: %s URL %q is not locked; run mcl update", ErrRemoteDependencyUnavailable, category, source)
 	}
 	maximumSize := int64(maxRemoteManifestSize)
 	if category == "chart" {
@@ -407,12 +410,12 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 		return nil, fmt.Errorf("stat cached Manifest: %w", err)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("cached Manifest with SHA-256 %s is missing; run mcl update", digest)
+		return nil, fmt.Errorf("%w: cached Manifest with SHA-256 %s is missing; run mcl update", ErrRemoteDependencyUnavailable, digest)
 	}
 	if filesystem.osBacked {
 		if _, err := safepath.ResolveWithin(lock.root, cachePath); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("cached Manifest with SHA-256 %s is missing; run mcl update", digest)
+				return nil, fmt.Errorf("%w: cached Manifest with SHA-256 %s is missing; run mcl update", ErrRemoteDependencyUnavailable, digest)
 			}
 			if errors.Is(err, safepath.ErrOutsideRoot) {
 				return nil, errors.New("cached Manifest escapes the project directory")

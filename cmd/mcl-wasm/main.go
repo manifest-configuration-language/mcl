@@ -12,10 +12,10 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"syscall/js"
 	"time"
 
+	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
@@ -280,9 +280,9 @@ func diagnosticError(source, entrypoint string, files fs.FS, err error) *respons
 		code = "MCL-WASM-TIMEOUT"
 		message = "evaluation exceeded the 4-second limit"
 	}
-	if errors.Is(err, syscall.ENOSYS) {
+	if errors.Is(err, dependency.ErrRemoteDependencyUnavailable) {
 		code = "MCL-WASM-NETWORK"
-		message = "remote dependency access is unavailable in this browser runtime; provide dependencies in the project files"
+		message = "remote dependency access is unavailable in this browser runtime; include dependencies in the project files"
 	}
 
 	return &responseError{

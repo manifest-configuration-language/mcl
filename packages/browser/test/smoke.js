@@ -127,6 +127,19 @@ async function run() {
     }
   }
 
+  const remoteDependencyProject = runtime.openProject({
+    "main.mcl": 'emit manifest.load("https://example.com/resources.yaml")\n',
+  });
+  try {
+    await remoteDependencyProject.render({ timeoutMs: 60_000 });
+    throw new Error("Expected remote dependency access to fail in the Browser runtime");
+  } catch (error) {
+    if (!(error instanceof MclRuntimeError) || error.code !== "MCL-WASM-NETWORK") throw error;
+    if (!error.message.includes("include dependencies in the project files")) {
+      throw new Error(`Remote dependency error did not explain the Browser limitation: ${error.message}`);
+    }
+  }
+
   const sharedEntrypoint = 'import "modules/shared.mcl" as shared\nemit shared.value\n';
   const firstIsolatedProject = runtime.openProject({
     "main.mcl": sharedEntrypoint,
