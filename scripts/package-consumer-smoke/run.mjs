@@ -14,7 +14,7 @@ const projectDirectory = resolve(projectDirectoryInput);
 const browserPackageDirectory = resolve(browserPackageDirectoryInput);
 const vite = resolve(browserPackageDirectory, "node_modules/.bin/vite");
 const require = createRequire(pathToFileURL(resolve(browserPackageDirectory, "package.json")));
-const { chromium } = require("playwright");
+const { chromium, firefox, webkit } = require("playwright");
 const viteConfig = resolve(projectDirectory, "vite.config.js");
 const build = spawnSync(vite, ["build", "--config", viteConfig], {
   cwd: projectDirectory,
@@ -49,29 +49,31 @@ try {
   }
   if (!ready) throw new Error(`Vite preview did not become ready.\n${serverOutput.join("")}`);
 
-  const browser = await chromium.launch({ headless: true });
-  try {
-    const page = await browser.newPage();
-    const pageErrors = [];
-    page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("console", (message) => {
-      if (message.type() === "error") pageErrors.push(message.text());
-    });
-    await page.goto("http://127.0.0.1:4179/");
+  for (const browserType of [chromium, firefox, webkit]) {
+    const browser = await browserType.launch({ headless: true });
     try {
-      await page.locator("#result[data-status='passed']").waitFor({ timeout: 60_000 });
-    } catch (error) {
-      const body = await page.locator("body").textContent();
-      throw new Error(`${error.message}\nPage: ${body}\nBrowser errors: ${pageErrors.join("\n")}\nVite: ${serverOutput.join("")}`);
+      const page = await browser.newPage();
+      const pageErrors = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() === "error") pageErrors.push(message.text());
+      });
+      await page.goto("http://127.0.0.1:4179/");
+      try {
+        await page.locator("#result[data-status='passed']").waitFor({ timeout: 60_000 });
+      } catch (error) {
+        const body = await page.locator("body").textContent();
+        throw new Error(`${error.message}\nBrowser: ${browserType.name()}\nPage: ${body}\nBrowser errors: ${pageErrors.join("\n")}\nVite: ${serverOutput.join("")}`);
+      }
+      assert.deepEqual(pageErrors, [], `${browserType.name()} emitted browser errors`);
+      const result = await page.locator("#result").evaluate((element) => JSON.parse(element.textContent));
+      assert.equal(result.grammarScope, "source.mcl");
+      assert.match(result.editorDocument, /emit/);
+      assert.match(result.yaml, /mcl-package-consumer-smoke/);
+      console.log(`Verified installed Browser and Language packages in a production Vite build with ${browserType.name()}.`);
+    } finally {
+      await browser.close();
     }
-    assert.deepEqual(pageErrors, [], "The installed package consumer emitted browser errors");
-    const result = await page.locator("#result").evaluate((element) => JSON.parse(element.textContent));
-    assert.equal(result.grammarScope, "source.mcl");
-    assert.match(result.editorDocument, /emit/);
-    assert.match(result.yaml, /mcl-package-consumer-smoke/);
-    console.log("Verified installed Browser and Language packages in a production Vite build.");
-  } finally {
-    await browser.close();
   }
 } finally {
   server.kill("SIGTERM");
