@@ -5,6 +5,10 @@ inputs:
     description: Directory for the packed npm package archives
     required: false
     default: ''
+  expected-version:
+    description: Expected version for the packed npm package archives
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -45,6 +49,7 @@ runs:
       shell: bash
       env:
         PACKAGE_OUTPUT_DIRECTORY: ${{ inputs.package-output-directory }}
+        MCL_VERSION: ${{ inputs.expected-version }}
       run: |
         if [[ -n "$PACKAGE_OUTPUT_DIRECTORY" ]]; then
           scripts/verify-package-tarballs.sh "$PACKAGE_OUTPUT_DIRECTORY"
