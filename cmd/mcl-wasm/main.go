@@ -82,7 +82,7 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("formatted output exceeds the %d-byte limit", maxOutputBytes)}
 		} else {
 			result.Ok = true
-			result.Result = map[string]any{"source": formatted}
+			result.Result = wasmprotocol.FormatResult{Source: formatted}
 		}
 		return marshal(result)
 	}
@@ -95,7 +95,7 @@ func handle(raw string, binaryArgument js.Value) string {
 	switch input.Operation {
 	case "parse":
 		result.Ok = true
-		result.Result = map[string]any{"declarations": len(module.Nodes)}
+		result.Result = wasmprotocol.ParseResult{Declarations: uint64(len(module.Nodes))}
 	case "lint":
 		result.Ok = true
 		result.Result = diagnostics(module, input.Source, entrypoint)
@@ -128,7 +128,7 @@ func handle(raw string, binaryArgument js.Value) string {
 		}
 		if input.Operation == "check" {
 			result.Ok = true
-			result.Result = map[string]any{"valid": true, "artifacts": len(bundle.Artifacts)}
+			result.Result = wasmprotocol.CheckResult{Valid: true, Artifacts: uint64(len(bundle.Artifacts))}
 			return marshal(result)
 		}
 		output, renderErr := engine.Render(bundle)
@@ -142,9 +142,9 @@ func handle(raw string, binaryArgument js.Value) string {
 		}
 		result.Ok = true
 		if input.Operation == "render" {
-			result.Result = map[string]any{"yaml": string(output), "artifacts": len(bundle.Artifacts)}
+			result.Result = wasmprotocol.RenderResult{Yaml: string(output), Artifacts: uint64(len(bundle.Artifacts))}
 		} else {
-			result.Result = map[string]any{"artifacts": len(bundle.Artifacts), "renderedBytes": len(output)}
+			result.Result = wasmprotocol.EvaluateResult{Artifacts: uint64(len(bundle.Artifacts)), RenderedBytes: uint64(len(output))}
 		}
 	default:
 		result.Error = &responseError{Code: "MCL-WASM-OPERATION", Message: "operation must be parse, lint, format, evaluate, check, or render"}
@@ -235,19 +235,34 @@ func projectEntrypoint(entrypoint string) (string, error) {
 	return entrypoint, nil
 }
 
-func diagnostics(module engine.ModuleAST, source, sourcePath string) []map[string]any {
+func diagnostics(module engine.ModuleAST, source, sourcePath string) wasmprotocol.LintResult {
 	items := engine.LintAST(module)
-	result := make([]map[string]any, 0, len(items))
+	result := make(wasmprotocol.LintResult, 0, len(items))
 	for _, item := range items {
 		line, column := sourcePosition(source, item.Span.Start)
 		endLine, endColumn := sourcePosition(source, item.Span.End)
-		result = append(result, map[string]any{
-			"code": item.Code, "message": item.Message, "severity": item.Severity, "path": sourcePath,
-			"line": line, "column": column, "endLine": endLine, "endColumn": endColumn,
+		result = append(result, wasmprotocol.LintDiagnostic{
+			Code: item.Code, Message: item.Message, Severity: lintSeverity(item.Severity), Path: sourcePath,
+			Line: uint64(line), Column: uint64(column), EndLine: uint64(endLine), EndColumn: uint64(endColumn),
 		})
 	}
 
 	return result
+}
+
+func lintSeverity(severity int) string {
+	switch severity {
+	case 1:
+		return "error"
+	case 2:
+		return "warning"
+	case 3:
+		return "information"
+	case 4:
+		return "hint"
+	default:
+		return "unknown"
+	}
 }
 
 func diagnosticError(source, entrypoint string, files fs.FS, err error) *responseError {

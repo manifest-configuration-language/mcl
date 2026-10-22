@@ -121,7 +121,7 @@ try {
   }
   const [, lintLine, lintColumn, lintCode, lintMessage] = nativeLintDiagnostic;
   if (lintDiagnostic.path !== 'main.mcl' || lintDiagnostic.line !== Number(lintLine) || lintDiagnostic.column !== Number(lintColumn)
-    || lintDiagnostic.code !== lintCode || lintDiagnostic.message !== lintMessage || lintDiagnostic.severity !== 2) {
+    || lintDiagnostic.code !== lintCode || lintDiagnostic.message !== lintMessage || lintDiagnostic.severity !== 'warning') {
     fail(`lint diagnostics CLI/WASM mismatch: CLI=${JSON.stringify({ line: Number(lintLine), column: Number(lintColumn), code: lintCode, message: lintMessage })} WASM=${JSON.stringify(lintDiagnostic)}`);
   }
   const formatSource = 'let value =\n    nested: "ok"\nemit value\n';
