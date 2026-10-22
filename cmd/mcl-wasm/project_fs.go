@@ -14,13 +14,6 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
 
-const (
-	maxSourceBytes      = 64 << 10
-	maxProjectFiles     = 4096
-	maxProjectFileBytes = 16 << 20
-	maxProjectBytes     = 64 << 20
-)
-
 type projectFilesystem struct {
 	mu          sync.RWMutex
 	files       fstest.MapFS
@@ -38,16 +31,16 @@ func (filesystem *projectFilesystem) WriteFileAtomic(name string, data []byte) e
 	if !fs.ValidPath(name) || name == "." || strings.Contains(name, `\`) {
 		return fs.ErrInvalid
 	}
-	if len(data) > maxProjectFileBytes {
-		return fmt.Errorf("project file %q exceeds the %d-byte limit", name, maxProjectFileBytes)
+	if len(data) > wasmprotocol.MaxProjectFileBytes {
+		return fmt.Errorf("project file %q exceeds the %d-byte limit", name, wasmprotocol.MaxProjectFileBytes)
 	}
 
 	filesystem.mu.Lock()
 	defer filesystem.mu.Unlock()
 
 	_, exists := filesystem.files[name]
-	if !exists && len(filesystem.files)+1 >= maxProjectFiles {
-		return fmt.Errorf("project has more than %d files", maxProjectFiles)
+	if !exists && len(filesystem.files)+1 >= wasmprotocol.MaxProjectFiles {
+		return fmt.Errorf("project has more than %d files", wasmprotocol.MaxProjectFiles)
 	}
 	totalBytes := filesystem.sourceBytes + len(data)
 	for path, file := range filesystem.files {
@@ -56,8 +49,8 @@ func (filesystem *projectFilesystem) WriteFileAtomic(name string, data []byte) e
 		}
 		totalBytes += len(file.Data)
 	}
-	if totalBytes > maxProjectBytes {
-		return fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
+	if totalBytes > wasmprotocol.MaxProjectBytes {
+		return fmt.Errorf("project files exceed the %d-byte limit", wasmprotocol.MaxProjectBytes)
 	}
 	filesystem.files[name] = &fstest.MapFile{Data: bytes.Clone(data), Mode: 0o444}
 
@@ -65,11 +58,11 @@ func (filesystem *projectFilesystem) WriteFileAtomic(name string, data []byte) e
 }
 
 func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, binaryFiles map[string][]byte, entrypoint string) (*projectFilesystem, error) {
-	if len(files)+1 > maxProjectFiles {
-		return nil, fmt.Errorf("project has more than %d files", maxProjectFiles)
+	if len(files)+1 > wasmprotocol.MaxProjectFiles {
+		return nil, fmt.Errorf("project has more than %d files", wasmprotocol.MaxProjectFiles)
 	}
-	if len(source) > maxSourceBytes {
-		return nil, fmt.Errorf("source exceeds the %d-byte limit", maxSourceBytes)
+	if len(source) > wasmprotocol.MaxSourceBytes {
+		return nil, fmt.Errorf("source exceeds the %d-byte limit", wasmprotocol.MaxSourceBytes)
 	}
 	totalBytes := len(source)
 	project := &projectFilesystem{files: make(fstest.MapFS, len(files)), sourceBytes: len(source)}
@@ -98,12 +91,12 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 		default:
 			return nil, fmt.Errorf("project file %q encoding must be utf8 or binary", relativePath)
 		}
-		if len(content) > maxProjectFileBytes {
-			return nil, fmt.Errorf("project file %q exceeds the %d-byte limit", relativePath, maxProjectFileBytes)
+		if len(content) > wasmprotocol.MaxProjectFileBytes {
+			return nil, fmt.Errorf("project file %q exceeds the %d-byte limit", relativePath, wasmprotocol.MaxProjectFileBytes)
 		}
 		totalBytes += len(content)
-		if totalBytes > maxProjectBytes {
-			return nil, fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
+		if totalBytes > wasmprotocol.MaxProjectBytes {
+			return nil, fmt.Errorf("project files exceed the %d-byte limit", wasmprotocol.MaxProjectBytes)
 		}
 		project.files[relativePath] = &fstest.MapFile{Data: content, Mode: 0o444}
 	}

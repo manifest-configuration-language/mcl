@@ -19,11 +19,11 @@ export interface Request {
    */
   entrypoint?: string;
   /**
-   * UTF-8 entrypoint source, limited to 65536 bytes by the runtime.
+   * UTF-8 entrypoint source, limited by the runtime.
    */
   source: string;
   /**
-   * Project files are limited to 16 MiB each and 64 MiB total including source.
+   * Project files are limited by the runtime; this count excludes the entrypoint.
    */
   files?: {
     [k: string]: FileInput;

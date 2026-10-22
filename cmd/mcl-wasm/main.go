@@ -21,8 +21,7 @@ import (
 )
 
 const (
-	maxOutputBytes = 1 << 20
-	evaluationTime = 4 * time.Second
+	evaluationTime = time.Duration(wasmprotocol.EvaluationTimeoutMillis) * time.Millisecond
 	projectRoot    = "/mcl-project"
 )
 
@@ -61,8 +60,8 @@ func handle(raw string, binaryArgument js.Value) string {
 		requestID = *input.RequestID
 	}
 	result := response{RequestID: requestID, Revision: input.Revision}
-	if len(input.Source) > maxSourceBytes {
-		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", maxSourceBytes)}
+	if len(input.Source) > wasmprotocol.MaxSourceBytes {
+		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", wasmprotocol.MaxSourceBytes)}
 		return marshal(result)
 	}
 	entrypointInput := ""
@@ -78,8 +77,8 @@ func handle(raw string, binaryArgument js.Value) string {
 		formatted, err := engine.FormatSource(input.Source)
 		if err != nil {
 			result.Error = diagnosticError(input.Source, entrypoint, nil, err)
-		} else if len(formatted) > maxOutputBytes {
-			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("formatted output exceeds the %d-byte limit", maxOutputBytes)}
+		} else if len(formatted) > wasmprotocol.MaxOutputBytes {
+			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("formatted output exceeds the %d-byte limit", wasmprotocol.MaxOutputBytes)}
 		} else {
 			result.Ok = true
 			result.Result = wasmprotocol.FormatResult{Source: formatted}
@@ -136,8 +135,8 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, renderErr)
 			return marshal(result)
 		}
-		if len(output) > maxOutputBytes {
-			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("rendered output exceeds the %d-byte limit", maxOutputBytes)}
+		if len(output) > wasmprotocol.MaxOutputBytes {
+			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("rendered output exceeds the %d-byte limit", wasmprotocol.MaxOutputBytes)}
 			return marshal(result)
 		}
 		result.Ok = true
@@ -181,8 +180,8 @@ func copyBinaryFiles(value js.Value, source string, files map[string]fileInput) 
 	if keys.Length() != binaryCount {
 		return nil, errors.New("binary file map does not match binary file metadata")
 	}
-	if keys.Length() > maxProjectFiles-1 {
-		return nil, fmt.Errorf("project has more than %d files", maxProjectFiles)
+	if keys.Length() > wasmprotocol.MaxProjectFiles-1 {
+		return nil, fmt.Errorf("project has more than %d files", wasmprotocol.MaxProjectFiles)
 	}
 	uint8Array := js.Global().Get("Uint8Array")
 	projectBytes := len(source)
@@ -199,12 +198,12 @@ func copyBinaryFiles(value js.Value, source string, files map[string]fileInput) 
 			return nil, fmt.Errorf("binary project file %q must be a Uint8Array", filePath)
 		}
 		fileBytes := fileValue.Get("byteLength").Int()
-		if fileBytes > maxProjectFileBytes {
-			return nil, fmt.Errorf("project file %q exceeds the %d-byte limit", filePath, maxProjectFileBytes)
+		if fileBytes > wasmprotocol.MaxProjectFileBytes {
+			return nil, fmt.Errorf("project file %q exceeds the %d-byte limit", filePath, wasmprotocol.MaxProjectFileBytes)
 		}
 		projectBytes += fileBytes
-		if projectBytes > maxProjectBytes {
-			return nil, fmt.Errorf("project files exceed the %d-byte limit", maxProjectBytes)
+		if projectBytes > wasmprotocol.MaxProjectBytes {
+			return nil, fmt.Errorf("project files exceed the %d-byte limit", wasmprotocol.MaxProjectBytes)
 		}
 		content := make([]byte, fileBytes)
 		if copied := js.CopyBytesToGo(content, fileValue); copied != fileBytes {

@@ -24,7 +24,7 @@
 
 成功時は`ok: true`と操作結果を返します。`render`は`result.yaml`、`format`は`result.source`、`check`は`result.valid`とリソース数を返します。失敗時は`ok: false`と`error`を返し、入力診断にはCodeMirrorと同じUTF-16列の`line`と`column`を含めます。両方の応答に要求の`requestId`と`revision`をそのまま含めるため、Worker呼び出し元は古い結果を破棄できます。
 
-入力ソースは64KiB、entrypointを含む仮想ファイルは4096個かつ1ファイル16MiB、entrypointを含む合計64MiB、整形またはレンダー結果は1MiBまでです。評価は4秒で中断します。
+入力サイズと評価時間の上限は[`protocol.schema.json`](protocol.schema.json)の`x-mcl-limits`で定義します。
 
 ## ブラウザーのファイルシステム
 

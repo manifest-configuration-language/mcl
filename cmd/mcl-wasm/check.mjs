@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
+import { maxSourceBytes } from '../../packages/browser/src/limits.js';
 
 const maxStartupMs = 3000;
 const maxRenderMs = 3000;
@@ -215,7 +216,7 @@ try {
     fail(`Imported source diagnostic location check failed: ${JSON.stringify(importedInvalid.error)}`);
   }
 
-  const tooLarge = invoke('parse', 'a'.repeat(64 * 1024 + 1));
+  const tooLarge = invoke('parse', 'a'.repeat(maxSourceBytes + 1));
   if (tooLarge.ok || tooLarge.error?.code !== 'MCL-WASM-SOURCE-LIMIT') fail('source size limit check failed');
   const helmSource = readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/adapters/helm/main.mcl'), 'utf8');
   const helmFiles = {

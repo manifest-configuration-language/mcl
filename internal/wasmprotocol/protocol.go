@@ -129,7 +129,7 @@ type Request struct {
 	// Project-relative MCL source path. Defaults to main.mcl.
 	Entrypoint *string `json:"entrypoint,omitempty,omitzero" yaml:"entrypoint,omitempty" mapstructure:"entrypoint,omitempty"`
 
-	// Project files are limited to 16 MiB each and 64 MiB total including source.
+	// Project files are limited by the runtime; this count excludes the entrypoint.
 	Files RequestFiles `json:"files,omitempty,omitzero" yaml:"files,omitempty" mapstructure:"files,omitempty"`
 
 	// Operation corresponds to the JSON schema field "operation".
@@ -141,11 +141,11 @@ type Request struct {
 	// Revision corresponds to the JSON schema field "revision".
 	Revision *uint64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
 
-	// UTF-8 entrypoint source, limited to 65536 bytes by the runtime.
+	// UTF-8 entrypoint source, limited by the runtime.
 	Source string `json:"source" yaml:"source" mapstructure:"source"`
 }
 
-// Project files are limited to 16 MiB each and 64 MiB total including source.
+// Project files are limited by the runtime; this count excludes the entrypoint.
 type RequestFiles map[string]FileInput
 
 type RequestOperation string
