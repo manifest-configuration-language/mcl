@@ -103,11 +103,30 @@ jobs:
           const missing = required.filter((path) => !files.includes(path));
           if (missing.length) throw new Error(`Language package is missing: ${missing.join(', ')}`);
           NODE
-      - name: Publish packages
+      - name: Pack and smoke test release archives
+        env:
+          MCL_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          (cd packages/browser && npm publish --access public --provenance)
-          (cd packages/language && npm publish --access public --provenance)
+          browser_archive="$RUNNER_TEMP/mcl-browser-${MCL_VERSION}.tgz"
+          language_archive="$RUNNER_TEMP/mcl-language-${MCL_VERSION}.tgz"
+          (cd packages/browser && npm pack --pack-destination "$RUNNER_TEMP")
+          (cd packages/language && npm pack --pack-destination "$RUNNER_TEMP")
+          smoke_directory="$(mktemp -d)"
+          trap 'rm -rf "$smoke_directory"' EXIT
+          cat > "$smoke_directory/package.json" <<EOF
+          {"private":true,"dependencies":{"@mcl/browser":"file:$browser_archive","@mcl/language":"file:$language_archive"}}
+          EOF
+          npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
+          cp scripts/verify-installed-packages.mjs "$smoke_directory/verify-installed-packages.mjs"
+          (cd "$smoke_directory" && node verify-installed-packages.mjs)
+      - name: Publish packages
+        env:
+          MCL_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm publish "$RUNNER_TEMP/mcl-browser-${MCL_VERSION}.tgz" --access public --provenance
+          npm publish "$RUNNER_TEMP/mcl-language-${MCL_VERSION}.tgz" --access public --provenance
 
       - name: Smoke test published packages
         env:
@@ -120,5 +139,6 @@ jobs:
           {"private":true,"dependencies":{"@mcl/browser":"$MCL_VERSION","@mcl/language":"$MCL_VERSION"}}
           EOF
           npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
+          (cd "$smoke_directory" && npm audit signatures)
           cp "$GITHUB_WORKSPACE/scripts/verify-installed-packages.mjs" "$smoke_directory/verify-installed-packages.mjs"
           (cd "$smoke_directory" && node verify-installed-packages.mjs)
