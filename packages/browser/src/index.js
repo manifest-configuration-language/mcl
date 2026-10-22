@@ -213,7 +213,7 @@ export function createMclRuntime(options = {}) {
   }
 
   function isSafeRelativePath(filePath) {
-    return typeof filePath === "string" && filePath.length > 0 && !filePath.startsWith("/") && !filePath.includes("\\") && filePath.split("/").every((part) => part && part !== "." && part !== "..");
+    return typeof filePath === "string" && filePath.length > 0 && !/^[a-z]:/i.test(filePath) && !filePath.startsWith("/") && !filePath.includes("\\") && filePath.split("/").every((part) => part && part !== "." && part !== "..");
   }
 
   function prepareFilesForTransfer(source, files, entrypoint) {

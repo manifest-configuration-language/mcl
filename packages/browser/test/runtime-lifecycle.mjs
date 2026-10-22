@@ -195,9 +195,11 @@ export async function testRuntimeLifecycle() {
     });
 
     assert.throws(() => runtime.openProject({}), /at least one MCL source file/);
-    for (const filePath of ["/main.mcl", "../main.mcl", "app/../main.mcl", "app\\main.mcl", "app//main.mcl"]) {
+    for (const filePath of ["/main.mcl", "C:/main.mcl", "../main.mcl", "app/../main.mcl", "app\\main.mcl", "app//main.mcl"]) {
       assert.throws(() => runtime.openProject({ [filePath]: "emit 1" }), /Invalid project file path/);
     }
+    const project = runtime.openProject({ "main.mcl": "emit 1", "nested/other.mcl": "emit 2" });
+    await assert.rejects(project.parse({ entrypoint: "C:/main.mcl" }), /Project entrypoint does not exist/);
     assert.throws(() => runtime.openProject({ "main.mcl": "", "large.bin": new Uint8Array(16 * 1024 * 1024 + 1) }), /exceeds the 16777216-byte limit/);
     assert.throws(() => runtime.openProject({ "main.mcl": "", ...Object.fromEntries(Array.from({ length: 4096 }, (_, index) => [`file-${index}.bin`, ""])) }), /more than 4096 files/);
 
