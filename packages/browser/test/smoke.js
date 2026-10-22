@@ -1,7 +1,16 @@
-import { createMclRuntime } from "../src/index.js";
+import { createMclRuntime, MclRuntimeError } from "../src/index.js";
 import source from "./app/main.mcl?raw";
 import resourceModule from "./app/modules/resource.mcl?raw";
 import schema from "./app/schema.json?raw";
+import manifestMain from "../../../cmd/mcl-wasm/testdata/examples/adapters/manifest/main.mcl?raw";
+import manifestResources from "../../../cmd/mcl-wasm/testdata/examples/adapters/manifest/fixtures/resources.yaml?raw";
+import helmMain from "../../../cmd/mcl-wasm/testdata/examples/adapters/helm/main.mcl?raw";
+import helmChart from "../../../cmd/mcl-wasm/testdata/examples/adapters/helm/chart/Chart.yaml?raw";
+import helmValues from "../../../cmd/mcl-wasm/testdata/examples/adapters/helm/chart/values.yaml?raw";
+import helmDeployment from "../../../cmd/mcl-wasm/testdata/examples/adapters/helm/chart/templates/deployment.yaml?raw";
+import kustomizeMain from "../../../cmd/mcl-wasm/testdata/examples/adapters/kustomize/main.mcl?raw";
+import kustomizeConfig from "../../../cmd/mcl-wasm/testdata/examples/adapters/kustomize/fixtures/base/Kustomization?raw";
+import kustomizeDeployment from "../../../cmd/mcl-wasm/testdata/examples/adapters/kustomize/fixtures/base/deployment.yaml?raw";
 
 const output = document.querySelector("#result");
 async function run() {
@@ -62,6 +71,72 @@ async function run() {
   if (!result.yaml.includes("mcl-browser-smoke") || !result.yaml.includes('key: "value"')) {
     throw new Error(`Unexpected render output: ${result.yaml}`);
   }
+
+  const adapterProjects = [
+    {
+      name: "Manifest",
+      files: { "main.mcl": manifestMain, "fixtures/resources.yaml": manifestResources },
+      expected: ['name: "api-settings"', 'name: "api"'],
+    },
+    {
+      name: "Helm",
+      files: {
+        "main.mcl": helmMain,
+        "chart/Chart.yaml": helmChart,
+        "chart/values.yaml": helmValues,
+        "chart/templates/deployment.yaml": helmDeployment,
+      },
+      expected: ['name: "sample-api"', "replicas: 2", 'image: "example.test.walnuts.dev/api:v1"'],
+    },
+    {
+      name: "Kustomize",
+      files: {
+        "main.mcl": kustomizeMain,
+        "fixtures/base/Kustomization": kustomizeConfig,
+        "fixtures/base/deployment.yaml": kustomizeDeployment,
+      },
+      expected: ['name: "sample-api"', "replicas: 2"],
+    },
+  ];
+  for (const adapter of adapterProjects) {
+    const adapterProject = runtime.openProject(adapter.files);
+    const adapterResult = await adapterProject.render({ timeoutMs: 60_000 });
+    for (const expected of adapter.expected) {
+      if (!adapterResult.yaml.includes(expected)) {
+        throw new Error(`${adapter.name} adapter output is missing ${JSON.stringify(expected)}: ${adapterResult.yaml}`);
+      }
+    }
+  }
+
+  const importedFailureProject = runtime.openProject({
+    "main.mcl": 'import "modules/broken.mcl" as broken\nemit broken.value\n',
+    "modules/broken.mcl": "# imported module\nlet value = 1\n\nlet broken = @\n",
+  });
+  try {
+    await importedFailureProject.render({ timeoutMs: 60_000 });
+    throw new Error("Expected the imported module syntax error to fail rendering");
+  } catch (error) {
+    if (!(error instanceof MclRuntimeError)) throw error;
+    if (error.path !== "modules/broken.mcl" || error.line !== 4) {
+      throw new Error(`Imported module error location was ${error.path}:${error.line}, expected modules/broken.mcl:4`);
+    }
+  }
+
+  const relatedLocationProject = runtime.openProject({
+    "main.mcl": 'import "modules/rules.mcl" as checks\n\nlet count: Int = -1\n\nemit count\nvalidate count using checks.positive\n',
+    "modules/rules.mcl": 'export rule positive(value: Int):\n  require value > 0 message "must be positive"\n',
+  });
+  try {
+    await relatedLocationProject.render({ timeoutMs: 60_000 });
+    throw new Error("Expected the imported validation rule to fail rendering");
+  } catch (error) {
+    if (!(error instanceof MclRuntimeError)) throw error;
+    const related = error.related?.find((location) => location.path === "modules/rules.mcl");
+    if (error.path !== "main.mcl" || !related || related.line !== 2) {
+      throw new Error(`Related diagnostic locations were not preserved: ${JSON.stringify({ path: error.path, line: error.line, related: error.related })}`);
+    }
+  }
+
   const repeatRenderStartedAt = performance.now();
   await project.render({ entrypoint: "app/main.mcl", timeoutMs: 60_000 });
   const repeatRenderMs = performance.now() - repeatRenderStartedAt;
