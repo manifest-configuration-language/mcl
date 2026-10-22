@@ -35,6 +35,7 @@ const validFixtures = [
   resolve(packageRoot, "parity-fixtures/without.mcl"),
   resolve(packageRoot, "parity-fixtures/descendants-validation.mcl"),
   resolve(packageRoot, "parity-fixtures/advanced-constructs.mcl"),
+  resolve(packageRoot, "parity-fixtures/multiline-string-escaped-delimiter.mcl"),
   resolve(packageRoot, "parity-fixtures/block-expressions.mcl"),
 ];
 

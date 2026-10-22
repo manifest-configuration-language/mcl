@@ -108,7 +108,7 @@ BinaryOperator { Operator | Minus | kw<"and"> | kw<"or"> | kw<"in"> | kw<"is"> }
   NegativeNumber { "-" $[0-9]+ ("." $[0-9]+)? }
   Number { $[0-9]+ ("." $[0-9]+)? }
   QuotedString { "\"" ("\\" _ | !["\\\n\r])* "\"" }
-  MultiString { "\"\"\"" (!["\\] | "\\" _)* "\"\"\"" }
+  MultiString { "\"\"\"" (!["] | "\"" !["] | "\"\"" !["])* "\"\"\"" }
   Comment { "#" ![\n\r]* }
   Operator { "==" | "!=" | "<=" | ">=" | "??" | "=>" | "->" | "+" | "*" | "/" | "%" | "|" | "<" | ">" }
   Minus { "-" }
