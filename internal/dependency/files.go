@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
@@ -43,15 +44,21 @@ func (filesystem *rootFilesystem) writeFileAtomic(name string, data []byte) erro
 		return fs.ErrInvalid
 	}
 	if filesystem.osBacked {
-		path := filepath.Join(filesystem.root, filepath.FromSlash(name))
-		if _, err := safepath.ResolveWithin(filesystem.root, path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		root, err := os.OpenRoot(filesystem.root)
+		if err != nil {
 			return err
 		}
-		if err := ensureDirectoryWithin(filesystem.root, filepath.Dir(path)); err != nil {
+		defer func() {
+			err = errors.Join(err, root.Close())
+		}()
+
+		relative := filepath.FromSlash(name)
+		directory := filepath.Dir(relative)
+		if err := ensureRootDirectory(root, directory); err != nil {
 			return err
 		}
 
-		return contentutil.WriteFileAtomic(path, data)
+		return contentutil.WriteFileAtomicRoot(root, relative, data)
 	}
 	if filesystem.writer == nil {
 		return errors.New("dependency filesystem does not support atomic writes")
@@ -60,11 +67,40 @@ func (filesystem *rootFilesystem) writeFileAtomic(name string, data []byte) erro
 	return filesystem.writer.WriteFileAtomic(name, data)
 }
 
+func ensureRootDirectory(root *os.Root, relative string) error {
+	if relative == "." {
+		return nil
+	}
+	current := ""
+	for part := range strings.SplitSeq(relative, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := root.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			if err := root.Mkdir(current, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+				return err
+			}
+			info, err = root.Lstat(current)
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("cache path contains a non-directory or symbolic link")
+		}
+	}
+
+	return nil
+}
+
 func (filesystem *rootFilesystem) stat(name string) (info fs.FileInfo, err error) {
 	if !fs.ValidPath(name) {
 		return nil, fs.ErrInvalid
 	}
 	if filesystem.osBacked {
+		path := filepath.Join(filesystem.root, filepath.FromSlash(name))
+		if _, err := safepath.ResolveWithin(filesystem.root, path); errors.Is(err, safepath.ErrOutsideRoot) {
+			return nil, err
+		}
 		root, err := os.OpenRoot(filesystem.root)
 		if err != nil {
 			return nil, err

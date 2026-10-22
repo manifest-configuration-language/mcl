@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -407,6 +406,10 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 		return nil, errors.New("cached Manifest must be a regular file")
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, safepath.ErrOutsideRoot) {
+			return nil, errors.New("cached Manifest escapes the project directory")
+		}
+
 		return nil, fmt.Errorf("stat cached Manifest: %w", err)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
@@ -444,35 +447,6 @@ func (lock *Lock) writeCache(digest string, data []byte) error {
 
 	if err := lock.filesystem.writeFileAtomic(filepath.ToSlash(relative), data); err != nil {
 		return fmt.Errorf("write dependency cache: %w", err)
-	}
-
-	return nil
-}
-
-func ensureDirectoryWithin(root, target string) error {
-	if !safepath.Within(root, target) {
-		return errors.New("directory escapes the project directory")
-	}
-	relative, err := filepath.Rel(root, target)
-	if err != nil {
-		return err
-	}
-	current := root
-	for part := range strings.SplitSeq(relative, string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-				return err
-			}
-			info, err = os.Lstat(current)
-		}
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("cache path contains a non-directory or symbolic link")
-		}
 	}
 
 	return nil
