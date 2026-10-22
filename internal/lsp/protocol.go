@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	// Bound allocations made while reading frames from the editor process.
 	maximumMessageSize = 8 << 20
 	maximumHeaderSize  = 8 << 10
 )
