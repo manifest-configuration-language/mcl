@@ -4,6 +4,7 @@ golangci-lint = "2.15.0"
 node = "24.22.0"
 jactionlint = "2.2.0"
 goreleaser = "2.18.3"
+"aqua:anchore/syft" = "1.54.1"
 
 [tasks."actions:lint"]
 description = "Lint GitHub Actions workflows"
@@ -64,5 +65,5 @@ version="${MCL_VERSION:?MCL_VERSION must be set to a release version}"
 mise run release:cli
 mise run release:wasm
 (cd dist && tar -czf "mcl_${version}_wasm.tar.gz" mcl.wasm.gz wasm_exec.js)
-(cd dist && shasum -a 256 mcl_*.tar.gz mcl_*.zip > SHA256SUMS)
+(cd dist && shasum -a 256 mcl_* > SHA256SUMS)
 '''

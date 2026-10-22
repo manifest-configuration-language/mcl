@@ -79,6 +79,13 @@ jobs:
             "mcl_${version}_wasm.tar.gz"
             "SHA256SUMS"
           )
+          for platform in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64 windows_amd64 windows_arm64; do
+            case "$platform" in
+              windows_*) archive_ext=zip ;;
+              *) archive_ext=tar.gz ;;
+            esac
+            required_assets+=("mcl_${version}_${platform}.${archive_ext}.sbom.json")
+          done
           jq -e --arg tag "$release_tag" '.tagName == $tag and .isDraft == false' <<< "$release" >/dev/null
           for asset in "${required_assets[@]}"; do
             if ! jq -e --arg asset "$asset" 'any(.assets[]; .name == $asset)' <<< "$release" >/dev/null; then
@@ -143,6 +150,22 @@ jobs:
           npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
           cp scripts/verify-installed-packages.mjs "$smoke_directory/verify-installed-packages.mjs"
           (cd "$smoke_directory" && node verify-installed-packages.mjs)
+      - name: Check npm package versions are available
+        env:
+          MCL_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for package in browser language; do
+            registry_error="$RUNNER_TEMP/${package}-registry-check.txt"
+            if npm view "@mcl/$package@$MCL_VERSION" version --json >/dev/null 2>"$registry_error"; then
+              printf 'npm package @mcl/%s@%s already exists.\n' "$package" "$MCL_VERSION" >&2
+              exit 1
+            elif ! grep -Eq 'E404|404 Not Found' "$registry_error"; then
+              cat "$registry_error" >&2
+              printf 'Could not verify npm package availability for @mcl/%s@%s.\n' "$package" "$MCL_VERSION" >&2
+              exit 1
+            fi
+          done
       - name: Publish packages
         env:
           MCL_VERSION: ${{ steps.release.outputs.version }}

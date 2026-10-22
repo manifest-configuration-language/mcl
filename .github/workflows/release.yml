@@ -70,6 +70,15 @@ jobs:
               printf 'Release tag %s does not match %s package version %s\n' "$release_tag" "$package" "$package_version" >&2
               exit 1
             fi
+            registry_error="$RUNNER_TEMP/${package}-registry-check.txt"
+            if npm view "@mcl/$package@$package_version" version --json >/dev/null 2>"$registry_error"; then
+              printf 'npm package @mcl/%s@%s already exists.\n' "$package" "$package_version" >&2
+              exit 1
+            elif ! grep -Eq 'E404|404 Not Found' "$registry_error"; then
+              cat "$registry_error" >&2
+              printf 'Could not verify npm package availability for @mcl/%s@%s.\n' "$package" "$package_version" >&2
+              exit 1
+            fi
           done
           if git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             echo "Release tag $release_tag already exists." >&2

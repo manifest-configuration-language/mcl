@@ -36,6 +36,9 @@ archives:
         formats:
           - zip
 
+sboms:
+  - artifacts: archive
+
 checksum:
   disable: true
 
