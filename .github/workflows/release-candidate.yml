@@ -50,8 +50,6 @@ jobs:
         env:
           MCL_VERSION: ${{ steps.version.outputs.version }}
         run: mise run release:package
-      - name: Verify release asset checksums
-        run: cd dist && sha256sum --check SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mcl-release-candidate

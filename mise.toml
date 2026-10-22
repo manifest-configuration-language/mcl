@@ -52,9 +52,16 @@ description = "Build Playground WebAssembly release assets"
 run = '''
 set -eu
 mkdir -p .build/release-assets
-GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o .build/release-assets/mcl.wasm ./cmd/mcl-wasm
+if [ -n "${MCL_RELEASE_WASM_SOURCE:-}" ]; then
+  test -f "$MCL_RELEASE_WASM_SOURCE/mcl.wasm"
+  test -f "$MCL_RELEASE_WASM_SOURCE/wasm_exec.js"
+  cp "$MCL_RELEASE_WASM_SOURCE/mcl.wasm" .build/release-assets/mcl.wasm
+  cp "$MCL_RELEASE_WASM_SOURCE/wasm_exec.js" .build/release-assets/wasm_exec.js
+else
+  GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o .build/release-assets/mcl.wasm ./cmd/mcl-wasm
+  cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .build/release-assets/wasm_exec.js
+fi
 gzip -9 -n -f .build/release-assets/mcl.wasm
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .build/release-assets/wasm_exec.js
 '''
 
 [tasks."release:wasm:archive"]

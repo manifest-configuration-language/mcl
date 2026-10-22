@@ -56,3 +56,7 @@ runs:
         else
           scripts/verify-package-tarballs.sh
         fi
+
+    - name: Select verified browser runtime assets
+      shell: bash
+      run: printf 'MCL_RELEASE_WASM_SOURCE=%s/packages/browser/dist\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
