@@ -87,17 +87,60 @@ try {
       files: Object.fromEntries(Object.entries(files).map(([relativePath, content]) => [relativePath, { encoding: 'utf8', content }])),
     })));
   };
+  const runNative = (command, inputSource, files = {}) => {
+    const nativeProject = path.join(buildDirectory, `cli-${command}`);
+    mkdirSync(nativeProject, { recursive: true });
+    const inputPath = path.join(nativeProject, 'main.mcl');
+    writeFileSync(inputPath, inputSource);
+    for (const [relativePath, content] of Object.entries(files)) {
+      const filePath = path.join(nativeProject, relativePath);
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, content);
+    }
+
+    return spawnSync('go', ['run', './cmd/mcl', command, inputPath], {
+      cwd: workspace,
+      encoding: 'utf8',
+    });
+  };
   for (const operation of ['parse', 'lint', 'format', 'evaluate', 'check']) {
     const response = invoke(operation);
     if (!response.ok || response.requestId !== 1 || response.revision !== 9) {
       fail(`${operation} protocol check failed: ${JSON.stringify(response)}`);
     }
   }
+  const parsed = invoke('parse', 'let value = "ok"\nemit value\n');
+  if (parsed.result?.declarations !== 2) fail(`parse API result check failed: ${JSON.stringify(parsed)}`);
+  const lintSource = 'let unused = "😀"\nemit "ok"\n';
+  const lintResult = invoke('lint', lintSource);
+  const lintNative = runNative('lint', lintSource);
+  const lintDiagnostic = lintResult.result?.[0];
+  const nativeLintDiagnostic = lintNative.stderr.match(/:(\d+):(\d+): warning \[([^\]]+)\]: (.+)$/m);
+  if (lintNative.status !== 0 || lintResult.result?.length !== 1 || !nativeLintDiagnostic) {
+    fail(`lint diagnostics missing: CLI=${lintNative.stderr} WASM=${JSON.stringify(lintResult)}`);
+  }
+  const [, lintLine, lintColumn, lintCode, lintMessage] = nativeLintDiagnostic;
+  if (lintDiagnostic.path !== 'main.mcl' || lintDiagnostic.line !== Number(lintLine) || lintDiagnostic.column !== Number(lintColumn)
+    || lintDiagnostic.code !== lintCode || lintDiagnostic.message !== lintMessage || lintDiagnostic.severity !== 2) {
+    fail(`lint diagnostics CLI/WASM mismatch: CLI=${JSON.stringify({ line: Number(lintLine), column: Number(lintColumn), code: lintCode, message: lintMessage })} WASM=${JSON.stringify(lintDiagnostic)}`);
+  }
+  const formatSource = 'let value =\n    nested: "ok"\nemit value\n';
+  const formatResult = invoke('format', formatSource);
+  const formatNative = runNative('fmt', formatSource);
+  if (formatNative.status !== 0 || formatResult.result?.source !== formatNative.stdout) {
+    fail(`format CLI/WASM output differs: CLI=${formatNative.stdout} WASM=${JSON.stringify(formatResult)}`);
+  }
   const renderStarted = performance.now();
   const rendered = invoke('render');
   const renderMs = performance.now() - renderStarted;
   if (!rendered.ok || !rendered.result.yaml.includes('name: "api"')) {
     fail(`render smoke failed: ${JSON.stringify(rendered)}`);
+  }
+  const evaluated = invoke('evaluate');
+  const checked = invoke('check');
+  if (!evaluated.ok || evaluated.result?.artifacts !== rendered.result.artifacts || evaluated.result?.renderedBytes !== Buffer.byteLength(rendered.result.yaml)
+    || !checked.ok || checked.result?.valid !== true || checked.result?.artifacts !== rendered.result.artifacts) {
+    fail(`Evaluate/Check API result mismatch: render=${JSON.stringify(rendered.result)} evaluate=${JSON.stringify(evaluated)} check=${JSON.stringify(checked)}`);
   }
   const sourcePath = path.join(buildDirectory, 'wasm-smoke.mcl');
   writeFileSync(sourcePath, source);
@@ -118,7 +161,9 @@ try {
   });
   if (nativeFailure.status === 0) fail('native CLI accepted the invalid Rule fixture');
   const wasmFailure = invoke('render', invalidSource);
-  if (!wasmFailure.error || !nativeFailure.stderr.includes(wasmFailure.error.message)) fail(`Rule validation parity check failed: CLI=${nativeFailure.stderr} WASM=${JSON.stringify(wasmFailure)}`);
+  if (!wasmFailure.error || !nativeFailure.stderr.includes(wasmFailure.error.message)) {
+    fail(`Rule validation message parity failed: CLI=${nativeFailure.stderr} WASM=${JSON.stringify(wasmFailure)}`);
+  }
 
   const manifestSource = readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/adapters/manifest/main.mcl'), 'utf8');
   const manifestFiles = {
@@ -154,7 +199,12 @@ try {
 
   const unicodeInvalid = 'let broken = "😀" + )\nemit broken\n';
   const unicodeWasm = invoke('render', unicodeInvalid);
-  if (!unicodeWasm.error || unicodeWasm.error.line !== 1) fail(`Unicode source diagnostic check failed: ${JSON.stringify(unicodeWasm.error)}`);
+  const unicodeNative = runNative('render', unicodeInvalid);
+  if (!unicodeWasm.error || unicodeWasm.error.code !== 'MCL-SYNTAX' || unicodeWasm.error.path !== 'main.mcl'
+    || unicodeWasm.error.line !== 1 || unicodeWasm.error.column !== 1 || unicodeWasm.error.endLine !== 1
+    || unicodeNative.status === 0 || !unicodeNative.stderr.includes(unicodeWasm.error.message)) {
+    fail(`Unicode source diagnostic contract check failed: CLI=${unicodeNative.stderr} WASM=${JSON.stringify(unicodeWasm.error)}`);
+  }
 
   const importedInvalid = invoke(
     'render',
