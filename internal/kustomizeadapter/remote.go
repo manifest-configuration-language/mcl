@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"net/url"
 	"os"
 	"path"
@@ -52,6 +51,9 @@ type remoteSourceRoot struct {
 }
 
 func createOverlay(sourceRoot, buildDirectory string, sourceFileSystem filesys.FileSystem) (string, *overlayFileSystem, error) {
+	if sourceFileSystem == nil {
+		return "", nil, errors.New("create Kustomize overlay: source filesystem is required")
+	}
 	const overlayRoot = "/mcl-overlay"
 	overlay := &overlayFileSystem{
 		FileSystem: filesys.MakeFsInMemory(), sourceFileSystem: sourceFileSystem, sourceRoot: sourceRoot, overlayRoot: overlayRoot, materialized: make(map[string]bool),
@@ -66,32 +68,13 @@ func createOverlay(sourceRoot, buildDirectory string, sourceFileSystem filesys.F
 			return "", nil, fmt.Errorf("kustomize directory escapes the source: %q", buildDirectory)
 		}
 		sourceDirectory := filepath.Join(sourceRoot, cleanDirectory)
-		if sourceFileSystem != nil {
-			if !sourceFileSystem.IsDir(sourceDirectory) {
-				return "", nil, fmt.Errorf("kustomize directory is not a directory: %q", buildDirectory)
-			}
-		} else {
-			if err := rejectKustomizeSourceSymlinks(sourceRoot, sourceDirectory); err != nil {
-				return "", nil, fmt.Errorf("resolve Kustomize directory: %w", err)
-			}
-			info, err := os.Stat(sourceDirectory)
-			if err != nil {
-				return "", nil, fmt.Errorf("resolve Kustomize directory: %w", err)
-			}
-			if !info.IsDir() {
-				return "", nil, fmt.Errorf("kustomize directory is not a directory: %q", buildDirectory)
-			}
+		if !sourceFileSystem.IsDir(sourceDirectory) {
+			return "", nil, fmt.Errorf("kustomize directory is not a directory: %q", buildDirectory)
 		}
 		if err := overlay.MkdirAll(filepath.Join(overlayRoot, cleanDirectory)); err != nil {
 			return "", nil, fmt.Errorf("prepare Kustomize overlay directory: %w", err)
 		}
 	}
-	if sourceFileSystem == nil {
-		if err := rejectKustomizeSourceSymlinks(sourceRoot, sourceRoot); err != nil {
-			return "", nil, fmt.Errorf("resolve Kustomize source: %w", err)
-		}
-	}
-
 	return overlayRoot, overlay, nil
 }
 
@@ -170,12 +153,7 @@ func (fs *overlayFileSystem) Exists(path string) bool {
 	if !ok {
 		return false
 	}
-	if fs.sourceFileSystem != nil {
-		return fs.sourceFileSystem.Exists(source)
-	}
-	_, err := os.Lstat(source)
-
-	return err == nil
+	return fs.sourceFileSystem.Exists(source)
 }
 
 func (fs *overlayFileSystem) IsDir(path string) bool {
@@ -190,12 +168,7 @@ func (fs *overlayFileSystem) IsDir(path string) bool {
 	if err != nil || isManagedDirectory(relative) {
 		return false
 	}
-	if fs.sourceFileSystem != nil {
-		return fs.sourceFileSystem.IsDir(source)
-	}
-	info, err := os.Stat(source)
-
-	return err == nil && info.IsDir()
+	return fs.sourceFileSystem.IsDir(source)
 }
 
 func (fs *overlayFileSystem) ReadDir(path string) ([]string, error) {
@@ -213,27 +186,10 @@ func (fs *overlayFileSystem) ReadDir(path string) ([]string, error) {
 	if err != nil || isManagedDirectory(relative) {
 		return nil, fmt.Errorf("kustomize directory is managed: %q", path)
 	}
-	if fs.sourceFileSystem != nil {
-		if names, err := fs.sourceFileSystem.ReadDir(source); err == nil {
-			for _, name := range names {
-				if !isManagedDirectory(name) {
-					entries[name] = true
-				}
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		names := slices.Sorted(maps.Keys(entries))
-
-		return names, nil
-	}
-	if err := rejectKustomizeSourceSymlinks(fs.sourceRoot, source); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	if names, err := os.ReadDir(source); err == nil {
+	if names, err := fs.sourceFileSystem.ReadDir(source); err == nil {
 		for _, entry := range names {
-			if !isManagedDirectory(entry.Name()) {
-				entries[entry.Name()] = true
+			if !isManagedDirectory(entry) {
+				entries[entry] = true
 			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -282,24 +238,10 @@ func (fs *overlayFileSystem) CleanedAbs(overlayPath string) (filesys.ConfirmedDi
 		return "", "", fmt.Errorf("kustomize path escapes the overlay: %q", overlayPath)
 	}
 	source := filepath.Join(fs.sourceRoot, relative)
-	if fs.sourceFileSystem != nil {
-		if !fs.sourceFileSystem.Exists(source) {
-			return "", "", os.ErrNotExist
-		}
-		if fs.sourceFileSystem.IsDir(source) {
-			return filesys.ConfirmedDir(filepath.Join(fs.overlayRoot, relative)), "", nil
-		}
-
-		return filesys.ConfirmedDir(filepath.Join(fs.overlayRoot, filepath.Dir(relative))), filepath.Base(relative), nil
+	if !fs.sourceFileSystem.Exists(source) {
+		return "", "", os.ErrNotExist
 	}
-	if err := rejectKustomizeSourceSymlinks(fs.sourceRoot, source); err != nil {
-		return "", "", err
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return "", "", err
-	}
-	if info.IsDir() {
+	if fs.sourceFileSystem.IsDir(source) {
 		return filesys.ConfirmedDir(filepath.Join(fs.overlayRoot, relative)), "", nil
 	}
 
@@ -311,59 +253,21 @@ func (fs *overlayFileSystem) Walk(overlayPath string, walkFn filepath.WalkFunc) 
 }
 
 func (fs *overlayFileSystem) readSourceFile(path, relative string) ([]byte, error) {
-	if fs.sourceFileSystem != nil {
-		if isManagedDirectory(relative) {
-			return nil, fmt.Errorf("kustomize input is in a managed directory: %q", path)
-		}
-		data, err := fs.sourceFileSystem.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		if !fs.materialized[relative] {
-			if fs.fileCount >= maxSourceFiles || int64(len(data)) > maxSourceBytes-fs.totalBytes {
-				return nil, fmt.Errorf("kustomize inputs exceed the file-count or %d-byte limit", maxSourceBytes)
-			}
-			fs.fileCount++
-			fs.totalBytes += int64(len(data))
-			fs.materialized[relative] = true
-			fs.sourceFiles[filepath.ToSlash(relative)] = bytes.Clone(data)
-			target := filepath.Join(fs.overlayRoot, relative)
-			if err := fs.MkdirAll(filepath.Dir(target)); err != nil {
-				return nil, err
-			}
-			if err := fs.WriteFile(target, data); err != nil {
-				return nil, err
-			}
-		}
-
-		return data, nil
+	if isManagedDirectory(relative) {
+		return nil, fmt.Errorf("kustomize input is in a managed directory: %q", path)
 	}
-	resolved, err := resolveKustomizeSourcePath(fs.sourceRoot, path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve Kustomize input %q: %w", path, err)
-	}
-	info, err := os.Stat(resolved)
+	data, err := fs.sourceFileSystem.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("kustomize input is not a regular file: %q", path)
-	}
 	if !fs.materialized[relative] {
-		if fs.fileCount >= maxSourceFiles || fs.totalBytes+info.Size() > maxSourceBytes {
+		if fs.fileCount >= maxSourceFiles || int64(len(data)) > maxSourceBytes-fs.totalBytes {
 			return nil, fmt.Errorf("kustomize inputs exceed the file-count or %d-byte limit", maxSourceBytes)
 		}
-	}
-	data, err := readLimitedFile(resolved, maxSourceBytes)
-	if err != nil {
-		return nil, err
-	}
-	if !fs.materialized[relative] {
 		fs.fileCount++
 		fs.totalBytes += int64(len(data))
 		fs.materialized[relative] = true
-		sourceRelative, _ := filepath.Rel(fs.sourceRoot, resolved)
-		fs.sourceFiles[filepath.ToSlash(sourceRelative)] = bytes.Clone(data)
+		fs.sourceFiles[filepath.ToSlash(relative)] = bytes.Clone(data)
 		target := filepath.Join(fs.overlayRoot, relative)
 		if err := fs.MkdirAll(filepath.Dir(target)); err != nil {
 			return nil, err
@@ -371,42 +275,10 @@ func (fs *overlayFileSystem) readSourceFile(path, relative string) ([]byte, erro
 		if err := fs.WriteFile(target, data); err != nil {
 			return nil, err
 		}
+
 	}
 
 	return data, nil
-}
-
-func rejectKustomizeSourceSymlinks(root, target string) error {
-	_, err := resolveKustomizeSourcePath(root, target)
-
-	return err
-}
-
-func resolveKustomizeSourcePath(root, target string) (string, error) {
-	if !safepath.Within(root, target) {
-		return "", fmt.Errorf("kustomize input escapes the source directory: %q", target)
-	}
-	resolved, err := safepath.ResolveWithin(root, target)
-	if err != nil {
-		return "", fmt.Errorf("resolve Kustomize input within source directory: %w", err)
-	}
-	relative, err := filepath.Rel(root, target)
-	if err != nil {
-		return "", fmt.Errorf("kustomize input escapes the source directory: %q", target)
-	}
-	current := root
-	for component := range strings.SplitSeq(relative, string(filepath.Separator)) {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("kustomize input contains unsupported symlink %q", current)
-		}
-	}
-
-	return resolved, nil
 }
 
 func yamlSyntaxErrorLine(err error) (int, bool) {
@@ -418,23 +290,6 @@ func yamlSyntaxErrorLine(err error) (int, bool) {
 	line, parseErr := strconv.Atoi(lineText)
 
 	return line, parseErr == nil && line > 0
-}
-
-func readLimitedFile(path string, maximum int64) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maximum+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maximum {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", path, maximum)
-	}
-
-	return data, nil
 }
 
 func loadGitSourceFS(archive []byte) (filesys.FileSystem, string, error) {

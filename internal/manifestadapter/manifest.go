@@ -84,11 +84,11 @@ func loadFromSourceFS(request Request) (Result, error) {
 			}
 			return Result{}, fmt.Errorf("resolve Manifest source: %w", err)
 		}
-		relativePath, err := filepath.Rel(root, resolved)
+		resolvedRelativePath, err := filepath.Rel(root, resolved)
 		if err != nil {
 			return Result{}, fmt.Errorf("relativize Manifest source: %w", err)
 		}
-		relativePath = filepath.ToSlash(relativePath)
+		relativePath = filepath.ToSlash(resolvedRelativePath)
 		if !fs.ValidPath(relativePath) {
 			return Result{}, errors.New("manifest source escapes the project directory")
 		}

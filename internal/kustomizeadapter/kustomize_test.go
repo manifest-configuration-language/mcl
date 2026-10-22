@@ -91,7 +91,7 @@ func makeGitArchive(t *testing.T, entries []gitArchiveEntry) []byte {
 	return archive.Bytes()
 }
 
-func TestBuildIgnoresUnreferencedFilesAndDirectories(t *testing.T) {
+func TestBuildReadsLocalSourceFS(t *testing.T) {
 	t.Parallel()
 
 	projectRoot := t.TempDir()
@@ -113,25 +113,12 @@ func TestBuildIgnoresUnreferencedFilesAndDirectories(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(buildDirectory, "unused.bin"), []byte(strings.Repeat("x", maxSourceBytes+1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	unrelatedDirectory := filepath.Join(sourceRoot, "overlays", "development", "unrelated")
-	if err := os.MkdirAll(unrelatedDirectory, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(unrelatedDirectory, "large.bin"), []byte("unused"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(projectRoot, "missing"), filepath.Join(buildDirectory, "unused-link")); err != nil {
-		t.Fatal(err)
-	}
-
 	result, err := Build(Request{
 		Source:       testDeploymentSource,
 		Directory:    "overlays/production",
 		ProjectRoot:  projectRoot,
 		SourcePath:   filepath.Join(projectRoot, "main.mcl"),
+		SourceFS:     os.DirFS(projectRoot),
 		Dependencies: &dependency.Lock{},
 	})
 	if err != nil {
@@ -166,6 +153,22 @@ func TestBuildReadsRootRelativeProjectFS(t *testing.T) {
 	}
 	if result.SourceOSBacked {
 		t.Fatal("Build() marked an in-memory source filesystem as host-backed")
+	}
+}
+
+func TestBuildRequiresLocalSourceFS(t *testing.T) {
+	t.Parallel()
+
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Build(Request{
+		Source: testDeploymentSource, Directory: ".", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Dependencies: &dependency.Lock{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires a source filesystem") {
+		t.Fatalf("Build() error = %v, want missing source filesystem error", err)
 	}
 }
 
@@ -224,6 +227,7 @@ func TestBuildRejectsReferencedFileOverInputLimit(t *testing.T) {
 		Directory:    ".",
 		ProjectRoot:  projectRoot,
 		SourcePath:   filepath.Join(projectRoot, "main.mcl"),
+		SourceFS:     os.DirFS(projectRoot),
 		Dependencies: &dependency.Lock{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "inputs exceed") {

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
-	"github.com/manifest-configuration-language/mcl/internal/safepath"
 	"gopkg.in/yaml.v3"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/krusty"
@@ -31,7 +30,7 @@ type Request struct {
 	ProjectRoot  string
 	SourcePath   string
 	Dependencies *dependency.Lock
-	// SourceFS optionally supplies the project files using root-relative io/fs paths.
+	// SourceFS supplies the project files using root-relative io/fs paths for local sources.
 	SourceFS fs.FS
 	// SourcePathsOSBacked indicates whether diagnostic source paths refer to host files.
 	SourcePathsOSBacked bool
@@ -149,7 +148,7 @@ func Build(request Request) (result Result, err error) {
 		return Result{}, fmt.Errorf("serialize Kustomize resources: %w", err)
 	}
 
-	return Result{YAML: output, Origins: origins, Origin: source.origin, SourceRoot: source.sourceMapRoot, LocalSourceRoot: source.localRoot, SourceOSBacked: request.SourcePathsOSBacked || request.SourceFS == nil, SourceDirectory: source.sourceMapDirectory, SourceFiles: fileSystem.sourceFiles, SourceLocators: mapResourceSourceLocators(origins, fileSystem)}, nil
+	return Result{YAML: output, Origins: origins, Origin: source.origin, SourceRoot: source.sourceMapRoot, LocalSourceRoot: source.localRoot, SourceOSBacked: request.SourcePathsOSBacked, SourceDirectory: source.sourceMapDirectory, SourceFiles: fileSystem.sourceFiles, SourceLocators: mapResourceSourceLocators(origins, fileSystem)}, nil
 }
 
 func mapResourceSourceLocators(origins []ResourceOrigin, fileSystem *overlayFileSystem) map[string][]byte {
@@ -233,39 +232,31 @@ func resolveSource(request Request) (buildSource, error) {
 		if strings.Contains(request.Source, "://") || filepath.IsAbs(request.Source) {
 			return buildSource{}, errors.New("kustomize.build accepts only local relative or fixed Git sources")
 		}
-		if request.SourceFS != nil {
-			projectPath, err := filepath.Rel(request.ProjectRoot, filepath.Clean(request.SourcePath))
-			if err != nil || projectPath == ".." || filepath.IsAbs(projectPath) || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
-				return buildSource{}, fmt.Errorf("resolve Kustomize source path %q: outside project root", request.SourcePath)
-			}
-			relativeSource := path.Join(path.Dir(filepath.ToSlash(projectPath)), request.Source)
-			if relativeSource != "." && !fs.ValidPath(relativeSource) {
-				return buildSource{}, fmt.Errorf("resolve Kustomize source: invalid project path %q", relativeSource)
-			}
-			sourceFS, err := fs.Sub(request.SourceFS, relativeSource)
-			if err != nil {
-				return buildSource{}, fmt.Errorf("resolve Kustomize source: %w", err)
-			}
-			memoryFS, root, err := loadSourceFS(sourceFS)
-			if err != nil {
-				return buildSource{}, fmt.Errorf("load Kustomize source: %w", err)
-			}
-			originalRoot := filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeSource))
-			source.root, source.filesystem, source.localRoot, source.sourceMapRoot = root, memoryFS, originalRoot, originalRoot
-			source.origin = "kustomize:" + filepath.ToSlash(filepath.Join(filepath.Dir(projectPath), filepath.FromSlash(request.Source), filepath.FromSlash(request.Directory)))
-
-			return source, nil
+		if request.SourceFS == nil {
+			return buildSource{}, errors.New("local Kustomize source requires a source filesystem")
 		}
-		root, err := safepath.ResolveWithin(request.ProjectRoot, filepath.Join(filepath.Dir(request.SourcePath), filepath.FromSlash(request.Source)))
+		projectPath, err := filepath.Rel(request.ProjectRoot, filepath.Clean(request.SourcePath))
+		if err != nil {
+			return buildSource{}, fmt.Errorf("resolve Kustomize source path %q: outside project root", request.SourcePath)
+		}
+		if projectPath == ".." || filepath.IsAbs(projectPath) || strings.HasPrefix(projectPath, ".."+string(filepath.Separator)) {
+			return buildSource{}, fmt.Errorf("resolve Kustomize source path %q: outside project root", request.SourcePath)
+		}
+		relativeSource := path.Join(path.Dir(filepath.ToSlash(projectPath)), request.Source)
+		if relativeSource != "." && !fs.ValidPath(relativeSource) {
+			return buildSource{}, fmt.Errorf("resolve Kustomize source: invalid project path %q", relativeSource)
+		}
+		sourceFS, err := fs.Sub(request.SourceFS, relativeSource)
 		if err != nil {
 			return buildSource{}, fmt.Errorf("resolve Kustomize source: %w", err)
 		}
-		relativeSource, err := filepath.Rel(request.ProjectRoot, root)
+		memoryFS, root, err := loadSourceFS(sourceFS)
 		if err != nil {
-			return buildSource{}, fmt.Errorf("relativize Kustomize source: %w", err)
+			return buildSource{}, fmt.Errorf("load Kustomize source: %w", err)
 		}
-		source.root, source.localRoot, source.sourceMapRoot = root, root, root
-		source.origin = "kustomize:" + filepath.ToSlash(filepath.Join(relativeSource, request.Directory))
+		originalRoot := filepath.Join(request.ProjectRoot, filepath.FromSlash(relativeSource))
+		source.root, source.filesystem, source.localRoot, source.sourceMapRoot = root, memoryFS, originalRoot, originalRoot
+		source.origin = "kustomize:" + filepath.ToSlash(filepath.Join(filepath.Dir(projectPath), filepath.FromSlash(request.Source), filepath.FromSlash(request.Directory)))
 	}
 
 	return source, nil
