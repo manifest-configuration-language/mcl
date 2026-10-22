@@ -61,6 +61,7 @@ jobs:
         uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install: true
+          cache: false
 
       - name: Run release checks
         run: mise run quality:check
