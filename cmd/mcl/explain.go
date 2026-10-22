@@ -11,79 +11,64 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
-	"github.com/spf13/pflag"
 )
 
-func explainCommand(ctx context.Context, args []string) error {
-	flags := pflag.NewFlagSet("explain", pflag.ContinueOnError)
-	apiVersion := flags.String("api-version", "", "Kubernetes API version")
-	kind := flags.String("kind", "", "Kubernetes resource kind")
-	name := flags.String("name", "", "Kubernetes resource name")
-	namespace := flags.String("namespace", "", "Kubernetes namespace")
-	phase := flags.String("phase", "main", "lifecycle phase to inspect")
-	operation := flags.String("operation", "", "operation to inspect")
-	path := flags.String("path", "", "JSON Pointer within the resource")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 1 {
-		return errors.New("explain requires one input file")
-	}
-	if *apiVersion == "" || *kind == "" || *name == "" {
+func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string) error {
+	if apiVersion == "" || kind == "" || name == "" {
 		return errors.New("explain requires --api-version, --kind, and --name")
 	}
-	segments, err := decodeJSONPointer(*path)
+	segments, err := decodeJSONPointer(path)
 	if err != nil {
 		return err
 	}
 
 	var bundle mcl.Bundle
-	if *operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationContext(ctx, flags.Arg(0), *operation)
+	if operation != "" {
+		bundle, err = mcl.EvaluateFileForOperationContext(ctx, filePath, operation)
 	} else {
-		bundle, err = mcl.EvaluateFileContext(ctx, flags.Arg(0))
+		bundle, err = mcl.EvaluateFileContext(ctx, filePath)
 	}
 	if err != nil {
 		return err
 	}
-	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(flags.Arg(0))
+	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(filePath)
 	if err != nil {
 		return err
 	}
-	resourceScope, knownScope, err := engine.KubernetesResourceScopeForBundle(bundle, catalog, *apiVersion, *kind)
+	resourceScope, knownScope, err := engine.KubernetesResourceScopeForBundle(bundle, catalog, apiVersion, kind)
 	if err != nil {
 		return err
 	}
 	matches := make([]mcl.Artifact, 0, 1)
 	for _, artifact := range bundle.Artifacts {
-		if !slices.Contains(artifact.Lifecycle.Events, *phase) {
+		if !slices.Contains(artifact.Lifecycle.Events, phase) {
 			continue
 		}
-		if resourceMatches(artifact.Value, *apiVersion, *kind, *name, *namespace, knownScope && resourceScope == mcl.KubernetesResourceScopeNamespaced) {
+		if resourceMatches(artifact.Value, apiVersion, kind, name, namespace, knownScope && resourceScope == mcl.KubernetesResourceScopeNamespaced) {
 			matches = append(matches, artifact)
 		}
 	}
 	switch len(matches) {
 	case 0:
-		return fmt.Errorf("no resource matches apiVersion %q, kind %q, name %q", *apiVersion, *kind, *name)
+		return fmt.Errorf("no resource matches apiVersion %q, kind %q, name %q", apiVersion, kind, name)
 	case 1:
 	default:
-		return fmt.Errorf("resource selection is ambiguous: %d artifacts match apiVersion %q, kind %q, name %q", len(matches), *apiVersion, *kind, *name)
+		return fmt.Errorf("resource selection is ambiguous: %d artifacts match apiVersion %q, kind %q, name %q", len(matches), apiVersion, kind, name)
 	}
 
 	value, locations, err := selectValue(matches[0].Value, segments)
 	if err != nil {
-		return fmt.Errorf("select --path %q: %w", *path, err)
+		return fmt.Errorf("select --path %q: %w", path, err)
 	}
 	output, err := mcl.RenderPhase(mcl.Bundle{Artifacts: []mcl.Artifact{{Value: value, Lifecycle: mcl.Lifecycle{Events: []string{"main"}}}}}, "main")
 	if err != nil {
 		return fmt.Errorf("render selected value: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "Resource: %s %s/%s", *apiVersion, *kind, *name)
-	if *namespace != "" {
-		fmt.Fprintf(os.Stdout, " namespace=%s", *namespace)
+	fmt.Fprintf(os.Stdout, "Resource: %s %s/%s", apiVersion, kind, name)
+	if namespace != "" {
+		fmt.Fprintf(os.Stdout, " namespace=%s", namespace)
 	}
-	fmt.Fprintf(os.Stdout, "\nPath: %s\n\nRendered YAML:\n", *path)
+	fmt.Fprintf(os.Stdout, "\nPath: %s\n\nRendered YAML:\n", path)
 	if _, err := os.Stdout.Write(output); err != nil {
 		return err
 	}

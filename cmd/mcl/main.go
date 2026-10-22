@@ -20,31 +20,11 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 	"github.com/rivo/uniseg"
-	"github.com/spf13/pflag"
+	"github.com/spf13/cobra"
 )
 
 // 診断元のパスが不明なときに表示する文字列。
 const unknownPath = "<unknown>"
-
-type commandDefinition struct {
-	name        string
-	description string
-	usage       string
-	flags       string
-	run         func(context.Context, []string) error
-}
-
-var commandDefinitions = []commandDefinition{
-	{name: "render", description: "Render Kubernetes resources", usage: "Usage: mcl render [flags] <file>", flags: "  --phase <phase>             Render one lifecycle phase\n  --operation <operation>     Render one operation\n  --output-dir <directory>    Write operation outputs to a directory\n  --format <yaml|json>        Select output format (default: yaml)\n\n--operation and --phase cannot be combined. --operation requires --output-dir.", run: renderCommand},
-	{name: "check", description: "Validate rendered resources", usage: "Usage: mcl check [flags] <file>", flags: "  --operation <operation>    Validate one operation", run: checkCommand},
-	{name: "explain", description: "Explain a resource field and its source", usage: "Usage: mcl explain [flags] <file>", flags: "  --api-version <version>    Kubernetes API version (required)\n  --kind <kind>              Kubernetes resource kind (required)\n  --name <name>              Kubernetes resource name (required)\n  --namespace <namespace>    Kubernetes namespace\n  --phase <phase>            Lifecycle phase (default: main)\n  --operation <operation>    Evaluate one operation\n  --path <json-pointer>      JSON Pointer within the resource", run: explainCommand},
-	{name: "diff", description: "Compare rendered resources", usage: "Usage: mcl diff [flags] <before-file> <after-file>", flags: "  --operation <operation>    Compare one operation", run: diffCommand},
-	{name: "lint", description: "Report source diagnostics", usage: "Usage: mcl lint [--deny-warnings] <file...>", flags: "  --deny-warnings               Return an error when warnings are found", run: func(_ context.Context, args []string) error { return lintCommand(args) }},
-	{name: "fmt", description: "Format an MCL source file", usage: "Usage: mcl fmt [flags] <file>", flags: "  -w       Replace the input file with formatted source\n  --check  Return an error when source is not formatted", run: func(_ context.Context, args []string) error { return formatCommand(args) }},
-	{name: "update", description: "Update external dependencies and lock data", usage: "Usage: mcl update [file]", run: updateCommand},
-	{name: "lsp", description: "Start the Language Server Protocol server", usage: "Usage: mcl lsp", run: runLSP},
-	{name: "version", description: "Print build version information", usage: "Usage: mcl version", run: runVersion},
-}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -187,97 +167,221 @@ func terminalColumn(text []byte, initialColumn int) int {
 }
 
 func run(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return usageError()
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-version") {
+		args = append([]string{"version"}, args[1:]...)
 	}
-	command := args[0]
-	if command == "help" || command == "--help" || command == "-h" {
-		if command == "help" && len(args) == 2 {
-			printHelp(args[1])
-		} else {
-			printHelp("")
-		}
 
+	return newRootCommand(args).ExecuteContext(ctx)
+}
+
+func newRootCommand(args []string) *cobra.Command {
+	root := &cobra.Command{
+		Use:           "mcl",
+		Short:         "Manifest Configuration Language CLI",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return usageError()
+		},
+	}
+	root.AddCommand(newRenderCommand(), newCheckCommand(), newExplainCommand(), newDiffCommand(), newLintCommand(), newFormatCommand())
+	root.AddCommand(newUpdateCommand(), newLSPCommand(), newVersionCommand())
+	root.SetArgs(args)
+
+	return root
+}
+
+func newRenderCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "render <file>",
+		Short: "Render Kubernetes resources",
+		Long:  "Render one lifecycle phase or operation. --operation and --phase cannot be combined. --operation requires --output-dir.",
+		Args:  exactArgs(1, "render requires one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			phase, _ := command.Flags().GetString("phase")
+			operation, _ := command.Flags().GetString("operation")
+			outputDir, _ := command.Flags().GetString("output-dir")
+			format, _ := command.Flags().GetString("format")
+			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format)
+		},
+	}
+	command.Flags().String("phase", "", "lifecycle phase to render")
+	command.Flags().String("operation", "", "operation to render")
+	command.Flags().String("output-dir", "", "directory for operation output files")
+	command.Flags().String("format", "yaml", "output format (yaml or json)")
+
+	return command
+}
+
+func newCheckCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "check <file>",
+		Short: "Validate rendered resources",
+		Args:  exactArgs(1, "check requires one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			operation, _ := command.Flags().GetString("operation")
+			return checkCommand(command.Context(), args[0], operation)
+		},
+	}
+	command.Flags().String("operation", "", "operation to check")
+
+	return command
+}
+
+func newExplainCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "explain <file>",
+		Short: "Explain a resource field and its source",
+		Args:  exactArgs(1, "explain requires one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			apiVersion, _ := command.Flags().GetString("api-version")
+			kind, _ := command.Flags().GetString("kind")
+			name, _ := command.Flags().GetString("name")
+			namespace, _ := command.Flags().GetString("namespace")
+			phase, _ := command.Flags().GetString("phase")
+			operation, _ := command.Flags().GetString("operation")
+			path, _ := command.Flags().GetString("path")
+			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path)
+		},
+	}
+	command.Flags().String("api-version", "", "Kubernetes API version (required)")
+	command.Flags().String("kind", "", "Kubernetes resource kind (required)")
+	command.Flags().String("name", "", "Kubernetes resource name (required)")
+	command.Flags().String("namespace", "", "Kubernetes namespace")
+	command.Flags().String("phase", "main", "lifecycle phase to inspect")
+	command.Flags().String("operation", "", "operation to inspect")
+	command.Flags().String("path", "", "JSON Pointer within the resource")
+
+	return command
+}
+
+func newDiffCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "diff <before-file> <after-file>",
+		Short: "Compare rendered resources",
+		Args:  exactArgs(2, "diff requires before and after input files"),
+		RunE: func(command *cobra.Command, args []string) error {
+			operation, _ := command.Flags().GetString("operation")
+			return diffCommand(command.Context(), args[0], args[1], operation)
+		},
+	}
+	command.Flags().String("operation", "", "operation to compare")
+
+	return command
+}
+
+func newLintCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "lint <file...>",
+		Short: "Report source diagnostics",
+		Args:  minimumArgs(1, "lint requires at least one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			denyWarnings, _ := command.Flags().GetBool("deny-warnings")
+			return lintFiles(denyWarnings, args)
+		},
+	}
+	command.Flags().Bool("deny-warnings", false, "return an error when warnings are found")
+
+	return command
+}
+
+func newFormatCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "fmt <file>",
+		Short: "Format an MCL source file",
+		Args:  exactArgs(1, "fmt requires one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			write, _ := command.Flags().GetBool("write")
+			check, _ := command.Flags().GetBool("check")
+			return formatFile(args[0], write, check)
+		},
+	}
+	command.Flags().BoolP("write", "w", false, "write formatted source to the input file")
+	command.Flags().Bool("check", false, "return an error when source is not formatted")
+
+	return command
+}
+
+func newUpdateCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update [file]",
+		Short: "Update external dependencies and lock data",
+		Args:  maximumArgs(1, "update accepts at most one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			path := "main.mcl"
+			if len(args) == 1 {
+				path = args[0]
+			}
+			return mcl.UpdateFileContext(command.Context(), path)
+		},
+	}
+}
+
+func newLSPCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "lsp",
+		Short: "Start the Language Server Protocol server",
+		Args:  exactArgs(0, "lsp does not accept arguments"),
+		RunE: func(_ *cobra.Command, _ []string) error {
+			//nolint:contextcheck // LSPの標準入出力ループはプロセス終了まで動作します。
+			return lsp.Run(os.Stdin, os.Stdout)
+		},
+	}
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print build version information",
+		Args:  exactArgs(0, "version does not accept arguments"),
+		Run: func(_ *cobra.Command, _ []string) {
+			identity := mcl.CurrentBuildIdentity()
+			revision := identity.Revision
+			if revision == "" {
+				revision = "unknown"
+			}
+			modified := identity.Modified
+			if modified == "" {
+				modified = "unknown"
+			}
+			fmt.Fprintf(os.Stdout, "mcl %s (revision %s, modified %s)\n", mcl.ToolchainVersion, revision, modified)
+		},
+	}
+}
+
+func exactArgs(count int, message string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) != count {
+			return errors.New(message)
+		}
 		return nil
 	}
-	for _, argument := range args[1:] {
-		if argument == "--help" || argument == "-h" {
-			printHelp(command)
+}
 
-			return nil
+func minimumArgs(count int, message string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) < count {
+			return errors.New(message)
 		}
+		return nil
 	}
-	if command == "--version" || command == "-version" {
-		command = "version"
-	}
-	definition, ok := commandDefinitionByName(command)
-	if !ok {
-		return usageError()
-	}
-
-	return definition.run(ctx, args[1:])
 }
 
-func commandDefinitionByName(name string) (commandDefinition, bool) {
-	for _, definition := range commandDefinitions {
-		if definition.name == name {
-			return definition, true
+func maximumArgs(count int, message string) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) > count {
+			return errors.New(message)
 		}
+		return nil
 	}
-
-	return commandDefinition{}, false
 }
 
-func updateCommand(ctx context.Context, args []string) error {
-	if len(args) > 1 {
-		return errors.New("update accepts at most one input file")
-	}
-	path := "main.mcl"
-	if len(args) == 1 {
-		path = args[0]
-	}
-
-	return mcl.UpdateFileContext(ctx, path)
-}
-
-func runLSP(_ context.Context, args []string) error {
-	if len(args) != 0 {
-		return errors.New("lsp does not accept arguments")
-	}
-
-	//nolint:contextcheck // LSPの標準入出力ループはプロセス終了まで動作します。
-	return lsp.Run(os.Stdin, os.Stdout)
-}
-
-func runVersion(_ context.Context, args []string) error {
-	if len(args) != 0 {
-		return errors.New("version does not accept arguments")
-	}
-	identity := mcl.CurrentBuildIdentity()
-	revision := identity.Revision
-	if revision == "" {
-		revision = "unknown"
-	}
-	modified := identity.Modified
-	if modified == "" {
-		modified = "unknown"
-	}
-	fmt.Fprintf(os.Stdout, "mcl %s (revision %s, modified %s)\n", mcl.ToolchainVersion, revision, modified)
-
-	return nil
-}
-
-func lintCommand(args []string) error {
-	flags := pflag.NewFlagSet("lint", pflag.ContinueOnError)
-	denyWarnings := flags.Bool("deny-warnings", false, "return an error when warnings are found")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() == 0 {
-		return errors.New("lint requires at least one input file")
-	}
+func lintFiles(denyWarnings bool, paths []string) error {
 	var warnings int
-	for _, path := range flags.Args() {
+	for _, path := range paths {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -293,11 +397,24 @@ func lintCommand(args []string) error {
 			printLintDiagnostic(path, source, index, diagnostic)
 		}
 	}
-	if *denyWarnings && warnings > 0 {
+	if denyWarnings && warnings > 0 {
 		return fmt.Errorf("lint found %d warning(s)", warnings)
 	}
 
 	return nil
+}
+
+func lintCommand(args []string) error {
+	command := newLintCommand()
+	if err := command.ParseFlags(args); err != nil {
+		return err
+	}
+	parsedArgs := command.Flags().Args()
+	if err := command.Args(command, parsedArgs); err != nil {
+		return err
+	}
+
+	return command.RunE(command, parsedArgs)
 }
 
 func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, diagnostic mcl.Diagnostic) {
@@ -311,16 +428,7 @@ func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, d
 	printSourceLine(line, column, lineText)
 }
 
-func diffCommand(ctx context.Context, args []string) error {
-	flags := pflag.NewFlagSet("diff", pflag.ContinueOnError)
-	operation := flags.String("operation", "", "operation to compare")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 2 {
-		return errors.New("diff requires before and after input files")
-	}
-	beforePath, afterPath := flags.Arg(0), flags.Arg(1)
+func diffCommand(ctx context.Context, beforePath, afterPath, operation string) error {
 	beforeCatalog, err := mcl.LoadKubernetesResourceCatalogForFile(beforePath)
 	if err != nil {
 		return err
@@ -330,8 +438,8 @@ func diffCommand(ctx context.Context, args []string) error {
 		return err
 	}
 	evaluate := func(path string) (mcl.Bundle, error) {
-		if *operation != "" {
-			return mcl.EvaluateFileForOperationContext(ctx, path, *operation)
+		if operation != "" {
+			return mcl.EvaluateFileForOperationContext(ctx, path, operation)
 		}
 
 		return mcl.EvaluateFileContext(ctx, path)
@@ -374,25 +482,17 @@ func diffCommand(ctx context.Context, args []string) error {
 	return nil
 }
 
-func checkCommand(ctx context.Context, args []string) error {
-	flags := pflag.NewFlagSet("check", pflag.ContinueOnError)
-	operation := flags.String("operation", "", "operation to check")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 1 {
-		return errors.New("check requires one input file")
-	}
-	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(flags.Arg(0))
+func checkCommand(ctx context.Context, path, operation string) error {
+	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(path)
 	if err != nil {
 		return err
 	}
 
 	var bundle mcl.Bundle
-	if *operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationContext(ctx, flags.Arg(0), *operation)
+	if operation != "" {
+		bundle, err = mcl.EvaluateFileForOperationContext(ctx, path, operation)
 	} else {
-		bundle, err = mcl.EvaluateFileContext(ctx, flags.Arg(0))
+		bundle, err = mcl.EvaluateFileContext(ctx, path)
 	}
 	if err != nil {
 		return err
@@ -401,39 +501,28 @@ func checkCommand(ctx context.Context, args []string) error {
 	return mcl.ValidateBundleOutputWithCatalog(bundle, catalog)
 }
 
-func renderCommand(ctx context.Context, args []string) error {
-	flags := pflag.NewFlagSet("render", pflag.ContinueOnError)
-	phase := flags.String("phase", "", "lifecycle phase to render")
-	operation := flags.String("operation", "", "operation to render")
-	outputDir := flags.String("output-dir", "", "directory for operation output files")
-	format := flags.String("format", "yaml", "output format (yaml or json)")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 1 {
-		return errors.New("render requires one input file")
-	}
-	if *operation != "" && *phase != "" {
+func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string) error {
+	if operation != "" && phase != "" {
 		return errors.New("--operation and --phase cannot be used together")
 	}
-	if *operation != "" && *outputDir == "" {
+	if operation != "" && outputDir == "" {
 		return errors.New("--operation requires --output-dir")
 	}
-	if *operation == "" && *outputDir != "" {
+	if operation == "" && outputDir != "" {
 		return errors.New("--output-dir requires --operation")
 	}
-	if *format != "yaml" && *format != "json" {
-		return fmt.Errorf("unsupported output format %q", *format)
+	if format != "yaml" && format != "json" {
+		return fmt.Errorf("unsupported output format %q", format)
 	}
-	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(flags.Arg(0))
+	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(path)
 	if err != nil {
 		return err
 	}
 	var bundle mcl.Bundle
-	if *operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationContext(ctx, flags.Arg(0), *operation)
+	if operation != "" {
+		bundle, err = mcl.EvaluateFileForOperationContext(ctx, path, operation)
 	} else {
-		bundle, err = mcl.EvaluateFileContext(ctx, flags.Arg(0))
+		bundle, err = mcl.EvaluateFileContext(ctx, path)
 	}
 	if err != nil {
 		return err
@@ -445,22 +534,22 @@ func renderCommand(ctx context.Context, args []string) error {
 	if err := plan.Validate(); err != nil {
 		return err
 	}
-	if *operation != "" {
-		files, err := plan.RenderOperationWithFormat(*operation, *format)
+	if operation != "" {
+		files, err := plan.RenderOperationWithFormat(operation, format)
 		if err != nil {
 			return err
 		}
 
-		return writeOperationFiles(*outputDir, files)
+		return writeOperationFiles(outputDir, files)
 	}
-	if *phase == "" {
-		*phase = "main"
+	if phase == "" {
+		phase = "main"
 	}
 	var output []byte
-	if *format == "json" {
-		output, err = plan.RenderPhaseJSON(*phase)
+	if format == "json" {
+		output, err = plan.RenderPhaseJSON(phase)
 	} else {
-		output, err = plan.RenderPhase(*phase)
+		output, err = plan.RenderPhase(phase)
 	}
 	if err != nil {
 		return err
@@ -652,16 +741,19 @@ func validateManagedOperationOutputDirectory(directory string) error {
 }
 
 func formatCommand(args []string) error {
-	flags := pflag.NewFlagSet("fmt", pflag.ContinueOnError)
-	write := flags.BoolP("write", "w", false, "write formatted source to the input file")
-	check := flags.Bool("check", false, "return an error when source is not formatted")
-	if err := flags.Parse(args); err != nil {
+	command := newFormatCommand()
+	if err := command.ParseFlags(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 1 {
-		return errors.New("fmt requires one input file")
+	parsedArgs := command.Flags().Args()
+	if err := command.Args(command, parsedArgs); err != nil {
+		return err
 	}
-	path := flags.Arg(0)
+
+	return command.RunE(command, parsedArgs)
+}
+
+func formatFile(path string, write, check bool) error {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -671,14 +763,14 @@ func formatCommand(args []string) error {
 		return sourceDiagnosticWithPath(err, path)
 	}
 	formattedBytes := []byte(formatted)
-	if *write {
+	if write {
 		if err := writeFileAtomically(path, formattedBytes); err != nil {
 			return fmt.Errorf("write formatted source: %w", err)
 		}
 
 		return nil
 	}
-	if *check {
+	if check {
 		if !bytes.Equal(source, formattedBytes) {
 			return fmt.Errorf("%s is not formatted", path)
 		}
@@ -733,31 +825,4 @@ func writeFileAtomically(path string, content []byte) error {
 
 func usageError() error {
 	return errors.New("invalid command or arguments")
-}
-
-func printHelp(command string) {
-	if command == "" {
-		printGeneralHelp()
-
-		return
-	}
-	definition, ok := commandDefinitionByName(command)
-	if !ok {
-		fmt.Fprintf(os.Stdout, "Unknown command %q.\n\n", command)
-		printGeneralHelp()
-
-		return
-	}
-	fmt.Fprintln(os.Stdout, definition.usage)
-	if definition.flags != "" {
-		fmt.Fprintf(os.Stdout, "\nFlags:\n%s\n", definition.flags)
-	}
-}
-
-func printGeneralHelp() {
-	fmt.Fprintln(os.Stdout, "Usage: mcl <command> [flags] [file]\n\nCommands:")
-	for _, definition := range commandDefinitions {
-		fmt.Fprintf(os.Stdout, "  %-8s %s\n", definition.name, definition.description)
-	}
-	fmt.Fprintln(os.Stdout, "  help     Show this help\n\nRun 'mcl <command> --help' for command-specific flag details.")
 }
