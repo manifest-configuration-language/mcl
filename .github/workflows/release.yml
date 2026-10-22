@@ -87,6 +87,35 @@ jobs:
       - name: Validate GoReleaser configuration
         run: goreleaser check
 
+      - name: Install browser package dependencies
+        run: cd packages/browser && npm ci
+
+      - name: Install Playwright browsers
+        run: cd packages/browser && npx playwright install --with-deps chromium firefox webkit
+
+      - name: Test browser package
+        run: cd packages/browser && npm run test:browser
+
+      - name: Install language package dependencies
+        run: cd packages/language && npm ci
+
+      - name: Check language grammar parity
+        run: cd packages/language && npm run check:parity
+
+      - name: Pack and smoke test npm packages
+        env:
+          MCL_VERSION: ${{ steps.target.outputs.version }}
+          PACKAGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/mcl-npm-packages
+        run: scripts/verify-package-tarballs.sh "$PACKAGE_OUTPUT_DIRECTORY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcl-npm-${{ steps.target.outputs.version }}
+          path: ${{ runner.temp }}/mcl-npm-packages/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
       - name: Build release assets
         env:
           MCL_VERSION: ${{ steps.target.outputs.version }}
