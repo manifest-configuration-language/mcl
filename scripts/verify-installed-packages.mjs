@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createMclRuntime, MclRuntimeError } from "@mcl/browser";
 import { mclLanguageSupport, parser } from "@mcl/language";
 import grammar from "@mcl/language/textmate" with { type: "json" };
@@ -25,6 +27,8 @@ assert.equal(typeof MclRuntimeError, "function");
 assert.ok(mclLanguageSupport());
 assert.ok(parser.parse('let value = "installed"').length > 1);
 assert.equal(grammar.scopeName, "source.mcl");
+assert.equal(import.meta.resolve("@mcl/browser"), pathToFileURL(join(browserPackageRoot, "src/index.js")).href);
+assert.ok((await stat(join(browserPackageRoot, "src/worker.js"))).size > 0);
 assert.ok((await stat(join(browserPackageRoot, "dist/mcl.wasm"))).size > 0);
 assert.ok((await stat(join(browserPackageRoot, "dist/wasm_exec.js"))).size > 0);
 
@@ -78,5 +82,18 @@ const renderRequest = worker.requests.find(({ message }) => message.type === "ru
 assert.equal(renderRequest?.operation, "render");
 assert.equal(renderRequest?.source, 'emit "tarball-smoke"\n');
 runtime.dispose();
+
+const browserTestPackage = process.env.MCL_BROWSER_TEST_PACKAGE;
+if (browserTestPackage) {
+  const result = spawnSync("npm", ["run", "--prefix", browserTestPackage, "test:browser:installed"], {
+    cwd: projectRoot,
+    env: { ...process.env, MCL_BROWSER_PACKAGE: browserPackageRoot },
+    encoding: "utf8",
+  });
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, "Installed Browser package failed its real Worker and WebAssembly browser smoke test");
+}
 
 console.log(`Verified installed MCL packages ${browserManifest.version}.`);
