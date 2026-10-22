@@ -1,0 +1,53 @@
+name: Verify release
+description: Run the checks required before building release assets
+inputs:
+  package-output-directory:
+    description: Directory for the packed npm package archives
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Run release checks
+      shell: bash
+      run: mise run quality:check
+
+    - name: Validate GoReleaser configuration
+      shell: bash
+      run: goreleaser check
+
+    - name: Install browser package dependencies
+      shell: bash
+      working-directory: packages/browser
+      run: npm ci
+
+    - name: Install Playwright browsers
+      shell: bash
+      working-directory: packages/browser
+      run: npx playwright install --with-deps chromium firefox webkit
+
+    - name: Test browser package
+      shell: bash
+      working-directory: packages/browser
+      run: npm run test:browser
+
+    - name: Install language package dependencies
+      shell: bash
+      working-directory: packages/language
+      run: npm ci
+
+    - name: Check language grammar parity
+      shell: bash
+      working-directory: packages/language
+      run: npm run check:parity
+
+    - name: Pack and smoke test npm packages
+      shell: bash
+      env:
+        PACKAGE_OUTPUT_DIRECTORY: ${{ inputs.package-output-directory }}
+      run: |
+        if [[ -n "$PACKAGE_OUTPUT_DIRECTORY" ]]; then
+          scripts/verify-package-tarballs.sh "$PACKAGE_OUTPUT_DIRECTORY"
+        else
+          scripts/verify-package-tarballs.sh
+        fi

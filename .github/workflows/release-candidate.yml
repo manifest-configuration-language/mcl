@@ -44,22 +44,8 @@ jobs:
             version="0.0.0-candidate.${GITHUB_SHA:0:12}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Install browser package dependencies
-        run: cd packages/browser && npm ci
-      - name: Install Playwright browsers
-        run: cd packages/browser && npx playwright install --with-deps chromium firefox webkit
-      - name: Test browser package
-        run: cd packages/browser && npm run test:browser
-      - name: Install language package dependencies
-        run: cd packages/language && npm ci
-      - name: Check language grammar parity
-        run: cd packages/language && npm run check:parity
-      - name: Smoke test installed npm package archives
-        run: scripts/verify-package-tarballs.sh
-      - name: Run release checks
-        run: mise run quality:check
-      - name: Validate GoReleaser configuration
-        run: goreleaser check
+      - name: Verify release
+        uses: ./.github/actions/verify-release
       - name: Build release candidate assets
         env:
           MCL_VERSION: ${{ steps.version.outputs.version }}
