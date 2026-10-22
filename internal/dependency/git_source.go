@@ -130,6 +130,9 @@ func fetchGitTree(ctx context.Context, source, revision, directory string) ([]by
 	return archiveGitDirectory(tree, directory)
 }
 
+// fetchGitCommit requests only the pinned commit with a depth-one upload-pack request. The caller
+// supplies the redirect-disabled, byte-limited HTTP client and quota-backed object store so the
+// fetch cannot silently expand to a branch history or exceed the dependency resource limits.
 func fetchGitCommit(ctx context.Context, source, revision string, httpClient *http.Client, repository *git.Repository) (retErr error) {
 	endpoint, err := transport.NewEndpoint(source)
 	if err != nil {
