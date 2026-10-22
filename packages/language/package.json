@@ -2,6 +2,11 @@
   "name": "@mcl/language",
   "version": "0.1.0",
   "description": "MCL TextMate grammar and CodeMirror language support.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manifest-configuration-language/mcl.git",
+    "directory": "packages/language"
+  },
   "type": "module",
   "license": "Apache-2.0",
   "files": ["src", "README.md"],
