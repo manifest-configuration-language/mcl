@@ -40,10 +40,21 @@ sboms:
   - artifacts: archive
 
 checksum:
-  disable: true
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+    - glob: ./.build/release-assets/mcl_*_wasm.tar.gz
+
+release:
+  github:
+    owner: manifest-configuration-language
+    name: mcl
+  name_template: "MCL {{ .Version }}"
+  extra_files:
+    - glob: ./.build/release-assets/mcl_*_wasm.tar.gz
 
 changelog:
-  disable: true
+  use: github-native
 
 snapshot:
   version_template: "{{ .Env.MCL_VERSION }}"

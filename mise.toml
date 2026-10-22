@@ -51,10 +51,19 @@ goreleaser release --snapshot --clean
 description = "Build Playground WebAssembly release assets"
 run = '''
 set -eu
-mkdir -p dist
-GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/mcl.wasm ./cmd/mcl-wasm
-gzip -9 -n -f dist/mcl.wasm
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/wasm_exec.js
+mkdir -p .build/release-assets
+GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o .build/release-assets/mcl.wasm ./cmd/mcl-wasm
+gzip -9 -n -f .build/release-assets/mcl.wasm
+cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .build/release-assets/wasm_exec.js
+'''
+
+[tasks."release:wasm:archive"]
+description = "Archive WebAssembly assets for the MCL release"
+depends = ["release:wasm"]
+run = '''
+set -eu
+version="${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+tar -czf ".build/release-assets/mcl_${version}_wasm.tar.gz" -C .build/release-assets mcl.wasm.gz wasm_exec.js
 '''
 
 [tasks."release:package"]
@@ -62,8 +71,8 @@ description = "Package CLI and WebAssembly release assets with checksums"
 run = '''
 set -eu
 version="${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+rm -rf dist .build/release-assets
+mise run release:wasm:archive
 mise run release:cli
-mise run release:wasm
-(cd dist && tar -czf "mcl_${version}_wasm.tar.gz" mcl.wasm.gz wasm_exec.js)
-(cd dist && shasum -a 256 mcl_* > SHA256SUMS)
+cp ".build/release-assets/mcl_${version}_wasm.tar.gz" dist/
 '''
