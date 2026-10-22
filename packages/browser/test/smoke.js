@@ -247,6 +247,7 @@ async function run() {
       "fixtures/payload-1.bin": largeFile,
       "fixtures/payload-2.bin": largeFile,
     });
+    const largeProjectBytes = largeFile.byteLength * 2;
     const largeProjectLoadMs = performance.now() - largeProjectStartedAt;
     const largeProjectRenderStartedAt = performance.now();
     const largeProjectResult = await largeProject.render({ timeoutMs: 60_000 });
@@ -254,7 +255,7 @@ async function run() {
     if (!largeProjectResult.yaml.includes('"large-project-smoke"')) {
       throw new Error(`Unexpected large project output: ${largeProjectResult.yaml}`);
     }
-    largeProjectMetrics = { largeProjectLoadMs, largeProjectRenderMs };
+    largeProjectMetrics = { largeProjectBytes, largeProjectLoadMs, largeProjectRenderMs };
   }
   const binarySource = `type BinaryConfig = schema("./schemas/config.json")
 

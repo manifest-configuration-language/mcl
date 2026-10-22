@@ -93,7 +93,7 @@ try {
       });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error") pageErrors.push(message.text()); });
-      const benchmark = packageSmoke ? "?package-smoke" : browserType.name() === "chromium" ? "?large-project" : "";
+      const benchmark = packageSmoke ? "?package-smoke" : "?large-project";
       await page.goto(`http://127.0.0.1:4173/${benchmark}`);
       try {
         await page.locator("#result[data-status='passed']").waitFor({ timeout: 60_000 });
@@ -105,15 +105,24 @@ try {
       if (!Number.isInteger(wasmBytes)) throw new Error(`${browserType.name()}: WebAssembly response size was not captured`);
       const metrics = await page.locator("#result").evaluate((output) => JSON.parse(output.dataset.metrics));
       if (!packageSmoke) {
-        const metricNames = ["initializationMs", "firstRenderMs", "repeatRenderMs", "cancellationMs", "wasmMemoryBytes"];
-        if (browserType.name() === "chromium") {
-          metricNames.push("largeProjectLoadMs", "largeProjectRenderMs");
-        }
+        const metricNames = [
+          "initializationMs",
+          "firstRenderMs",
+          "repeatRenderMs",
+          "cancellationMs",
+          "wasmMemoryBytes",
+          "largeProjectBytes",
+          "largeProjectLoadMs",
+          "largeProjectRenderMs",
+        ];
         for (const name of metricNames) {
           if (!Number.isFinite(metrics[name])) throw new Error(`${browserType.name()}: ${name} was not captured`);
           const limit = timingBudgets[name];
           if (limit !== undefined && metrics[name] > limit)
             throw new Error(`${browserType.name()}: ${name} ${metrics[name]} ms exceeds the ${limit}-ms budget`);
+        }
+        if (metrics.largeProjectBytes !== 32 * 1024 * 1024) {
+          throw new Error(`${browserType.name()}: large project measured ${metrics.largeProjectBytes} bytes instead of 33554432`);
         }
         if (metrics.wasmMemoryBytes > performanceBudget.maxWasmMemoryBytes) {
           throw new Error(
