@@ -80,7 +80,7 @@ try {
   }
   if (!ready) throw new Error("Vite smoke server did not become ready");
 
-  const browserTypes = packageSmoke ? [chromium] : [chromium, firefox, webkit];
+  const browserTypes = [chromium, firefox, webkit];
   for (const browserType of browserTypes) {
     const browser = await browserType.launch({ headless: true });
     try {
