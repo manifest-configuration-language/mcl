@@ -28,9 +28,9 @@
 
 ## ブラウザーのファイルシステム
 
-GoのWASMランタイムはNode互換の`globalThis.fs`、`globalThis.path`、`globalThis.process`を参照します。ブラウザーWorkerはメモリ上の仮想FSをこれらのAPIとして公開し、FSコールバックを同期的に呼び出す必要があります。GoのWASM syscall層はFSコールバックの完了を同期的に待つため、非同期コールバックは評価を停止させます。
+ブラウザーWorkerはテキストファイルをUTF-8のリクエスト情報として、バイナリファイルを`Uint8Array`としてGo WASMへ渡します。Go WASMは受け取ったファイルから`fstest.MapFS`を使う`projectFilesystem`を構築し、Goの`io/fs`インターフェースを通じてプロジェクトを読み込みます。評価中に生成したファイルは同じ`projectFilesystem`へ書き込みます。WorkerはNode互換のファイルシステムAPIを公開しません。
 
-Browser RuntimeはWASMと`wasm_exec.js`を読み込んだ後に`fetch`を無効化するため、プロジェクト評価から外部ネットワークへ接続できません。ローカルの依存ファイルは`files`で渡してください。
+Workerは`wasm_exec.js`とWASMを読み込んだ後、Go WASMの実行開始前に`fetch`を無効化します。そのため、プロジェクト評価から外部ネットワークへ接続できません。ローカルの依存ファイルは`files`で渡してください。
 
 ## サイズ確認
 
