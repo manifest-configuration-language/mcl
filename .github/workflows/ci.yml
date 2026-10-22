@@ -54,6 +54,6 @@ jobs:
       - name: Check generated protocol sources are current
         run: |
           go generate ./cmd/mcl-wasm
-          cd packages/browser && npm run generate:protocol
+          cd packages/browser && npm ci && npm run generate:protocol
           cd ../..
           git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.d.ts packages/browser/src/limits.js
