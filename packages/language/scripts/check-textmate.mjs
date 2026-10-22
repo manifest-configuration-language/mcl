@@ -52,9 +52,13 @@ const lines = tokenize([
   "multiline text",
   '"""; emit message',
   "let is = 1",
+  "foo#bar",
+  "foo #bar",
 ]);
 
 assertToken(lines[0], "# Keep this comment", "comment.line.number-sign.mcl");
+assert.ok(!lines[10].some((token) => token.text.includes("#") && token.scopes.includes("comment.line.number-sign.mcl")), `A number sign inside a token must not start a comment; got ${JSON.stringify(lines[10])}`);
+assertToken(lines[11], "#bar", "comment.line.number-sign.mcl");
 assertToken(lines[1], "let", "keyword.control.mcl");
 assertToken(lines[1], "greeting", "variable.other.mcl");
 assertToken(lines[1], "=", "keyword.operator.mcl");

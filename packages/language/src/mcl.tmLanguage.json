@@ -42,7 +42,7 @@
       "patterns": [
         {
           "name": "comment.line.number-sign.mcl",
-          "match": "#.*$"
+          "match": "(?<= )#.*$|^#.*$"
         }
       ]
     },
