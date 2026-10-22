@@ -45,6 +45,8 @@ const lines = tokenize([
   "# Keep this comment",
   'let greeting = "hello \\\"MCL\\\""',
   "if greeting != \"\" and key(greeting) { emit output }",
+  "fn(value) => value ?? 1",
+  "fn resourceName(name: String) -> String = name",
   "filter(greeting)",
   'let message = """',
   "multiline text",
@@ -64,8 +66,11 @@ assertToken(lines[2], "and", "keyword.operator.mcl");
 assertToken(lines[2], "key", "keyword.control.mcl");
 assertToken(lines[2], "emit", "keyword.control.mcl");
 assertToken(lines[2], "output", "constant.language.mcl");
-assertToken(lines[3], "filter", "entity.name.function.mcl");
-assertToken(lines[5], "multiline text", "string.quoted.multi.double.mcl");
-assertToken(lines[6], "emit", "keyword.control.mcl");
+assertToken(lines[3], "=>", "keyword.operator.mcl");
+assertToken(lines[3], "??", "keyword.operator.mcl");
+assertToken(lines[4], "->", "keyword.operator.mcl");
+assertToken(lines[5], "filter", "entity.name.function.mcl");
+assertToken(lines[7], "multiline text", "string.quoted.multi.double.mcl");
+assertToken(lines[8], "emit", "keyword.control.mcl");
 
 registry.dispose();
