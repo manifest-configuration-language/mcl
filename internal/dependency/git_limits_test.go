@@ -18,6 +18,8 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 }
 
 func TestGitFetchLimitTransport(t *testing.T) {
+	t.Parallel()
+
 	for _, test := range []struct {
 		name         string
 		body         string
@@ -28,6 +30,8 @@ func TestGitFetchLimitTransport(t *testing.T) {
 		{name: "over limit", body: "data!", wantLimitErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			transport := &gitFetchLimitTransport{
 				base: roundTripFunc(func(*http.Request) (*http.Response, error) {
 					return &http.Response{Body: io.NopCloser(strings.NewReader(test.body))}, nil
@@ -45,6 +49,7 @@ func TestGitFetchLimitTransport(t *testing.T) {
 				if !errors.Is(err, errGitFetchResponseLimit) {
 					t.Fatalf("ReadAll() error = %v, want %v", err, errGitFetchResponseLimit)
 				}
+
 				return
 			}
 			if err != nil {
@@ -58,6 +63,8 @@ func TestGitFetchLimitTransport(t *testing.T) {
 }
 
 func TestQuotaFilesystemEnforcesLimit(t *testing.T) {
+	t.Parallel()
+
 	filesystem := newQuotaFilesystem(memfs.New(), 4)
 	file, err := filesystem.OpenFile("object", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
