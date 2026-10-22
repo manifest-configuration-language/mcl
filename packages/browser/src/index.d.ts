@@ -5,6 +5,7 @@ import type {
   FormatResult,
   LintDiagnostic as ProtocolLintDiagnostic,
   ParseResult,
+  RelatedLocation as ProtocolRelatedLocation,
   RenderResult,
   Request as WasmRequest,
 } from "./protocol.js";
@@ -64,8 +65,12 @@ export interface ProjectOperationOptions extends RequestOptions {
 
 export declare class MclRuntimeError extends Error {
   readonly code: string;
+  readonly path?: string;
   readonly line?: number;
   readonly column?: number;
+  readonly endLine?: number;
+  readonly endColumn?: number;
+  readonly related?: ProtocolRelatedLocation[];
 }
 
 export declare function createMclRuntime(options?: RuntimeOptions): MclRuntime;

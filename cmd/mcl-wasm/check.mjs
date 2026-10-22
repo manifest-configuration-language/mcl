@@ -156,6 +156,15 @@ try {
   const unicodeWasm = invoke('render', unicodeInvalid);
   if (!unicodeWasm.error || unicodeWasm.error.line !== 1) fail(`Unicode source diagnostic check failed: ${JSON.stringify(unicodeWasm.error)}`);
 
+  const importedInvalid = invoke(
+    'render',
+    'import "./module.mcl" as module\nemit module.value\n',
+    { 'module.mcl': 'export let value =\n\n\n  missing\n' },
+  );
+  if (importedInvalid.error?.path !== 'module.mcl' || importedInvalid.error.line !== 4) {
+    fail(`Imported source diagnostic location check failed: ${JSON.stringify(importedInvalid.error)}`);
+  }
+
   const tooLarge = invoke('parse', 'a'.repeat(64 * 1024 + 1));
   if (tooLarge.ok || tooLarge.error?.code !== 'MCL-WASM-SOURCE-LIMIT') fail('source size limit check failed');
   const helmSource = readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/adapters/helm/main.mcl'), 'utf8');
@@ -190,6 +199,10 @@ try {
   const crdSource = readFileSync(path.join(workspace, 'cmd/mcl-wasm/testdata/examples/validation/crd-validation/main.mcl'), 'utf8');
   const crdSuccess = invoke('check', crdSource, additionalResourceFiles);
   if (!crdSuccess.ok) fail(`AdditionalResources in-bundle schema check failed: ${JSON.stringify(crdSuccess)}`);
+  const invalidCrd = invoke('check', crdSource.replace('size: 3', 'size: "large"'), additionalResourceFiles);
+  if (!invalidCrd.error?.related?.length || !invalidCrd.error.related[0].path) {
+    fail(`Related schema diagnostic location check failed: ${JSON.stringify(invalidCrd.error)}`);
+  }
   writeFileSync(path.join(nativeProject, 'main.mcl'), crdSource);
   const nativeCrdSuccess = spawnSync('go', ['run', './cmd/mcl', 'render', path.join(nativeProject, 'main.mcl')], { cwd: workspace, encoding: 'utf8' });
   const wasmCrdRender = invoke('render', crdSource, additionalResourceFiles);
@@ -202,6 +215,18 @@ try {
   const nativeUnknownResource = spawnSync('go', ['run', './cmd/mcl', 'check', path.join(nativeProject, 'main.mcl')], { cwd: workspace, encoding: 'utf8' });
   if (nativeUnknownResource.status === 0 || unknownResourceWasm.ok || !unknownResourceWasm.error || !nativeUnknownResource.stderr.includes(unknownResourceWasm.error.message)) {
     fail(`Unknown GVK CLI/WASM parity failed: CLI=${nativeUnknownResource.stderr} WASM=${JSON.stringify(unknownResourceWasm)}`);
+  }
+
+  const largeManifestSource = 'let resources = manifest.load("large.yaml")\nemit resources\n';
+  const largeManifest = `apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: large-check\ndata:\n  payload: "${'x'.repeat(1_100_000)}"\n`;
+  const largeCheck = invoke('check', largeManifestSource, { 'large.yaml': largeManifest });
+  const largeCheckProject = path.join(buildDirectory, 'large-check-project');
+  mkdirSync(largeCheckProject, { recursive: true });
+  writeFileSync(path.join(largeCheckProject, 'main.mcl'), largeManifestSource);
+  writeFileSync(path.join(largeCheckProject, 'large.yaml'), largeManifest);
+  const nativeLargeCheck = spawnSync('go', ['run', './cmd/mcl', 'check', path.join(largeCheckProject, 'main.mcl')], { cwd: workspace, encoding: 'utf8' });
+  if (nativeLargeCheck.status !== 0 || !largeCheck.ok) {
+    fail(`Large output check CLI/WASM parity failed: CLI=${nativeLargeCheck.stderr} WASM=${JSON.stringify(largeCheck)}`);
   }
 } catch (error) {
   console.error(error);

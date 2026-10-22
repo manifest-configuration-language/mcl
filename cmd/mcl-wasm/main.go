@@ -77,7 +77,7 @@ func handle(raw string, binaryArgument js.Value) string {
 	if input.Operation == "format" {
 		formatted, err := engine.FormatSource(input.Source)
 		if err != nil {
-			result.Error = diagnosticError(input.Source, err)
+			result.Error = diagnosticError(input.Source, entrypoint, nil, err)
 		} else if len(formatted) > maxOutputBytes {
 			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("formatted output exceeds the %d-byte limit", maxOutputBytes)}
 		} else {
@@ -89,7 +89,7 @@ func handle(raw string, binaryArgument js.Value) string {
 
 	module, err := engine.ParseAST(input.Source)
 	if err != nil {
-		result.Error = diagnosticError(input.Source, err)
+		result.Error = diagnosticError(input.Source, entrypoint, nil, err)
 		return marshal(result)
 	}
 	switch input.Operation {
@@ -98,7 +98,7 @@ func handle(raw string, binaryArgument js.Value) string {
 		result.Result = map[string]any{"declarations": len(module.Nodes)}
 	case "lint":
 		result.Ok = true
-		result.Result = diagnostics(module, input.Source)
+		result.Result = diagnostics(module, input.Source, entrypoint)
 	case "check", "evaluate", "render":
 		binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
 		if binaryErr != nil {
@@ -112,23 +112,28 @@ func handle(raw string, binaryArgument js.Value) string {
 		}
 		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint)
 		if evalErr != nil {
-			result.Error = diagnosticError(input.Source, evalErr)
+			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, evalErr)
 			return marshal(result)
 		}
 		if input.Operation == "check" || input.Operation == "render" {
 			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForProjectFS(browserProjectRoot(), projectFiles)
 			if catalogErr != nil {
-				result.Error = diagnosticError(input.Source, catalogErr)
+				result.Error = diagnosticError(input.Source, entrypoint, projectFiles, catalogErr)
 				return marshal(result)
 			}
 			if checkErr := engine.ValidateBundleOutputWithCatalog(bundle, catalog); checkErr != nil {
-				result.Error = diagnosticError(input.Source, checkErr)
+				result.Error = diagnosticError(input.Source, entrypoint, projectFiles, checkErr)
 				return marshal(result)
 			}
 		}
+		if input.Operation == "check" {
+			result.Ok = true
+			result.Result = map[string]any{"valid": true, "artifacts": len(bundle.Artifacts)}
+			return marshal(result)
+		}
 		output, renderErr := engine.Render(bundle)
 		if renderErr != nil {
-			result.Error = diagnosticError(input.Source, renderErr)
+			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, renderErr)
 			return marshal(result)
 		}
 		if len(output) > maxOutputBytes {
@@ -138,8 +143,6 @@ func handle(raw string, binaryArgument js.Value) string {
 		result.Ok = true
 		if input.Operation == "render" {
 			result.Result = map[string]any{"yaml": string(output), "artifacts": len(bundle.Artifacts)}
-		} else if input.Operation == "check" {
-			result.Result = map[string]any{"valid": true, "artifacts": len(bundle.Artifacts)}
 		} else {
 			result.Result = map[string]any{"artifacts": len(bundle.Artifacts), "renderedBytes": len(output)}
 		}
@@ -232,27 +235,45 @@ func projectEntrypoint(entrypoint string) (string, error) {
 	return entrypoint, nil
 }
 
-func diagnostics(module engine.ModuleAST, source string) []map[string]any {
+func diagnostics(module engine.ModuleAST, source, sourcePath string) []map[string]any {
 	items := engine.LintAST(module)
 	result := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		line, column := sourcePosition(source, item.Span.Start)
+		endLine, endColumn := sourcePosition(source, item.Span.End)
 		result = append(result, map[string]any{
-			"code": item.Code, "message": item.Message, "severity": item.Severity,
-			"line": line, "column": column,
+			"code": item.Code, "message": item.Message, "severity": item.Severity, "path": sourcePath,
+			"line": line, "column": column, "endLine": endLine, "endColumn": endColumn,
 		})
 	}
 
 	return result
 }
 
-func diagnosticError(source string, err error) *responseError {
+func diagnosticError(source, entrypoint string, files fs.FS, err error) *responseError {
 	code := "MCL-WASM-EVALUATION"
 	line, column := 0, 0
+	endLine, endColumn := 0, 0
+	locationPath := entrypoint
 	message := err.Error()
+	var related []wasmprotocol.RelatedLocation
 	if diagnostic, ok := engine.SourceDiagnosticFromError(err); ok {
 		code = diagnostic.Code
-		line, column = sourcePosition(source, diagnostic.Span.Start)
+		locationPath = projectRelativeDiagnosticPath(diagnostic.Path, entrypoint)
+		locationSource := projectFileSource(files, locationPath, entrypoint, source)
+		line, column = sourcePosition(locationSource, diagnostic.Span.Start)
+		endLine, endColumn = sourcePosition(locationSource, diagnostic.Span.End)
+		for _, location := range diagnostic.Related {
+			relatedPath := projectRelativeDiagnosticPath(location.Path, entrypoint)
+			relatedSource := projectFileSource(files, relatedPath, entrypoint, source)
+			relatedLine, relatedColumn := sourcePosition(relatedSource, location.Span.Start)
+			relatedEndLine, relatedEndColumn := sourcePosition(relatedSource, location.Span.End)
+			related = append(related, wasmprotocol.RelatedLocation{
+				Path: relatedPath, Message: location.Message,
+				Line: uint64(relatedLine), Column: uint64(relatedColumn),
+				EndLine: uint64(relatedEndLine), EndColumn: uint64(relatedEndColumn),
+			})
+		}
 		message = diagnostic.DisplayMessage()
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -264,7 +285,39 @@ func diagnosticError(source string, err error) *responseError {
 		message = "remote dependency access is unavailable in this browser runtime; provide dependencies in the project files"
 	}
 
-	return &responseError{Code: code, Message: message, Line: new(uint64(line)), Column: new(uint64(column))}
+	return &responseError{
+		Code: code, Message: message,
+		Path: &locationPath,
+		Line: new(uint64(line)), Column: new(uint64(column)),
+		EndLine: new(uint64(endLine)), EndColumn: new(uint64(endColumn)),
+		Related: related,
+	}
+}
+
+func projectRelativeDiagnosticPath(sourcePath, entrypoint string) string {
+	if sourcePath == "" {
+		return entrypoint
+	}
+	cleaned := path.Clean(sourcePath)
+	root := browserProjectRoot()
+	if cleaned == root {
+		return entrypoint
+	}
+	if strings.HasPrefix(cleaned, root+"/") {
+		return strings.TrimPrefix(cleaned, root+"/")
+	}
+	return strings.TrimPrefix(cleaned, "/")
+}
+
+func projectFileSource(files fs.FS, sourcePath, entrypoint, fallback string) string {
+	if sourcePath == "" || sourcePath == entrypoint || files == nil {
+		return fallback
+	}
+	source, err := fs.ReadFile(files, sourcePath)
+	if err != nil {
+		return fallback
+	}
+	return string(source)
 }
 
 func sourcePosition(source string, offset int) (int, int) {

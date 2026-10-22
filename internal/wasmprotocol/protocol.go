@@ -17,11 +17,23 @@ type Error struct {
 	// Column corresponds to the JSON schema field "column".
 	Column *uint64 `json:"column,omitempty,omitzero" yaml:"column,omitempty" mapstructure:"column,omitempty"`
 
+	// EndColumn corresponds to the JSON schema field "endColumn".
+	EndColumn *uint64 `json:"endColumn,omitempty,omitzero" yaml:"endColumn,omitempty" mapstructure:"endColumn,omitempty"`
+
+	// EndLine corresponds to the JSON schema field "endLine".
+	EndLine *uint64 `json:"endLine,omitempty,omitzero" yaml:"endLine,omitempty" mapstructure:"endLine,omitempty"`
+
 	// Line corresponds to the JSON schema field "line".
 	Line *uint64 `json:"line,omitempty,omitzero" yaml:"line,omitempty" mapstructure:"line,omitempty"`
 
 	// Message corresponds to the JSON schema field "message".
 	Message string `json:"message" yaml:"message" mapstructure:"message"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path *string `json:"path,omitempty,omitzero" yaml:"path,omitempty" mapstructure:"path,omitempty"`
+
+	// Related corresponds to the JSON schema field "related".
+	Related []RelatedLocation `json:"related,omitempty,omitzero" yaml:"related,omitempty" mapstructure:"related,omitempty"`
 }
 
 type EvaluateResult struct {
@@ -59,11 +71,20 @@ type LintDiagnostic struct {
 	// Column corresponds to the JSON schema field "column".
 	Column uint64 `json:"column" yaml:"column" mapstructure:"column"`
 
+	// EndColumn corresponds to the JSON schema field "endColumn".
+	EndColumn uint64 `json:"endColumn" yaml:"endColumn" mapstructure:"endColumn"`
+
+	// EndLine corresponds to the JSON schema field "endLine".
+	EndLine uint64 `json:"endLine" yaml:"endLine" mapstructure:"endLine"`
+
 	// Line corresponds to the JSON schema field "line".
 	Line uint64 `json:"line" yaml:"line" mapstructure:"line"`
 
 	// Message corresponds to the JSON schema field "message".
 	Message string `json:"message" yaml:"message" mapstructure:"message"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path" yaml:"path" mapstructure:"path"`
 
 	// Severity corresponds to the JSON schema field "severity".
 	Severity string `json:"severity" yaml:"severity" mapstructure:"severity"`
@@ -74,6 +95,26 @@ type LintResult []LintDiagnostic
 type ParseResult struct {
 	// Declarations corresponds to the JSON schema field "declarations".
 	Declarations uint64 `json:"declarations" yaml:"declarations" mapstructure:"declarations"`
+}
+
+type RelatedLocation struct {
+	// Column corresponds to the JSON schema field "column".
+	Column uint64 `json:"column" yaml:"column" mapstructure:"column"`
+
+	// EndColumn corresponds to the JSON schema field "endColumn".
+	EndColumn uint64 `json:"endColumn" yaml:"endColumn" mapstructure:"endColumn"`
+
+	// EndLine corresponds to the JSON schema field "endLine".
+	EndLine uint64 `json:"endLine" yaml:"endLine" mapstructure:"endLine"`
+
+	// Line corresponds to the JSON schema field "line".
+	Line uint64 `json:"line" yaml:"line" mapstructure:"line"`
+
+	// Message corresponds to the JSON schema field "message".
+	Message string `json:"message" yaml:"message" mapstructure:"message"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path" yaml:"path" mapstructure:"path"`
 }
 
 type RenderResult struct {

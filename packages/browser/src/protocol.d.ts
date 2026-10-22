@@ -43,8 +43,11 @@ export interface LintDiagnostic {
   code: string;
   message: string;
   severity: string;
+  path: string;
   line: number;
   column: number;
+  endLine: number;
+  endColumn: number;
 }
 export interface FormatResult {
   source: string;
@@ -64,6 +67,18 @@ export interface RenderResult {
 export interface Error {
   code: string;
   message: string;
+  path?: string;
   line?: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
+  related?: RelatedLocation[];
+}
+export interface RelatedLocation {
+  path: string;
+  message: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
 }

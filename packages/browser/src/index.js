@@ -12,8 +12,12 @@ export class MclRuntimeError extends Error {
     super(error.message);
     this.name = "MclRuntimeError";
     this.code = error.code;
+    this.path = error.path;
     this.line = error.line;
     this.column = error.column;
+    this.endLine = error.endLine;
+    this.endColumn = error.endColumn;
+    this.related = error.related;
   }
 }
 
