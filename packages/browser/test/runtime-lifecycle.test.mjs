@@ -268,4 +268,4 @@ test("Browser SDK runtime lifecycle", async () => {
     });
     runtime.dispose();
   }
-}
+});
