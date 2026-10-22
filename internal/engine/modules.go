@@ -380,6 +380,7 @@ func (index *DependentMCLSourceIndex) sourcesFromIndex(canonical, root string, s
 
 		return nil, err
 	}
+
 	return dependentModuleSources(canonical, index.sources, index.importers)
 }
 
@@ -725,10 +726,6 @@ func dependentSourceScope(target string, workspaceRoots []string) (string, strin
 	}
 
 	return canonical, root, searchRoots, nil
-}
-
-func collectDependentSources(canonical, root string, searchRoots []string) (map[string]string, error) {
-	return collectDependentSourcesWithFilesystem(newOSProjectFilesystem(root), canonical, root, searchRoots)
 }
 
 func collectDependentSourcesWithFilesystem(files *projectFilesystem, canonical, root string, searchRoots []string) (map[string]string, error) {

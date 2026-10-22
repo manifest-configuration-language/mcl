@@ -70,13 +70,14 @@ func TestDependentMCLSourcesForProjectFS(t *testing.T) {
 func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T) {
 	t.Parallel()
 	const root = "/virtual-project"
+	const targetFilename = "target.mcl"
 	files := fstest.MapFS{
-		"target.mcl":   &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		targetFilename: &fstest.MapFile{Data: []byte("export let value = 1\n")},
 		"importer.mcl": &fstest.MapFile{Data: []byte("let local = 1\n")},
 	}
 	importer := filepath.Join(root, "importer.mcl")
 	index := &DependentMCLSourceIndex{}
-	if _, err := index.SourcesForProjectFS(root, "target.mcl", files, nil); err != nil {
+	if _, err := index.SourcesForProjectFS(root, targetFilename, files, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,7 +86,7 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer}}); err != nil {
 		t.Fatal(err)
 	}
-	dependent, err := index.SourcesFromProjectFSIndex(root, "target.mcl", files, nil)
+	dependent, err := index.SourcesFromProjectFSIndex(root, targetFilename, files, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 	}
 
 	overlay := "let local = 2\n"
-	dependent, err = index.SourcesFromProjectFSIndex(root, "target.mcl", files, map[string]string{importer: overlay})
+	dependent, err = index.SourcesFromProjectFSIndex(root, targetFilename, files, map[string]string{importer: overlay})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,14 +108,14 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer}}); err != nil {
 		t.Fatal(err)
 	}
-	dependent, err = index.SourcesFromProjectFSIndex(root, "target.mcl", files, map[string]string{importer: overlay})
+	dependent, err = index.SourcesFromProjectFSIndex(root, targetFilename, files, map[string]string{importer: overlay})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, exists := dependent[importer]; exists {
 		t.Fatal("filesystem update replaced an open document overlay")
 	}
-	dependent, err = index.SourcesFromProjectFSIndex(root, "target.mcl", files, nil)
+	dependent, err = index.SourcesFromProjectFSIndex(root, targetFilename, files, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer, Deleted: true}}); err != nil {
 		t.Fatal(err)
 	}
-	dependent, err = index.SourcesFromProjectFSIndex(root, "target.mcl", files, nil)
+	dependent, err = index.SourcesFromProjectFSIndex(root, targetFilename, files, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
