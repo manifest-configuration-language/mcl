@@ -62,7 +62,7 @@ release:
   replace_existing_draft: true
 
 changelog:
-  use: github-native
+  use: git
 
 snapshot:
   version_template: "{{ .Env.MCL_VERSION }}"

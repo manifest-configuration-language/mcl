@@ -69,8 +69,6 @@ jobs:
           overwrite: true
 
       - name: Build release assets
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           rm -rf dist
