@@ -33,6 +33,8 @@ type Request struct {
 	Dependencies *dependency.Lock
 	// SourceFS optionally supplies the project files using root-relative io/fs paths.
 	SourceFS fs.FS
+	// SourcePathsOSBacked indicates whether diagnostic source paths refer to host files.
+	SourcePathsOSBacked bool
 }
 
 // Resultはbuild済みYAMLとsource provenanceを保持します。
@@ -147,7 +149,7 @@ func Build(request Request) (result Result, err error) {
 		return Result{}, fmt.Errorf("serialize Kustomize resources: %w", err)
 	}
 
-	return Result{YAML: output, Origins: origins, Origin: source.origin, SourceRoot: source.sourceMapRoot, LocalSourceRoot: source.localRoot, SourceOSBacked: request.SourceFS == nil, SourceDirectory: source.sourceMapDirectory, SourceFiles: fileSystem.sourceFiles, SourceLocators: mapResourceSourceLocators(origins, fileSystem)}, nil
+	return Result{YAML: output, Origins: origins, Origin: source.origin, SourceRoot: source.sourceMapRoot, LocalSourceRoot: source.localRoot, SourceOSBacked: request.SourcePathsOSBacked || request.SourceFS == nil, SourceDirectory: source.sourceMapDirectory, SourceFiles: fileSystem.sourceFiles, SourceLocators: mapResourceSourceLocators(origins, fileSystem)}, nil
 }
 
 func mapResourceSourceLocators(origins []ResourceOrigin, fileSystem *overlayFileSystem) map[string][]byte {

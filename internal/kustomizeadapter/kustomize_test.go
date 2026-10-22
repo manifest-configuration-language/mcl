@@ -162,6 +162,33 @@ func TestBuildReadsRootRelativeProjectFS(t *testing.T) {
 	if !strings.Contains(string(result.YAML), "name: app") {
 		t.Fatalf("Build() output does not include the root-relative project resource:\n%s", result.YAML)
 	}
+	if result.SourceOSBacked {
+		t.Fatal("Build() marked an in-memory source filesystem as host-backed")
+	}
+}
+
+func TestBuildPreservesHostPathProvenanceForInjectedFS(t *testing.T) {
+	t.Parallel()
+
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := fstest.MapFS{
+		"deployment/base/kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n- deployment.yaml\n")},
+		"deployment/base/deployment.yaml":    &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")},
+	}
+	result, err := Build(Request{
+		Source: "./deployment", Directory: "base", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), SourceFS: project, SourcePathsOSBacked: true,
+		Dependencies: &dependency.Lock{},
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if !result.SourceOSBacked {
+		t.Fatal("Build() did not preserve host-backed source path provenance")
+	}
 }
 
 func TestBuildRejectsReferencedFileOverInputLimit(t *testing.T) {
