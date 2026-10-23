@@ -112,11 +112,11 @@ export function createMclRuntime(options = {}) {
       let timer;
       try {
         if (timeoutMs <= 0) throw timeoutError;
+        timer = setTimeout(() => {
+          (stopCurrent ?? stopInitialization)?.(timeoutError);
+        }, timeoutMs);
         await waitUntilReady(requestOptions.signal);
         if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-        timer = setTimeout(() => {
-          stopCurrent?.(timeoutError);
-        }, timeoutMs);
         const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
         const requestId = ++sequence;
         const currentWorker = worker;
