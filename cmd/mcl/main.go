@@ -190,6 +190,7 @@ func newRootCommand(args []string) *cobra.Command {
 	root.AddCommand(newRenderCommand(), newCheckCommand(), newExplainCommand(), newDiffCommand(), newLintCommand(), newFormatCommand())
 	root.AddCommand(newUpdateCommand(), newLSPCommand(), newVersionCommand())
 	root.AddCommand(newCompletionCommand())
+	root.AddCommand(newReferenceCommand())
 	root.SetArgs(args)
 
 	return root

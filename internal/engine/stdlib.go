@@ -21,6 +21,25 @@ type builtin struct {
 	deferred        builtinDeferredEvaluation
 }
 
+// StandardLibraryFunction describes the exported names registered for a standard-library function.
+type StandardLibraryFunction struct {
+	Module     string
+	Name       string
+	Parameters []string
+}
+
+// StandardLibraryFunctions returns the exported standard-library function names and parameters.
+func StandardLibraryFunctions() []StandardLibraryFunction {
+	functions := make([]StandardLibraryFunction, 0, len(builtinRegistry))
+	for _, item := range builtinRegistry {
+		functions = append(functions, StandardLibraryFunction{
+			Module: item.module, Name: item.exportName, Parameters: append([]string(nil), item.parameters...),
+		})
+	}
+
+	return functions
+}
+
 const stdlibListModule = "std:list"
 
 type builtinInference uint8
