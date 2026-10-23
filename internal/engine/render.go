@@ -348,9 +348,6 @@ func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesR
 			continue
 		}
 		descriptor := scopes[kubernetesResourceKey{group: identity.group, kind: identity.kind}]
-		if descriptor.scope == kubernetesResourceUnknown {
-			return fmt.Errorf("unknown scope for Kubernetes resource %s; add a Resource descriptor to mcl.toml or include its CustomResourceDefinition (artifact %d)", kubernetesResourceKeyName(kubernetesResourceKey{group: identity.group, kind: identity.kind}), index+1)
-		}
 		if descriptor.scope == kubernetesResourceCluster && identity.rawNamespace != "" {
 			resource := descriptor.resourceName
 			if identity.group != "" {
@@ -360,6 +357,9 @@ func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesR
 			return fmt.Errorf("cluster-scoped Kubernetes resource %s with name %q must not set metadata.namespace (artifact %d)", resource, identity.name, index+1)
 		}
 		identity.resourceName = descriptor.resourceName
+		if descriptor.scope == kubernetesResourceUnknown {
+			identity.resourceName = identity.kind
+		}
 		identity.scope = descriptor.scope
 		identity.kind = ""
 		identity.rawNamespace = ""
@@ -370,15 +370,15 @@ func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesR
 			}
 		case kubernetesResourceCluster:
 			identity.namespace = ""
-		default:
-			// Unknownのリソースは上のcontinueで除外済み。
+		case kubernetesResourceUnknown:
+			// scope不明のリソースは宣言されたnamespaceで重複を判定する。
 		}
 		if previousIndex, exists := seen[identity]; exists {
 			resource := identity.resourceName
 			if identity.group != "" {
 				resource = identity.group + "/" + resource
 			}
-			if identity.scope == kubernetesResourceNamespaced {
+			if identity.scope != kubernetesResourceCluster {
 				return fmt.Errorf("duplicate Kubernetes resource %s with name %q in namespace %q (artifacts %d and %d)", resource, identity.name, identity.namespace, previousIndex+1, index+1)
 			}
 

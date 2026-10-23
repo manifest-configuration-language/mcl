@@ -774,7 +774,7 @@ emit labels
 	}
 }
 
-func TestKnownKubernetesKindWithUnknownVersionFailsValidation(t *testing.T) {
+func TestKnownKubernetesKindWithUnknownVersionPassesWithoutSchema(t *testing.T) {
 	t.Parallel()
 	source := `let resource =
   apiVersion: "apps/v99"
@@ -783,12 +783,12 @@ func TestKnownKubernetesKindWithUnknownVersionFailsValidation(t *testing.T) {
     name: "sample"
 emit resource
 `
-	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err == nil || !strings.Contains(err.Error(), "no built-in schema is available") {
-		t.Fatalf("EvaluateSource() error = %v, want unsupported GVK diagnostic", err)
+	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want unsupported GVK to pass without schema validation", err)
 	}
 }
 
-func TestUnknownKubernetesResourceRequiresSchema(t *testing.T) {
+func TestUnknownKubernetesResourceWithoutSchemaPassesValidation(t *testing.T) {
 	t.Parallel()
 	source := `let resource =
   apiVersion: "example.test/v1"
@@ -797,12 +797,12 @@ func TestUnknownKubernetesResourceRequiresSchema(t *testing.T) {
     name: "sample"
 emit resource
 `
-	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err == nil || !strings.Contains(err.Error(), "cannot be validated") || !strings.Contains(err.Error(), "CustomResourceDefinition") {
-		t.Fatalf("EvaluateSource() error = %v, want actionable unknown GVK schema diagnostic", err)
+	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want unknown GVK to pass without schema validation", err)
 	}
 }
 
-func TestAdditionalCatalogResourceWithoutSchemaFailsValidation(t *testing.T) {
+func TestAdditionalCatalogResourceWithoutSchemaPassesValidation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	config := `[kubernetes.resourceCatalog]
@@ -824,8 +824,8 @@ scope = "Namespaced"
     name: "sample"
 emit resource
 `
-	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), source); err == nil || !strings.Contains(err.Error(), "registered Kubernetes resource Widget") || !strings.Contains(err.Error(), "has no schema") {
-		t.Fatalf("EvaluateSource() error = %v, want registered resource schema diagnostic", err)
+	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want registered resource without schema to pass", err)
 	}
 }
 

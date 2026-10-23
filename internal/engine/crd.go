@@ -36,9 +36,8 @@ type customResourceDefinitionKey struct {
 // KubernetesのCustomResourceDefinitionのKind名。
 const kindCustomResourceDefinition = "CustomResourceDefinition"
 
-func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) (map[customResourceDefinitionKey]struct{}, error) {
+func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) error {
 	schemas := make(map[customResourceDefinitionKey]crdVersionSchema)
-	validated := make(map[customResourceDefinitionKey]struct{})
 	for index := range artifacts {
 		artifact := &artifacts[index]
 		resource := runtimeNodeContents(artifact.Value)
@@ -49,7 +48,7 @@ func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) (map[cust
 		if err := registerRuntimeCustomResourceDefinition(schemas, resource); err != nil {
 			metadata := artifact.Value.Metadata()
 
-			return nil, sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("CustomResourceDefinition: %w", err))
+			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("CustomResourceDefinition: %w", err))
 		}
 	}
 	for index := range artifacts {
@@ -70,14 +69,14 @@ func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) (map[cust
 		}
 		metadata := artifact.Value.Metadata()
 		if !registered.served {
-			return nil, sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("custom resource %s uses unserved version %q", kind, apiVersion))
+			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("custom resource %s uses unserved version %q", kind, apiVersion))
 		}
 		if registered.typeExpr != nil {
 			annotateRuntimeSchemaProvenance(&artifact.Value, apiVersion+"/"+kind, "", registered.typeExpr)
 		}
 		instance, err := runtimeValueAsKubernetesJSON(resource)
 		if err != nil {
-			return nil, fmt.Errorf("custom resource %s: %w", kind, err)
+			return fmt.Errorf("custom resource %s: %w", kind, err)
 		}
 		validationErrors := crdvalidation.ValidateCustomResource(field.NewPath("resource"), instance, registered.validator)
 		if instanceMap, ok := instance.(map[string]any); ok {
@@ -88,12 +87,11 @@ func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) (map[cust
 			validationErrors = append(validationErrors, celErrors...)
 		}
 		if len(validationErrors) != 0 {
-			return nil, fmt.Errorf("custom resource %s (%s): %w", kind, apiVersion, customResourceRuntimeValidationDiagnostic(artifact.Value, validationErrors, registered.location))
+			return fmt.Errorf("custom resource %s (%s): %w", kind, apiVersion, customResourceRuntimeValidationDiagnostic(artifact.Value, validationErrors, registered.location))
 		}
-		validated[customResourceDefinitionKey{group: group, version: version, kind: kind}] = struct{}{}
 	}
 
-	return validated, nil
+	return nil
 }
 
 func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitionKey]crdVersionSchema, value RuntimeValue) error {

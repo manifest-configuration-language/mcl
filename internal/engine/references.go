@@ -335,13 +335,12 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 			return err
 		}
 	}
-	validatedCustomResources, err := validateRuntimeBundleCustomResources(bundle.Artifacts)
-	if err != nil {
+	if err := validateRuntimeBundleCustomResources(bundle.Artifacts); err != nil {
 		return err
 	}
 	for index := range bundle.Artifacts {
 		artifact := &bundle.Artifacts[index]
-		if err := validateBuiltinKubernetesResource(artifact.Value, validatedCustomResources, state.ResourceCatalog); err != nil {
+		if err := validateBuiltinKubernetesResource(artifact.Value); err != nil {
 			metadata := artifact.Value.Metadata()
 
 			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("emitted value %d: %w", index+1, err))
