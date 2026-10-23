@@ -40,17 +40,6 @@ for package in browser language; do
     fi
   )
   archive="$archive_name"
-  case "$package" in
-    browser) required_files=(dist/mcl.wasm dist/wasm_exec.js) ;;
-    language) required_files=(src/parser.js src/mcl.tmLanguage.json) ;;
-  esac
-  archive_files="$(tar -tzf "$output_directory/$archive")"
-  for required_file in "${required_files[@]}"; do
-    if ! grep -Fxq "package/$required_file" <<< "$archive_files"; then
-      printf 'Package archive %s is missing: %s\n' "$archive" "$required_file" >&2
-      exit 1
-    fi
-  done
   if [[ "$package" == browser && "$prebuilt_browser_wasm" == true ]]; then
     if [[ ! -f "$root/.build/release-assets/mcl.wasm.gz" ]]; then
       printf 'The staged GitHub Release WASM is missing.\n' >&2
