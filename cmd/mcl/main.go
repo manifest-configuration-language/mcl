@@ -189,9 +189,47 @@ func newRootCommand(args []string) *cobra.Command {
 	}
 	root.AddCommand(newRenderCommand(), newCheckCommand(), newExplainCommand(), newDiffCommand(), newLintCommand(), newFormatCommand())
 	root.AddCommand(newUpdateCommand(), newLSPCommand(), newVersionCommand())
+	root.AddCommand(newCompletionCommand())
 	root.SetArgs(args)
 
 	return root
+}
+
+func newCompletionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "completion <bash|zsh|fish|powershell>",
+		Short: "Generate shell completion scripts",
+		Long: "Generate a completion script for the specified shell. Supported shells are bash, zsh, fish, and powershell.\n\n" +
+			"Examples:\n" +
+			"  mcl completion bash > mcl-completion.bash\n" +
+			"  source <(mcl completion bash)",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return errors.New("completion requires one shell: bash, zsh, fish, or powershell")
+			}
+			switch args[0] {
+			case "bash", "zsh", "fish", "powershell":
+				return nil
+			default:
+				return fmt.Errorf("unsupported shell %q: expected bash, zsh, fish, or powershell", args[0])
+			}
+		},
+		RunE: func(command *cobra.Command, args []string) error {
+			output := command.OutOrStdout()
+			switch args[0] {
+			case "bash":
+				return command.Root().GenBashCompletionV2(output, true)
+			case "zsh":
+				return command.Root().GenZshCompletion(output)
+			case "fish":
+				return command.Root().GenFishCompletion(output, true)
+			case "powershell":
+				return command.Root().GenPowerShellCompletionWithDesc(output)
+			default:
+				return fmt.Errorf("unsupported shell %q", args[0])
+			}
+		},
+	}
 }
 
 func newRenderCommand() *cobra.Command {
