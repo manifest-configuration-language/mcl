@@ -47,6 +47,7 @@ func DefinitionForProjectFS(params BrowserNavigationParams, projectFiles fs.FS) 
 	if !ok {
 		return nil
 	}
+
 	return &BrowserDefinition{Path: resolved.path, Range: browserSourceRange(resolved.source, resolved.span)}
 }
 
@@ -120,6 +121,7 @@ func browserNavigationTarget(params BrowserNavigationParams, projectFiles fs.FS)
 			}
 		}
 	}
+
 	return browserNavigationResult{}, false
 }
 
@@ -179,6 +181,7 @@ func browserResolveProjectImport(importer, modulePath string, projectFiles fs.FS
 	if _, err := fs.Stat(projectFiles, resolved); err != nil {
 		return "", false
 	}
+
 	return resolved, true
 }
 
@@ -216,6 +219,7 @@ func browserDeclarationHover(node syntax.ASTNode, source string) string {
 		if declaration.Annotation != nil {
 			contents += ": " + browserTypeText(source, declaration.Annotation)
 		}
+
 		return contents
 	case *syntax.FunctionDeclaration:
 		if declaration.Function == nil {
@@ -233,6 +237,7 @@ func browserDeclarationHover(node syntax.ASTNode, source string) string {
 		if declaration.Function.ReturnType != nil {
 			contents += " -> " + browserTypeText(source, declaration.Function.ReturnType)
 		}
+
 		return contents
 	case *syntax.RuleDeclaration:
 		if declaration.Rule == nil {
@@ -246,6 +251,7 @@ func browserDeclarationHover(node syntax.ASTNode, source string) string {
 		for _, parameter := range declaration.Rule.Parameters {
 			parameters = append(parameters, parameter.Name+": "+browserTypeExprText(source, parameter.Type))
 		}
+
 		return prefix + declaration.Name + "(" + strings.Join(parameters, ", ") + ")"
 	default:
 		return ""
@@ -256,6 +262,7 @@ func browserTypeText(source string, typeExpr *syntax.TypeExpr) string {
 	if typeExpr == nil {
 		return ""
 	}
+
 	return browserTypeExprText(source, *typeExpr)
 }
 
@@ -264,5 +271,6 @@ func browserTypeExprText(source string, typeExpr syntax.TypeExpr) string {
 	if span.Start < 0 || span.End > len(source) || span.Start >= span.End {
 		return ""
 	}
+
 	return strings.TrimSpace(source[span.Start:span.End])
 }
