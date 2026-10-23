@@ -48,6 +48,7 @@ func (s *server) completions(params completionParams) []completionItem {
 	if !exists {
 		return complete("", location{Line: params.Position.Line, Character: params.Position.Character}, "", "", nil, "")
 	}
+
 	return complete(state.Text, location{Line: params.Position.Line, Character: params.Position.Character}, "", "", nil, documentPath(params.TextDocument.URI))
 }
 
@@ -117,7 +118,7 @@ func complete(source string, position location, projectRoot, entrypoint string, 
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {
 		if strings.HasPrefix(item.Label, prefix) && !seen[item.Label] {
-			filtered = append(filtered, CompletionItem(item))
+			filtered = append(filtered, item)
 			seen[item.Label] = true
 		}
 	}
@@ -136,11 +137,13 @@ func schemaFieldCompletions(position location, lines []string, runes []rune, cur
 	candidateLines[len(candidateLines)-1] = strings.Repeat(" ", indent) + placeholder + ": null"
 	if projectFiles != nil {
 		fields, _ := engine.SchemaFieldCompletionsWithErrorForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+
 		return fields
 	}
 	if sourcePath != "" {
 		return engine.SchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
 	}
+
 	return nil
 }
 
@@ -160,6 +163,7 @@ func helmSchemaFieldCompletions(position location, lines []string, runes []rune,
 	if sourcePath != "" {
 		return engine.HelmSchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
 	}
+
 	return nil
 }
 
