@@ -98,8 +98,7 @@ jobs:
           rm -rf .build/reference
           go run ./cmd/mcl reference --output .build/reference --version "$MCL_VERSION"
           tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner --format=ustar -cf - -C .build/reference reference | gzip -n -9 > "dist/mcl_reference_${MCL_VERSION}.tar.gz"
-          sha256sum "dist/mcl_reference_${MCL_VERSION}.tar.gz" >> dist/SHA256SUMS
-          (cd dist && sha256sum --check SHA256SUMS)
+          (cd dist && sha256sum "mcl_reference_${MCL_VERSION}.tar.gz" >> SHA256SUMS && sha256sum --check SHA256SUMS)
 
       - name: Upload release assets
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
