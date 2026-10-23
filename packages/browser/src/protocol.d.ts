@@ -1,19 +1,11 @@
 /* Generated from cmd/mcl-wasm/protocol.schema.json. Do not edit. */
 
 export type MCLWebAssemblyRequestAndResponseProtocol = Request | Response;
-/**
- * Binary files omit content and are supplied in the optional second run argument under the same path.
- */
-export type FileInput = {
-  encoding: "utf8" | "binary";
-  content?: string;
-};
-export type LintResult = LintDiagnostic[];
-
-export interface Request {
+export type Request = {
   requestId?: number;
   revision?: number;
-  operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render";
+  operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion";
+  position?: CompletionPosition;
   /**
    * Project-relative MCL source path. Defaults to main.mcl.
    */
@@ -28,12 +20,25 @@ export interface Request {
   files?: {
     [k: string]: FileInput;
   };
+};
+/**
+ * Binary files omit content and are supplied in the optional second run argument under the same path.
+ */
+export type FileInput = {
+  encoding: "utf8" | "binary";
+  content?: string;
+};
+export type LintResult = LintDiagnostic[];
+
+export interface CompletionPosition {
+  line: number;
+  character: number;
 }
 export interface Response {
   requestId: number;
   revision?: number;
   ok: boolean;
-  result?: ParseResult | LintResult | FormatResult | CheckResult | EvaluateResult | RenderResult;
+  result?: ParseResult | LintResult | FormatResult | CheckResult | EvaluateResult | RenderResult | CompletionResult;
   error?: Error;
 }
 export interface ParseResult {
@@ -63,6 +68,15 @@ export interface EvaluateResult {
 export interface RenderResult {
   yaml: string;
   artifacts: number;
+}
+export interface CompletionResult {
+  isIncomplete: boolean;
+  items: CompletionItem[];
+}
+export interface CompletionItem {
+  label: string;
+  kind: number;
+  insertText?: string;
 }
 export interface Error {
   code: string;

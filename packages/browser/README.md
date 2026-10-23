@@ -7,6 +7,7 @@ import { createMclRuntime } from "@manifest-configuration-language/browser";
 
 const runtime = createMclRuntime();
 try {
+  await runtime.warmUp();
   const project = runtime.openProject({
     "main.mcl": source,
     "values.json": JSON.stringify(values),
@@ -18,11 +19,13 @@ try {
 }
 ```
 
-Pass an `AbortSignal` through the final options argument to cancel an operation. The operation timeout covers both worker initialization and execution; `initializationTimeoutMs` is an additional upper bound for worker startup. Cancellation or a timeout terminates the current worker, and the runtime creates a fresh worker for the next operation. Operations are serialized because the current Go runtime uses one in-memory project root.
+Call `runtime.warmUp()` to load the WebAssembly runtime before the first project operation. Pass `signal` and `timeoutMs` to warm-up or an operation to cancel it or set an upper bound for that call. Warm-up's timeout and `initializationTimeoutMs` bound worker startup; an operation's `timeoutMs` bounds execution after startup. Cancelling or timing out worker startup terminates that worker; the next queued operation can create a fresh worker. Cancelling or timing out an operation terminates its worker. Operations and warm-up are serialized because the current Go runtime uses one in-memory project root.
 
 Project files can be UTF-8 strings or `Uint8Array` values. UTF-8 files remain inline in the JSON request. The Browser SDK copies each `Uint8Array` and transfers its buffer to the Worker; the Worker sends only `{ "encoding": "binary" }` metadata in the request JSON and passes a path-to-`Uint8Array` map as the second argument to `mclWasm.run(requestJSON, binaryFiles)`. The Go runtime copies those bytes into its project filesystem. The SDK-owned and caller-owned arrays remain reusable after each operation.
 
-The package exports `maxSourceBytes`, `maxProjectFiles`, `maxProjectFileBytes`, and `maxProjectBytes` so browser interfaces can display the same limits enforced by the runtime.
+`project.complete({ entrypoint, position })` returns the MCL language-service candidates for a zero-based UTF-16 position. Completion uses the same local project files as parsing and rendering, including schemas and Helm values schemas. It does not access a Kubernetes API server or any other network service.
+
+The package exports `CompletionPosition`, `CompletionItem`, `CompletionResult`, `maxSourceBytes`, `maxProjectFiles`, `maxProjectFileBytes`, and `maxProjectBytes` so browser interfaces can display or consume the runtime's public types and limits.
 
 MCL decodes the request into a root-relative `io/fs` filesystem for project files, module imports, schemas, resource catalogs, and dependency locks. The runtime limits are defined in the [protocol schema](https://github.com/manifest-configuration-language/mcl/blob/main/cmd/mcl-wasm/protocol.schema.json). The worker blocks `fetch` after loading the WASM runtime assets, so MCL project evaluation cannot make external network requests.
 

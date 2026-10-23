@@ -243,6 +243,7 @@ func newRenderCommand() *cobra.Command {
 			operation, _ := command.Flags().GetString("operation")
 			outputDir, _ := command.Flags().GetString("output-dir")
 			format, _ := command.Flags().GetString("format")
+
 			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format)
 		},
 	}
@@ -261,6 +262,7 @@ func newCheckCommand() *cobra.Command {
 		Args:  exactArgs(1, "check requires one input file"),
 		RunE: func(command *cobra.Command, args []string) error {
 			operation, _ := command.Flags().GetString("operation")
+
 			return checkCommand(command.Context(), args[0], operation)
 		},
 	}
@@ -282,6 +284,7 @@ func newExplainCommand() *cobra.Command {
 			phase, _ := command.Flags().GetString("phase")
 			operation, _ := command.Flags().GetString("operation")
 			path, _ := command.Flags().GetString("path")
+
 			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path)
 		},
 	}
@@ -303,6 +306,7 @@ func newDiffCommand() *cobra.Command {
 		Args:  exactArgs(2, "diff requires before and after input files"),
 		RunE: func(command *cobra.Command, args []string) error {
 			operation, _ := command.Flags().GetString("operation")
+
 			return diffCommand(command.Context(), args[0], args[1], operation)
 		},
 	}
@@ -318,6 +322,7 @@ func newLintCommand() *cobra.Command {
 		Args:  minimumArgs(1, "lint requires at least one input file"),
 		RunE: func(command *cobra.Command, args []string) error {
 			denyWarnings, _ := command.Flags().GetBool("deny-warnings")
+
 			return lintFiles(denyWarnings, args)
 		},
 	}
@@ -334,6 +339,7 @@ func newFormatCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			write, _ := command.Flags().GetBool("write")
 			check, _ := command.Flags().GetBool("check")
+
 			return formatFile(args[0], write, check)
 		},
 	}
@@ -353,6 +359,7 @@ func newUpdateCommand() *cobra.Command {
 			if len(args) == 1 {
 				path = args[0]
 			}
+
 			return mcl.UpdateFileContext(command.Context(), path)
 		},
 	}
@@ -364,7 +371,6 @@ func newLSPCommand() *cobra.Command {
 		Short: "Start the Language Server Protocol server",
 		Args:  exactArgs(0, "lsp does not accept arguments"),
 		RunE: func(_ *cobra.Command, _ []string) error {
-			//nolint:contextcheck // LSPの標準入出力ループはプロセス終了まで動作します。
 			return lsp.Run(os.Stdin, os.Stdout)
 		},
 	}
@@ -395,6 +401,7 @@ func exactArgs(count int, message string) cobra.PositionalArgs {
 		if len(args) != count {
 			return errors.New(message)
 		}
+
 		return nil
 	}
 }
@@ -404,6 +411,7 @@ func minimumArgs(count int, message string) cobra.PositionalArgs {
 		if len(args) < count {
 			return errors.New(message)
 		}
+
 		return nil
 	}
 }
@@ -413,6 +421,7 @@ func maximumArgs(count int, message string) cobra.PositionalArgs {
 		if len(args) > count {
 			return errors.New(message)
 		}
+
 		return nil
 	}
 }

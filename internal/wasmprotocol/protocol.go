@@ -10,6 +10,33 @@ type CheckResult struct {
 	Valid interface{} `json:"valid" yaml:"valid" mapstructure:"valid"`
 }
 
+type CompletionItem struct {
+	// InsertText corresponds to the JSON schema field "insertText".
+	InsertText *string `json:"insertText,omitempty,omitzero" yaml:"insertText,omitempty" mapstructure:"insertText,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind uint64 `json:"kind" yaml:"kind" mapstructure:"kind"`
+
+	// Label corresponds to the JSON schema field "label".
+	Label string `json:"label" yaml:"label" mapstructure:"label"`
+}
+
+type CompletionPosition struct {
+	// Character corresponds to the JSON schema field "character".
+	Character uint64 `json:"character" yaml:"character" mapstructure:"character"`
+
+	// Line corresponds to the JSON schema field "line".
+	Line uint64 `json:"line" yaml:"line" mapstructure:"line"`
+}
+
+type CompletionResult struct {
+	// IsIncomplete corresponds to the JSON schema field "isIncomplete".
+	IsIncomplete bool `json:"isIncomplete" yaml:"isIncomplete" mapstructure:"isIncomplete"`
+
+	// Items corresponds to the JSON schema field "items".
+	Items []CompletionItem `json:"items" yaml:"items" mapstructure:"items"`
+}
+
 type Error struct {
 	// Code corresponds to the JSON schema field "code".
 	Code string `json:"code" yaml:"code" mapstructure:"code"`
@@ -135,11 +162,14 @@ type Request struct {
 	// Operation corresponds to the JSON schema field "operation".
 	Operation RequestOperation `json:"operation" yaml:"operation" mapstructure:"operation"`
 
+	// Position corresponds to the JSON schema field "position".
+	Position *CompletionPosition `json:"position,omitempty,omitzero" yaml:"position,omitempty" mapstructure:"position,omitempty"`
+
 	// RequestID corresponds to the JSON schema field "requestId".
-	RequestID *uint64 `json:"requestId,omitempty,omitzero" yaml:"requestId,omitempty" mapstructure:"requestId,omitempty"`
+	RequestID *int64 `json:"requestId,omitempty,omitzero" yaml:"requestId,omitempty" mapstructure:"requestId,omitempty"`
 
 	// Revision corresponds to the JSON schema field "revision".
-	Revision *uint64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
+	Revision *int64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
 
 	// UTF-8 entrypoint source, limited by the runtime.
 	Source string `json:"source" yaml:"source" mapstructure:"source"`
@@ -151,6 +181,7 @@ type RequestFiles map[string]FileInput
 type RequestOperation string
 
 const RequestOperationCheck RequestOperation = "check"
+const RequestOperationCompletion RequestOperation = "completion"
 const RequestOperationEvaluate RequestOperation = "evaluate"
 const RequestOperationFormat RequestOperation = "format"
 const RequestOperationLint RequestOperation = "lint"

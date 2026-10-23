@@ -101,7 +101,7 @@ export function createMclRuntime(options = {}) {
     }
   }
 
-  async function execute(operation, source, files, requestOptions = {}, entrypoint = "main.mcl") {
+  async function execute(operation, source, files, requestOptions = {}, entrypoint = "main.mcl", position) {
     const signal = requestOptions.signal;
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
     const run = async () => {
@@ -112,12 +112,11 @@ export function createMclRuntime(options = {}) {
       let timer;
       try {
         if (timeoutMs <= 0) throw timeoutError;
-        timer = setTimeout(() => {
-          if (stopCurrent) stopCurrent(timeoutError);
-          else stopInitialization?.(timeoutError);
-        }, timeoutMs);
         await waitUntilReady(requestOptions.signal);
         if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        timer = setTimeout(() => {
+          stopCurrent?.(timeoutError);
+        }, timeoutMs);
         const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
         const requestId = ++sequence;
         const currentWorker = worker;
@@ -160,7 +159,7 @@ export function createMclRuntime(options = {}) {
           requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
           stopCurrent = stop;
           try {
-            currentWorker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint }, preparedFiles.transferables);
+            currentWorker.postMessage({ type: "run", requestId, operation, source, files: preparedFiles.files, entrypoint, position }, preparedFiles.transferables);
           } catch (error) {
             stop(error);
           }
@@ -174,6 +173,35 @@ export function createMclRuntime(options = {}) {
     queue = result.catch(() => {});
     if (!signal) return result;
 
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    return Promise.race([result, aborted]).finally(() => signal.removeEventListener("abort", onAbort));
+  }
+
+  function warmUp(requestOptions = {}) {
+    const signal = requestOptions.signal;
+    if (signal?.aborted) return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
+    const run = async () => {
+      if (disposed) throw new Error("MCL runtime has been disposed");
+      if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+      const timeoutMs = requestOptions.timeoutMs ?? initializationTimeoutMs;
+      const timeoutError = new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL WebAssembly initialization timed out" });
+      let timer;
+      try {
+        if (timeoutMs <= 0) throw timeoutError;
+        timer = setTimeout(() => stopInitialization?.(timeoutError), timeoutMs);
+        await waitUntilReady(signal);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const result = queue.then(run, run);
+    queue = result.catch(() => {});
+    if (!signal) return result;
     let onAbort;
     const aborted = new Promise((_, reject) => {
       onAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
@@ -214,11 +242,12 @@ export function createMclRuntime(options = {}) {
       const projectBytes = Object.values(projectFiles).reduce((total, file) => total + (typeof file === "string" ? new TextEncoder().encode(file).byteLength : file.byteLength), 0);
       if (projectBytes > maxProjectBytes) throw new RangeError(`Project files exceed the ${maxProjectBytes}-byte limit`);
       const otherFiles = Object.fromEntries(Object.entries(projectFiles).filter(([filePath]) => filePath !== entrypoint));
-      return execute(operation, source, otherFiles, requestOptions, entrypoint);
+      return execute(operation, source, otherFiles, requestOptions, entrypoint, requestOptions.position);
     };
     return Object.freeze({
       parse: (requestOptions) => runProjectOperation("parse", requestOptions),
       lint: (requestOptions) => runProjectOperation("lint", requestOptions),
+      complete: (requestOptions) => runProjectOperation("completion", requestOptions),
       format: (requestOptions) => runProjectOperation("format", requestOptions),
       check: (requestOptions) => runProjectOperation("check", requestOptions),
       evaluate: (requestOptions) => runProjectOperation("evaluate", requestOptions),
@@ -262,6 +291,7 @@ export function createMclRuntime(options = {}) {
 
   return {
     openProject,
+    warmUp,
     parse: (source, requestOptions) => execute("parse", source, undefined, requestOptions),
     lint: (source, requestOptions) => execute("lint", source, undefined, requestOptions),
     format: (source, requestOptions) => execute("format", source, undefined, requestOptions),

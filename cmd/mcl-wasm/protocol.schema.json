@@ -16,7 +16,8 @@
       "properties": {
         "requestId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-        "operation": { "enum": ["parse", "lint", "format", "check", "evaluate", "render"] },
+        "operation": { "enum": ["parse", "lint", "format", "check", "evaluate", "render", "completion"] },
+        "position": { "$ref": "#/$defs/completionPosition" },
         "entrypoint": { "type": "string", "description": "Project-relative MCL source path. Defaults to main.mcl." },
         "source": { "type": "string", "description": "UTF-8 entrypoint source, limited by the runtime." },
         "files": {
@@ -33,6 +34,12 @@
         }
       },
       "required": ["operation", "source"],
+      "allOf": [
+        {
+          "if": { "properties": { "operation": { "const": "completion" } }, "required": ["operation"] },
+          "then": { "required": ["position"] }
+        }
+      ],
       "additionalProperties": false
     },
     "fileInput": {
@@ -68,7 +75,8 @@
             { "$ref": "#/$defs/formatResult" },
             { "$ref": "#/$defs/checkResult" },
             { "$ref": "#/$defs/evaluateResult" },
-            { "$ref": "#/$defs/renderResult" }
+            { "$ref": "#/$defs/renderResult" },
+            { "$ref": "#/$defs/completionResult" }
           ]
         },
         "error": { "$ref": "#/$defs/error" }
@@ -120,6 +128,34 @@
       "type": "object",
       "properties": { "yaml": { "type": "string" }, "artifacts": { "type": "integer", "minimum": 0 } },
       "required": ["yaml", "artifacts"],
+      "additionalProperties": false
+    },
+    "completionPosition": {
+      "type": "object",
+      "properties": {
+        "line": { "type": "integer", "minimum": 0 },
+        "character": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["line", "character"],
+      "additionalProperties": false
+    },
+    "completionItem": {
+      "type": "object",
+      "properties": {
+        "label": { "type": "string" },
+        "kind": { "type": "integer", "minimum": 0 },
+        "insertText": { "type": "string" }
+      },
+      "required": ["label", "kind"],
+      "additionalProperties": false
+    },
+    "completionResult": {
+      "type": "object",
+      "properties": {
+        "isIncomplete": { "type": "boolean" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/completionItem" } }
+      },
+      "required": ["isIncomplete", "items"],
       "additionalProperties": false
     },
     "error": {

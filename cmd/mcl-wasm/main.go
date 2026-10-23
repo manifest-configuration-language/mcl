@@ -17,6 +17,7 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/lsp"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
 
@@ -57,9 +58,20 @@ func handle(raw string, binaryArgument js.Value) string {
 	}
 	var requestID uint64
 	if input.RequestID != nil {
-		requestID = *input.RequestID
+		if *input.RequestID < 0 {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "requestId must be non-negative"}})
+		}
+		requestID = uint64(*input.RequestID)
 	}
-	result := response{RequestID: requestID, Revision: input.Revision}
+	var revision *uint64
+	if input.Revision != nil {
+		if *input.Revision < 0 {
+			return marshal(response{RequestID: requestID, Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "revision must be non-negative"}})
+		}
+		value := uint64(*input.Revision)
+		revision = &value
+	}
+	result := response{RequestID: requestID, Revision: revision}
 	if len(input.Source) > wasmprotocol.MaxSourceBytes {
 		result.Error = &responseError{Code: "MCL-WASM-SOURCE-LIMIT", Message: fmt.Sprintf("source exceeds the %d-byte limit", wasmprotocol.MaxSourceBytes)}
 		return marshal(result)
@@ -83,6 +95,36 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Ok = true
 			result.Result = wasmprotocol.FormatResult{Source: formatted}
 		}
+		return marshal(result)
+	}
+	if input.Operation == wasmprotocol.RequestOperationCompletion {
+		if input.Position == nil || input.Position.Line > uint64(^uint(0)>>1) || input.Position.Character > uint64(^uint(0)>>1) {
+			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "completion requires a valid non-negative position"}
+			return marshal(result)
+		}
+		binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
+		if binaryErr != nil {
+			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: binaryErr.Error()}
+			return marshal(result)
+		}
+		projectFiles, filesErr := newProjectFiles(input.Source, input.Files, binaryFiles, entrypoint)
+		if filesErr != nil {
+			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: filesErr.Error()}
+			return marshal(result)
+		}
+		items := lsp.CompletionsForProjectFS(lsp.CompletionParams{
+			ProjectRoot: browserProjectRoot(), Entrypoint: entrypoint, Source: input.Source,
+			Line: int(input.Position.Line), Character: int(input.Position.Character),
+		}, projectFiles)
+		result.Ok = true
+		completionItems := make([]wasmprotocol.CompletionItem, len(items))
+		for index, item := range items {
+			completionItems[index] = wasmprotocol.CompletionItem{Label: item.Label, Kind: uint64(item.Kind)}
+			if item.InsertText != "" {
+				completionItems[index].InsertText = &item.InsertText
+			}
+		}
+		result.Result = wasmprotocol.CompletionResult{IsIncomplete: false, Items: completionItems}
 		return marshal(result)
 	}
 

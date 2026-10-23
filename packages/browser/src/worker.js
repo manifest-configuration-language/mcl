@@ -114,6 +114,7 @@ self.addEventListener("message", async (event) => {
       revision: message.requestId,
       operation: message.operation,
       entrypoint: message.entrypoint,
+      position: message.position,
       source: message.source,
       files: encodedFiles.files,
     };

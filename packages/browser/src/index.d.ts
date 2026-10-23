@@ -1,5 +1,8 @@
 import type {
   CheckResult,
+  CompletionItem as ProtocolCompletionItem,
+  CompletionPosition as ProtocolCompletionPosition,
+  CompletionResult as ProtocolCompletionResult,
   Error as ProtocolError,
   EvaluateResult,
   FormatResult,
@@ -24,10 +27,14 @@ export type ProjectFiles = Readonly<Record<string, ProjectFile>>;
 export type MclError = ProtocolError;
 
 export type LintDiagnostic = ProtocolLintDiagnostic;
+export type CompletionPosition = ProtocolCompletionPosition;
+export type CompletionItem = ProtocolCompletionItem;
+export type CompletionResult = ProtocolCompletionResult;
 
 export type MclResult =
   | ({ operation: "parse" } & ParseResult)
   | { operation: "lint"; diagnostics: ProtocolLintDiagnostic[] }
+  | ({ operation: "completion" } & ProtocolCompletionResult)
   | ({ operation: "format" } & FormatResult)
   | ({ operation: "check" } & CheckResult)
   | ({ operation: "evaluate" } & EvaluateResult)
@@ -41,6 +48,7 @@ export interface RuntimeOptions {
 
 export interface MclRuntime {
   openProject(files: ProjectFiles): MclProject;
+  warmUp(options?: RequestOptions): Promise<void>;
   parse(source: string, options?: RequestOptions): Promise<MclResult & { operation: "parse" }>;
   lint(source: string, options?: RequestOptions): Promise<MclResult & { operation: "lint" }>;
   format(source: string, options?: RequestOptions): Promise<MclResult & { operation: "format" }>;
@@ -53,6 +61,7 @@ export interface MclRuntime {
 export interface MclProject {
   parse(options?: ProjectOperationOptions): Promise<MclResult & { operation: "parse" }>;
   lint(options?: ProjectOperationOptions): Promise<MclResult & { operation: "lint" }>;
+  complete(options: ProjectCompletionOptions): Promise<MclResult & { operation: "completion" }>;
   format(options?: ProjectOperationOptions): Promise<MclResult & { operation: "format" }>;
   check(options?: ProjectOperationOptions): Promise<MclResult & { operation: "check" }>;
   evaluate(options?: ProjectOperationOptions): Promise<MclResult & { operation: "evaluate" }>;
@@ -66,6 +75,10 @@ export interface RequestOptions {
 
 export interface ProjectOperationOptions extends RequestOptions {
   entrypoint?: string;
+}
+
+export interface ProjectCompletionOptions extends ProjectOperationOptions {
+  position: CompletionPosition;
 }
 
 export declare class MclRuntimeError extends Error {

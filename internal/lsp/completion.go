@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"io/fs"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,13 +20,38 @@ type completionParams struct {
 	} `json:"position"`
 }
 
-type completionItem struct {
+type completionItem = CompletionItem
+
+// CompletionItem is a completion candidate returned by the reusable completion API.
+type CompletionItem struct {
 	Label      string `json:"label"`
 	Kind       int    `json:"kind"`
 	InsertText string `json:"insertText,omitzero"`
 }
 
+// CompletionParams identifies a source position using zero-based UTF-16 coordinates.
+type CompletionParams struct {
+	ProjectRoot string
+	Entrypoint  string
+	Source      string
+	Line        int
+	Character   int
+}
+
+// CompletionsForProjectFS returns MCL completion candidates using files from projectFiles.
+func CompletionsForProjectFS(params CompletionParams, projectFiles fs.FS) []CompletionItem {
+	return complete(params.Source, location{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "")
+}
+
 func (s *server) completions(params completionParams) []completionItem {
+	state, exists := s.documents[params.TextDocument.URI]
+	if !exists {
+		return complete("", location{Line: params.Position.Line, Character: params.Position.Character}, "", "", nil, "")
+	}
+	return complete(state.Text, location{Line: params.Position.Line, Character: params.Position.Character}, "", "", nil, documentPath(params.TextDocument.URI))
+}
+
+func complete(source string, position location, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []CompletionItem {
 	items := []completionItem{
 		{Label: "let", Kind: 14},
 		{Label: "emit", Kind: 14},
@@ -41,29 +67,25 @@ func (s *server) completions(params completionParams) []completionItem {
 		{Label: "replaceAt", Kind: 3},
 		{Label: "mergeByKey", Kind: 3},
 	}
-	state, exists := s.documents[params.TextDocument.URI]
-	if !exists {
+	lines := strings.Split(source, "\n")
+	if position.Line < 0 || position.Line >= len(lines) {
 		return items
 	}
-	lines := strings.Split(state.Text, "\n")
-	if params.Position.Line < 0 || params.Position.Line >= len(lines) {
-		return items
-	}
-	runes := []rune(lines[params.Position.Line])
-	end := runeIndexAtUTF16(runes, params.Position.Character)
+	runes := []rune(lines[position.Line])
+	end := runeIndexAtUTF16(runes, position.Character)
 	start := end
 	for start > 0 && isIdentifierRune(runes[start-1]) {
 		start--
 	}
 	prefix := string(runes[start:end])
-	index, parseErr := analyzeSource(state.Text)
+	index, parseErr := analyzeSource(source)
 	if parseErr == nil {
-		for _, name := range index.visibleDeclarationNames(params.Position.Line + 1) {
+		for _, name := range index.visibleDeclarationNames(position.Line + 1) {
 			items = append(items, completionItem{Label: name, Kind: 6})
 		}
 	} else {
 		for lineNumber, line := range lines {
-			if lineNumber >= params.Position.Line {
+			if lineNumber >= position.Line {
 				break
 			}
 			if name, _, ok := declaredName(line); ok {
@@ -71,10 +93,10 @@ func (s *server) completions(params completionParams) []completionItem {
 			}
 		}
 	}
-	if offset, err := offsetAtUTF16(state.Text, params.Position); err == nil {
+	if offset, err := offsetAtUTF16(source, position); err == nil {
 		var bindings []localBinding
 		if parseErr != nil {
-			bindings = partialLocalBindings(state.Text, offset)
+			bindings = partialLocalBindings(source, offset)
 		} else {
 			bindings = index.visibleLocalBindings(offset)
 		}
@@ -82,20 +104,20 @@ func (s *server) completions(params completionParams) []completionItem {
 			items = append(items, completionItem{Label: binding.name, Kind: 6})
 		}
 	}
-	if fields := schemaFieldCompletions(params, lines, runes, end); len(fields) != 0 {
+	if fields := schemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
-	if fields := helmSchemaFieldCompletions(params, lines, runes, end); len(fields) != 0 {
+	if fields := helmSchemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
-	if fields := kubernetesSchemaFieldCompletions(params, lines, runes, end); len(fields) != 0 {
+	if fields := kubernetesSchemaFieldCompletions(position, lines, runes, end); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
-	filtered := make([]completionItem, 0, len(items))
+	filtered := make([]CompletionItem, 0, len(items))
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {
 		if strings.HasPrefix(item.Label, prefix) && !seen[item.Label] {
-			filtered = append(filtered, item)
+			filtered = append(filtered, CompletionItem(item))
 			seen[item.Label] = true
 		}
 	}
@@ -103,48 +125,52 @@ func (s *server) completions(params completionParams) []completionItem {
 	return filtered
 }
 
-func schemaFieldCompletions(params completionParams, lines []string, runes []rune, cursor int) []string {
-	line := lines[params.Position.Line]
+func schemaFieldCompletions(position location, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
+	line := lines[position.Line]
 	indent := len(line) - len(strings.TrimLeft(line, " "))
 	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
-		return nil
-	}
-	path := documentPath(params.TextDocument.URI)
-	if path == "" {
 		return nil
 	}
 	const placeholder = "__mcl_completion__"
-	candidateLines := slices.Clone(lines[:params.Position.Line+1])
+	candidateLines := slices.Clone(lines[:position.Line+1])
 	candidateLines[len(candidateLines)-1] = strings.Repeat(" ", indent) + placeholder + ": null"
-
-	return engine.SchemaFieldCompletions(path, strings.Join(candidateLines, "\n"), placeholder)
+	if projectFiles != nil {
+		fields, _ := engine.SchemaFieldCompletionsWithErrorForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+		return fields
+	}
+	if sourcePath != "" {
+		return engine.SchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+	}
+	return nil
 }
 
-func helmSchemaFieldCompletions(params completionParams, lines []string, runes []rune, cursor int) []string {
-	line := lines[params.Position.Line]
+func helmSchemaFieldCompletions(position location, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
+	line := lines[position.Line]
 	indent := len(line) - len(strings.TrimLeft(line, " "))
 	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
-		return nil
-	}
-	path := documentPath(params.TextDocument.URI)
-	if path == "" {
 		return nil
 	}
 	const placeholder = "__mcl_helm_completion__"
 	candidateLines := slices.Clone(lines)
-	candidateLines[params.Position.Line] = strings.Repeat(" ", indent) + placeholder + ": null"
+	candidateLines[position.Line] = strings.Repeat(" ", indent) + placeholder + ": null"
 
-	return engine.HelmSchemaFieldCompletions(path, strings.Join(candidateLines, "\n"), placeholder)
+	if projectFiles != nil {
+		return engine.HelmSchemaFieldCompletionsForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+	}
+	if sourcePath != "" {
+		return engine.HelmSchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+	}
+	return nil
 }
 
-func kubernetesSchemaFieldCompletions(params completionParams, lines []string, runes []rune, cursor int) []string {
-	line := lines[params.Position.Line]
+func kubernetesSchemaFieldCompletions(position location, lines []string, runes []rune, cursor int) []string {
+	line := lines[position.Line]
 	indent := len(line) - len(strings.TrimLeft(line, " "))
 	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
 		return nil
 	}
 	const placeholder = "__mcl_kubernetes_completion__"
-	candidateLines := slices.Clone(lines[:params.Position.Line+1])
+	candidateLines := slices.Clone(lines[:position.Line+1])
 	candidateLines[len(candidateLines)-1] = strings.Repeat(" ", indent) + placeholder + ": null"
 
 	return engine.KubernetesSchemaFieldCompletions(strings.Join(candidateLines, "\n"), placeholder)
