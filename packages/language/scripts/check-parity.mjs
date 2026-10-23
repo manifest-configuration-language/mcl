@@ -1,7 +1,8 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { parser } from "../src/parser.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -52,22 +53,32 @@ async function findMclFiles(directory) {
 
 validFixtures.push(...await findMclFiles(resolve(repositoryRoot, "cmd/mcl-wasm/testdata/examples")));
 
-for (const fixturePath of validFixtures) {
-  const fixture = fixturePath.slice(repositoryRoot.length + 1);
-  const source = await readFile(fixturePath, "utf8");
-  const tree = parser.parse(source);
-  if (hasSyntaxError(tree)) throw new Error(`Lezer parser rejected valid fixture ${fixture}`);
-  const go = spawnSync("go", ["run", "./cmd/mcl", "fmt", fixturePath], { cwd: repositoryRoot, encoding: "utf8" });
-  if (go.status !== 0) throw new Error(`Go parser rejected fixture ${fixture}: ${go.stderr}`);
-}
-
-for (const invalidFixture of ["invalid.mcl", "invalid-unsupported-operator.mcl"]) {
-  const invalidPath = resolve(packageRoot, "parity-fixtures", invalidFixture);
-  const invalidSource = await readFile(invalidPath, "utf8");
-  if (!hasSyntaxError(parser.parse(invalidSource))) {
-    throw new Error(`Lezer parser accepted invalid fixture ${invalidFixture}`);
+const temporaryDirectory = await mkdtemp(join(tmpdir(), "mcl-language-parity-"));
+const mclBinary = join(temporaryDirectory, process.platform === "win32" ? "mcl.exe" : "mcl");
+try {
+  const build = spawnSync("go", ["build", "-o", mclBinary, "./cmd/mcl"], { cwd: repositoryRoot, encoding: "utf8" });
+  if (build.error || build.status !== 0) {
+    throw new Error(`Could not build the Go parser: ${build.error ?? build.stderr}`);
   }
-  const go = spawnSync("go", ["run", "./cmd/mcl", "fmt", invalidPath], { cwd: repositoryRoot, encoding: "utf8" });
-  if (go.error || go.status === null) throw new Error(`Could not run Go parser for ${invalidFixture}: ${go.error}`);
-  if (go.status === 0) throw new Error(`Go parser accepted invalid fixture ${invalidFixture}`);
+  for (const fixturePath of validFixtures) {
+    const fixture = fixturePath.slice(repositoryRoot.length + 1);
+    const source = await readFile(fixturePath, "utf8");
+    const tree = parser.parse(source);
+    if (hasSyntaxError(tree)) throw new Error(`Lezer parser rejected valid fixture ${fixture}`);
+    const go = spawnSync(mclBinary, ["fmt", fixturePath], { cwd: repositoryRoot, encoding: "utf8" });
+    if (go.error || go.status !== 0) throw new Error(`Go parser rejected fixture ${fixture}: ${go.error ?? go.stderr}`);
+  }
+
+  for (const invalidFixture of ["invalid.mcl", "invalid-unsupported-operator.mcl"]) {
+    const invalidPath = resolve(packageRoot, "parity-fixtures", invalidFixture);
+    const invalidSource = await readFile(invalidPath, "utf8");
+    if (!hasSyntaxError(parser.parse(invalidSource))) {
+      throw new Error(`Lezer parser accepted invalid fixture ${invalidFixture}`);
+    }
+    const go = spawnSync(mclBinary, ["fmt", invalidPath], { cwd: repositoryRoot, encoding: "utf8" });
+    if (go.error || go.status === null) throw new Error(`Could not run Go parser for ${invalidFixture}: ${go.error}`);
+    if (go.status === 0) throw new Error(`Go parser accepted invalid fixture ${invalidFixture}`);
+  }
+} finally {
+  await rm(temporaryDirectory, { recursive: true, force: true });
 }
