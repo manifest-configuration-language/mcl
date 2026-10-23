@@ -8,17 +8,12 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 )
 
-func TestDiffUsesEachInputResourceCatalogAndParsesInterspersedFlags(t *testing.T) {
+func TestDiffParsesInterspersedFlagsWithBundleCRDs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for name, resourceName := range map[string]string{"before": "sample", "after": "updated"} {
 		directory := filepath.Join(root, name)
 		if err := os.MkdirAll(directory, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		config := "[kubernetes.resourceCatalog]\nrevision = \"mcl-kubernetes-resource-catalog-v1\"\n\n" +
-			"[[kubernetes.resourceCatalog.additionalResources]]\napiGroup = \"example.test.walnuts.dev\"\nkind = \"Widget\"\nresourceName = \"widgets\"\nscope = \"Namespaced\"\n"
-		if err := os.WriteFile(filepath.Join(directory, "mcl.toml"), []byte(config), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		source := "let crd =\n" +

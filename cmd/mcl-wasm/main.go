@@ -157,12 +157,7 @@ func handle(raw string, binaryArgument js.Value) string {
 			return marshal(result)
 		}
 		if input.Operation == "check" || input.Operation == "render" {
-			catalog, catalogErr := engine.LoadKubernetesResourceCatalogForProjectFS(browserProjectRoot(), projectFiles)
-			if catalogErr != nil {
-				result.Error = diagnosticError(input.Source, entrypoint, projectFiles, catalogErr)
-				return marshal(result)
-			}
-			if checkErr := engine.ValidateBundleOutputWithCatalog(bundle, catalog); checkErr != nil {
+			if checkErr := engine.ValidateBundleOutput(bundle); checkErr != nil {
 				result.Error = diagnosticError(input.Source, entrypoint, projectFiles, checkErr)
 				return marshal(result)
 			}

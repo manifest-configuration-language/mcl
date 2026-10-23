@@ -802,33 +802,6 @@ emit resource
 	}
 }
 
-func TestAdditionalCatalogResourceWithoutSchemaPassesValidation(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	config := `[kubernetes.resourceCatalog]
-revision = "mcl-kubernetes-resource-catalog-v1"
-
-[[kubernetes.resourceCatalog.additionalResources]]
-apiGroup = "widgets.example.test"
-kind = "Widget"
-resourceName = "widgets"
-scope = "Namespaced"
-`
-	if err := os.WriteFile(filepath.Join(root, "mcl.toml"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	source := `let resource =
-  apiVersion: "widgets.example.test/v1"
-  kind: "Widget"
-  metadata:
-    name: "sample"
-emit resource
-`
-	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), source); err != nil {
-		t.Fatalf("EvaluateSource() error = %v, want registered resource without schema to pass", err)
-	}
-}
-
 func TestCustomResourceWithInBundleSchemaPassesValidation(t *testing.T) {
 	t.Parallel()
 	source := `let crd =

@@ -190,26 +190,3 @@ func TestEvaluateProjectFileReadsDependencyLockFromFilesystem(t *testing.T) {
 		t.Fatalf("evaluate project file with virtual lock: got %v, want unsupported lock version", err)
 	}
 }
-
-func TestLoadKubernetesResourceCatalogForProjectFS(t *testing.T) {
-	t.Parallel()
-	files := fstest.MapFS{
-		projectConfigFileName: &fstest.MapFile{Data: []byte(`[kubernetes.resourceCatalog]
-revision = "mcl-kubernetes-resource-catalog-v1"
-
-[[kubernetes.resourceCatalog.additionalResources]]
-apiGroup = "widgets.example.test"
-kind = "Widget"
-resourceName = "widgets"
-scope = "Namespaced"
-`)},
-	}
-
-	catalog, err := LoadKubernetesResourceCatalogForProjectFS(filepath.Join(string(filepath.Separator), "virtual-project"), files)
-	if err != nil {
-		t.Fatalf("load project catalog: %v", err)
-	}
-	if catalog.Revision != "mcl-kubernetes-resource-catalog-v1" || len(catalog.AdditionalResources) != 1 {
-		t.Fatalf("loaded catalog = %#v, want configured revision and resource", catalog)
-	}
-}

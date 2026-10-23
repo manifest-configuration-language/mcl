@@ -70,21 +70,6 @@ func EvaluateProjectFileContext(ctx context.Context, projectRoot, entryPath stri
 	return evaluateFileWithFilesystem(ctx, entry, false, "", newProjectFilesystem(root, files))
 }
 
-// LoadKubernetesResourceCatalogForProjectFS reads the project configuration
-// from a root-relative filesystem. projectRoot must be an absolute logical
-// root and files must use slash-separated paths relative to that root.
-func LoadKubernetesResourceCatalogForProjectFS(projectRoot string, files fs.FS) (KubernetesResourceCatalog, error) {
-	if files == nil {
-		return KubernetesResourceCatalog{}, errors.New("project filesystem is required")
-	}
-	if !filepath.IsAbs(projectRoot) {
-		return KubernetesResourceCatalog{}, fmt.Errorf("project root %q must be absolute", projectRoot)
-	}
-	root := filepath.Clean(projectRoot)
-
-	return loadKubernetesResourceCatalogWithFilesystem(root, newProjectFilesystem(root, files))
-}
-
 func validProjectPath(name string) bool {
 	return fs.ValidPath(name) && name != "." && filepath.IsLocal(filepath.FromSlash(name)) && !strings.Contains(name, `\`)
 }

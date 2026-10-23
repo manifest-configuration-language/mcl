@@ -476,14 +476,6 @@ func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, d
 }
 
 func diffCommand(ctx context.Context, beforePath, afterPath, operation string) error {
-	beforeCatalog, err := mcl.LoadKubernetesResourceCatalogForFile(beforePath)
-	if err != nil {
-		return err
-	}
-	afterCatalog, err := mcl.LoadKubernetesResourceCatalogForFile(afterPath)
-	if err != nil {
-		return err
-	}
 	evaluate := func(path string) (mcl.Bundle, error) {
 		if operation != "" {
 			return mcl.EvaluateFileForOperationContext(ctx, path, operation)
@@ -495,17 +487,17 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string) e
 	if err != nil {
 		return fmt.Errorf("evaluate before input: %w", err)
 	}
-	if err := mcl.ValidateBundleOutputWithCatalog(before, beforeCatalog); err != nil {
+	if err := mcl.ValidateBundleOutput(before); err != nil {
 		return err
 	}
 	after, err := evaluate(afterPath)
 	if err != nil {
 		return fmt.Errorf("evaluate after input: %w", err)
 	}
-	if err := mcl.ValidateBundleOutputWithCatalog(after, afterCatalog); err != nil {
+	if err := mcl.ValidateBundleOutput(after); err != nil {
 		return err
 	}
-	changes, err := mcl.DiffBundlesWithCatalogs(before, after, beforeCatalog, afterCatalog)
+	changes, err := mcl.DiffBundles(before, after)
 	if err != nil {
 		return err
 	}
@@ -530,12 +522,8 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string) e
 }
 
 func checkCommand(ctx context.Context, path, operation string) error {
-	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(path)
-	if err != nil {
-		return err
-	}
-
 	var bundle mcl.Bundle
+	var err error
 	if operation != "" {
 		bundle, err = mcl.EvaluateFileForOperationContext(ctx, path, operation)
 	} else {
@@ -545,7 +533,7 @@ func checkCommand(ctx context.Context, path, operation string) error {
 		return err
 	}
 
-	return mcl.ValidateBundleOutputWithCatalog(bundle, catalog)
+	return mcl.ValidateBundleOutput(bundle)
 }
 
 func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string) error {
@@ -561,11 +549,8 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	if format != "yaml" && format != "json" {
 		return fmt.Errorf("unsupported output format %q", format)
 	}
-	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(path)
-	if err != nil {
-		return err
-	}
 	var bundle mcl.Bundle
+	var err error
 	if operation != "" {
 		bundle, err = mcl.EvaluateFileForOperationContext(ctx, path, operation)
 	} else {
@@ -574,10 +559,7 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	if err != nil {
 		return err
 	}
-	plan, err := engine.NewBundleOutputPlanWithCatalog(bundle, catalog)
-	if err != nil {
-		return err
-	}
+	plan := engine.NewBundleOutputPlan(bundle)
 	if err := plan.Validate(); err != nil {
 		return err
 	}

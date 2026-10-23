@@ -750,7 +750,6 @@ type EvaluationState struct {
 	Allocations      *runtimeAllocationBudget
 	SourcePath       string
 	Module           *ModuleContext
-	ResourceCatalog  KubernetesResourceCatalog
 	NodeIndex        map[*NodeIdentity]runtimeNodeRecord
 	ActiveReferences map[activeReference]bool
 	ActiveRules      map[*runtimeRuleIdentity]bool

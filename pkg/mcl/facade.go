@@ -148,7 +148,9 @@ func RenderOperation(bundle Bundle, operation string) ([]RenderedFile, error) {
 	return engine.RenderOperation(bundle, operation)
 }
 
-// LoadKubernetesResourceCatalogForFileは入力MCLファイルのProject設定からResource Catalogを読み込みます。
+// LoadKubernetesResourceCatalogForFileは組み込みResource Catalogを返します。
+//
+// Deprecated: プロジェクト設定からResource Descriptorを読み込む機能はありません。DefaultKubernetesResourceCatalogを使ってください。
 func LoadKubernetesResourceCatalogForFile(entryPath string) (KubernetesResourceCatalog, error) {
 	return engine.LoadKubernetesResourceCatalogForFile(entryPath)
 }

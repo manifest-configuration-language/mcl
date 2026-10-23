@@ -31,11 +31,7 @@ func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, names
 	if err != nil {
 		return err
 	}
-	catalog, err := mcl.LoadKubernetesResourceCatalogForFile(filePath)
-	if err != nil {
-		return err
-	}
-	resourceScope, knownScope, err := engine.KubernetesResourceScopeForBundle(bundle, catalog, apiVersion, kind)
+	resourceScope, knownScope, err := engine.KubernetesResourceScopeForBundle(bundle, mcl.DefaultKubernetesResourceCatalog(), apiVersion, kind)
 	if err != nil {
 		return err
 	}

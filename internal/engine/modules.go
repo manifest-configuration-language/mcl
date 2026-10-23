@@ -30,8 +30,9 @@ func resolveModuleLink(path string) (string, bool) {
 }
 
 const (
-	maxProjectMCLFiles = 4096
-	maxProjectMCLBytes = 64 << 20
+	maxProjectMCLFiles    = 4096
+	maxProjectMCLBytes    = 64 << 20
+	projectConfigFileName = "mcl.toml"
 )
 
 type moduleLoader struct {
@@ -51,7 +52,6 @@ type moduleLoader struct {
 	budget        *functionBudget
 	allocations   *runtimeAllocationBudget
 	analysis      *TypeAnalysisContext
-	catalog       KubernetesResourceCatalog
 }
 
 func runtimeBundleToBundle(runtimeBundle RuntimeBundle) (Bundle, error) {
@@ -941,10 +941,6 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read entry source %q: %w", canonical, err)
 	}
-	catalog, err := loadKubernetesResourceCatalogWithFilesystem(root, files)
-	if err != nil {
-		return Bundle{}, err
-	}
 	var dependencies *dependency.Lock
 	if files.osBacked {
 		dependencies, err = dependency.Open(ctx, root, update, dependencyToolchainIdentity())
@@ -960,7 +956,6 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, loadedModules: make(map[string]struct{}), budget: &functionBudget{},
 		analysis: &TypeAnalysisContext{},
-		catalog:  catalog,
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(canonical, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	if err != nil {
@@ -989,7 +984,7 @@ func discoverProjectRoot(directory string) (string, error) {
 	}
 	defaultRoot := root
 	for {
-		marker := filepath.Join(root, "mcl.toml")
+		marker := filepath.Join(root, projectConfigFileName)
 		info, err := os.Lstat(marker)
 		if err == nil {
 			if !info.Mode().IsRegular() {
@@ -1058,10 +1053,6 @@ func evaluateSourceWithFilesystem(ctx context.Context, path, source string, over
 	} else {
 		root = files.root
 	}
-	catalog, err := loadKubernetesResourceCatalogWithFilesystem(root, files)
-	if err != nil {
-		return Bundle{}, nil, err
-	}
 	dependencies, err := dependency.OpenWithFS(ctx, root, false, dependencyToolchainIdentity(), files.files)
 	if err != nil {
 		return Bundle{}, nil, err
@@ -1106,7 +1097,6 @@ func evaluateSourceWithFilesystem(ctx context.Context, path, source string, over
 		budget:        &functionBudget{},
 		allocations:   &runtimeAllocationBudget{},
 		analysis:      &TypeAnalysisContext{},
-		catalog:       catalog,
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(entry, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	loadedModules := loader.loadedModulePaths()
@@ -1185,8 +1175,8 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis, ResourceCatalog: loader.catalog}
-	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext, ResourceCatalog: loader.catalog}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis}
+	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)
 		if !ok {

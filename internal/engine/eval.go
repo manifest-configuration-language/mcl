@@ -303,11 +303,10 @@ func EvaluateASTContext(ctx context.Context, module ModuleAST) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	moduleContext := &ModuleContext{Context: ctx, Analysis: &TypeAnalysisContext{}, ResourceCatalog: DefaultKubernetesResourceCatalog()}
+	moduleContext := &ModuleContext{Context: ctx, Analysis: &TypeAnalysisContext{}}
 	state := &EvaluationState{
 		Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types,
 		Stack: make(map[string]bool), Budget: &functionBudget{ctx: ctx}, Allocations: &runtimeAllocationBudget{}, Module: moduleContext,
-		ResourceCatalog: DefaultKubernetesResourceCatalog(),
 	}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)
@@ -355,7 +354,7 @@ func EvaluateASTContext(ctx context.Context, module ModuleAST) (Bundle, error) {
 func evaluateASTRuntime(module ModuleAST) (*RuntimeBundle, *EvaluationState, error) {
 	state := &EvaluationState{
 		Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis),
-		Stack: make(map[string]bool), Budget: &functionBudget{}, ResourceCatalog: DefaultKubernetesResourceCatalog(),
+		Stack: make(map[string]bool), Budget: &functionBudget{},
 	}
 	_, bundle, err := evaluateModuleASTRuntime(module, state, true)
 	if err != nil {
