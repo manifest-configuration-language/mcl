@@ -46,7 +46,7 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: mise run actions:lint
       - name: Run Browser SDK unit tests
-        run: node --test packages/browser/test/runtime-lifecycle.test.mjs
+        run: npm --prefix packages/browser run test:unit
       - name: Check language grammar parity
         run: cd packages/language && npm ci && npm run check:parity
       - name: Pack and verify npm packages
