@@ -46,7 +46,7 @@ func newReferenceCommand() *cobra.Command {
 			if err := os.MkdirAll(filepath.Dir(stdlibPath), 0o755); err != nil {
 				return fmt.Errorf("create standard-library reference directory: %w", err)
 			}
-			if err := os.WriteFile(stdlibPath, []byte(standardLibraryReference(version)), 0o644); err != nil {
+			if err := os.WriteFile(stdlibPath, []byte(standardLibraryReference(version)), 0o600); err != nil {
 				return fmt.Errorf("write standard-library reference: %w", err)
 			}
 
@@ -55,6 +55,7 @@ func newReferenceCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&outputDirectory, "output", "", "Output directory")
 	command.Flags().StringVar(&version, "version", "", "MCL package version")
+
 	return command
 }
 
