@@ -222,12 +222,12 @@ jobs:
         run: |
           set -euo pipefail
           attempt=1
-          while ! npm view "@manifest-configuration-language/browser@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view "@manifest-configuration-language/language@$MCL_VERSION" version >/dev/null 2>&1; do
-            if [ "$attempt" -ge 20 ]; then
-              printf 'npm registry did not expose all MCL %s packages within five minutes.\n' "$MCL_VERSION" >&2
+          while ! npm view --prefer-online "@manifest-configuration-language/browser@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view --prefer-online "@manifest-configuration-language/language@$MCL_VERSION" version >/dev/null 2>&1; do
+            if [ "$attempt" -ge 30 ]; then
+              printf 'npm registry did not expose all MCL %s packages within fifteen minutes.\n' "$MCL_VERSION" >&2
               exit 1
             fi
-            sleep 15
+            sleep 30
             attempt=$((attempt + 1))
           done
 
