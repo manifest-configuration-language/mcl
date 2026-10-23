@@ -16,8 +16,8 @@
   },
   "scripts": {
     "build": "lezer-generator src/mcl.grammar -o src/parser.js",
-    "check:parity": "npm run build && node scripts/check-parity.mjs && node scripts/check-textmate.mjs && node scripts/smoke-language-support.mjs",
-    "prepack": "npm run build"
+    "check:parity": "pnpm run build && node scripts/check-parity.mjs && node scripts/check-textmate.mjs && node scripts/smoke-language-support.mjs",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@lezer/highlight": "1.2.5",

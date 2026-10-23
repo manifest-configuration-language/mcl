@@ -24,15 +24,13 @@ runs:
       shell: bash
       run: mise run release:wasm
 
-    - name: Install language package dependencies
+    - name: Install npm package workspace dependencies
       shell: bash
-      working-directory: packages/language
-      run: npm ci
+      run: pnpm install --frozen-lockfile
 
     - name: Check language grammar parity
       shell: bash
-      working-directory: packages/language
-      run: npm run check:parity
+      run: pnpm --filter @manifest-configuration-language/language run check:parity
 
     - name: Pack and verify npm packages
       shell: bash

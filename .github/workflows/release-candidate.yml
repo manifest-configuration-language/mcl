@@ -23,6 +23,8 @@ jobs:
         with:
           install: true
           cache: true
+      - name: Set up pnpm
+        run: corepack enable && pnpm --version
       - name: Select candidate version
         id: version
         run: |

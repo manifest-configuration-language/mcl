@@ -34,9 +34,9 @@ for package in browser language; do
   (
     cd "$source_directory"
     if [[ "$package" == browser && "$prebuilt_browser_wasm" == true ]]; then
-      MCL_BROWSER_WASM_PREBUILT=true npm pack --pack-destination "$output_directory" >/dev/null
+      MCL_BROWSER_WASM_PREBUILT=true pnpm pack --pack-destination "$output_directory" >/dev/null
     else
-      npm pack --pack-destination "$output_directory" >/dev/null
+      pnpm pack --pack-destination "$output_directory" >/dev/null
     fi
   )
   archive="$archive_name"

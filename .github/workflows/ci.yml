@@ -25,6 +25,10 @@ jobs:
         with:
           install: true
           cache: true
+      - name: Set up pnpm
+        run: corepack enable && pnpm --version
+      - name: Install npm package workspace
+        run: pnpm install --frozen-lockfile
       - name: Get Go cache paths
         id: go-cache-paths
         run: |
@@ -46,14 +50,13 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: mise run actions:lint
       - name: Run Browser SDK unit tests
-        run: npm --prefix packages/browser run test:unit
+        run: pnpm --filter @manifest-configuration-language/browser run test:unit
       - name: Check language grammar parity
-        run: cd packages/language && npm ci && npm run check:parity
+        run: pnpm --filter @manifest-configuration-language/language run check:parity
       - name: Pack and verify npm packages
         run: scripts/verify-package-tarballs.sh --prebuilt-browser-wasm
       - name: Check generated protocol sources are current
         run: |
           go generate ./cmd/mcl-wasm
-          cd packages/browser && npm ci && npm run generate:protocol
-          cd ../..
+          pnpm --filter @manifest-configuration-language/browser run generate:protocol
           git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.d.ts packages/browser/src/limits.js

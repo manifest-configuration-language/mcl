@@ -54,6 +54,9 @@ jobs:
           install: true
           cache: false
 
+      - name: Set up pnpm
+        run: corepack enable && pnpm --version
+
       - name: Verify release
         uses: ./.github/actions/verify-release
         with:

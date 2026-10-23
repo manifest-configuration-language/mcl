@@ -24,7 +24,7 @@
     "build:wasm": "node ./scripts/build-wasm.mjs",
     "generate:protocol": "node ./scripts/generate-protocol.mjs",
     "test:unit": "node --test ./test/runtime-lifecycle.test.mjs",
-    "prepack": "npm run build:wasm"
+    "prepack": "pnpm run build:wasm"
   },
   "engines": {
     "node": ">=20.19"
