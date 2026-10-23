@@ -205,9 +205,6 @@ func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, dept
 
 		return *resolved
 	}
-	if len(schema.AllOf) > 0 || len(schema.AnyOf) > 0 || len(schema.OneOf) > 0 || schema.Not != nil || len(schema.PatternProperties) > 0 {
-		return Type{Kind: "Any"}
-	}
 	types := []string(schema.Type)
 	if len(types) == 0 && len(schema.Properties) > 0 {
 		types = []string{"object"}
@@ -227,6 +224,25 @@ func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, dept
 	}
 	if schema.Nullable && inferred.Kind != "Null" {
 		inferred = union(inferred, Type{Kind: "Null"})
+	}
+	for index := range schema.AllOf {
+		branch := openAPISchema(&openapi.ResourceSchema{Schema: &schema.AllOf[index]}, refs, depth+1)
+		inferred = intersect(inferred, branch)
+	}
+	for _, branches := range [][]spec.Schema{schema.AnyOf, schema.OneOf} {
+		if len(branches) == 0 {
+			continue
+		}
+		var alternatives Type
+		for index := range branches {
+			branch := openAPISchema(&openapi.ResourceSchema{Schema: &branches[index]}, refs, depth+1)
+			if index == 0 {
+				alternatives = branch
+			} else {
+				alternatives = union(alternatives, branch)
+			}
+		}
+		inferred = intersect(inferred, alternatives)
 	}
 
 	return inferred
@@ -353,4 +369,68 @@ func union(left, right Type) Type {
 	}
 
 	return Type{Options: options}
+}
+
+func intersect(left, right Type) Type {
+	if left.Kind == "Any" {
+		return right
+	}
+	if right.Kind == "Any" {
+		return left
+	}
+	if len(left.Options) > 0 {
+		options := make([]Type, 0, len(left.Options))
+		for _, option := range left.Options {
+			intersection := intersect(option, right)
+			if intersection.Kind != "Any" || len(intersection.Options) > 0 || len(intersection.Fields) > 0 {
+				options = append(options, intersection)
+			}
+		}
+		if len(options) == 1 {
+			return options[0]
+		}
+		if len(options) > 1 {
+			return Type{Options: options}
+		}
+
+		return Type{Kind: "Any"}
+	}
+	if len(right.Options) > 0 {
+		return intersect(right, left)
+	}
+	if left.Kind != right.Kind {
+		return Type{Kind: "Any"}
+	}
+	if left.Kind != "" {
+		return left
+	}
+	fields := make(map[string]Field, len(left.Fields)+len(right.Fields))
+	for _, field := range left.Fields {
+		fields[field.Name] = field
+	}
+	for _, field := range right.Fields {
+		if existing, exists := fields[field.Name]; exists {
+			existing.Type = intersect(existing.Type, field.Type)
+			existing.Optional = existing.Optional && field.Optional
+			fields[field.Name] = existing
+		} else {
+			fields[field.Name] = field
+		}
+	}
+	merged := make([]Field, 0, len(fields))
+	for _, field := range fields {
+		merged = append(merged, field)
+	}
+	slices.SortFunc(merged, func(left, right Field) int { return strings.Compare(left.Name, right.Name) })
+	result := Type{Fields: merged, OpenRecord: left.OpenRecord && right.OpenRecord}
+	if left.AdditionalProperties != nil && right.AdditionalProperties != nil {
+		additional := intersect(*left.AdditionalProperties, *right.AdditionalProperties)
+		result.AdditionalProperties = &additional
+	} else if left.AdditionalProperties != nil && right.OpenRecord {
+		result.AdditionalProperties = left.AdditionalProperties
+	} else if right.AdditionalProperties != nil && left.OpenRecord {
+		result.AdditionalProperties = right.AdditionalProperties
+	}
+
+	return result
 }

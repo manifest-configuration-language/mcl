@@ -60,6 +60,7 @@ description = "Package CLI and WebAssembly release assets with checksums"
 run = '''
 set -eu
 rm -rf dist
+mise run release:reference
 if [ "${MCL_RELEASE_ASSETS_STAGED:-false}" != true ]; then
   mise run wasm:build
   mise run release:wasm
@@ -73,4 +74,13 @@ case "${MCL_RELEASE_MODE:-snapshot}" in
   *) printf 'Unsupported MCL_RELEASE_MODE: %s\n' "$MCL_RELEASE_MODE" >&2; exit 1 ;;
 esac
 (cd dist && sha256sum --check SHA256SUMS)
+'''
+
+[tasks."release:reference"]
+description = "Generate CLI and standard library reference release assets"
+run = '''
+set -eu
+: "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+rm -rf .build/reference
+go run ./cmd/mcl reference --output .build/reference --version "$MCL_VERSION"
 '''
