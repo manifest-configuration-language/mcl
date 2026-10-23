@@ -209,6 +209,7 @@ func browserDeclarationHover(node syntax.ASTNode, source string) string {
 		if declaration.Exported {
 			prefix = "export " + prefix
 		}
+
 		return prefix + declaration.Name + " = " + browserTypeText(source, declaration.TypeSpec)
 	case *syntax.LetDeclaration:
 		prefix := "let "
