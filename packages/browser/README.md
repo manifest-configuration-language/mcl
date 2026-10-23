@@ -1,6 +1,6 @@
 # @manifest-configuration-language/browser
 
-`@manifest-configuration-language/browser` runs MCL parse, lint, format, check, evaluate, and render operations in a dedicated Web Worker. Its `prepack` step uses the shared WASM build script, which builds with the active Go toolchain, applies the mise-pinned Binaryen `wasm-opt -Oz`, selects the smaller binary, and copies the matching Go `wasm_exec.js` so both runtime assets ship together. GitHub Release assets use this same output. Update the Go and Binaryen pins in the repository's `mise.toml` when upgrading either tool.
+`@manifest-configuration-language/browser` runs MCL parse, lint, format, completion, definition, hover, check, evaluate, and render operations in a dedicated Web Worker. Its `prepack` step uses the shared WASM build script, which builds with the active Go toolchain, applies the mise-pinned Binaryen `wasm-opt -Oz`, selects the smaller binary, and copies the matching Go `wasm_exec.js` so both runtime assets ship together. GitHub Release assets use this same output. Update the Go and Binaryen pins in the repository's `mise.toml` when upgrading either tool.
 
 ```js
 import { createMclRuntime } from "@manifest-configuration-language/browser";
@@ -25,7 +25,9 @@ Project files can be UTF-8 strings or `Uint8Array` values. UTF-8 files remain in
 
 `project.complete({ entrypoint, position })` returns the MCL language-service candidates for a zero-based UTF-16 position. Completion uses the same local project files as parsing and rendering, including schemas and Helm values schemas. It does not access a Kubernetes API server or any other network service.
 
-The package exports `CompletionPosition`, `CompletionItem`, `CompletionResult`, `maxSourceBytes`, `maxProjectFiles`, `maxProjectFileBytes`, and `maxProjectBytes` so browser interfaces can display or consume the runtime's public types and limits.
+`project.definition({ entrypoint, position })` returns a project-relative declaration path and zero-based UTF-16 range for local and imported MCL declarations. `project.hover({ entrypoint, position })` returns declaration syntax, including explicit type annotations and function or rule signatures. Hover does not infer runtime value types, and both operations use only project files already supplied to the browser runtime.
+
+The package exports the completion, definition, and hover result types, `maxSourceBytes`, `maxProjectFiles`, `maxProjectFileBytes`, and `maxProjectBytes` so browser interfaces can consume the runtime's public types and limits.
 
 MCL decodes the request into a root-relative `io/fs` filesystem for project files, module imports, schemas, resource catalogs, and dependency locks. The runtime limits are defined in the [protocol schema](https://github.com/manifest-configuration-language/mcl/blob/main/cmd/mcl-wasm/protocol.schema.json). The worker blocks `fetch` after loading the WASM runtime assets, so MCL project evaluation cannot make external network requests.
 

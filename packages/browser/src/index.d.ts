@@ -3,14 +3,19 @@ import type {
   CompletionItem as ProtocolCompletionItem,
   CompletionPosition as ProtocolCompletionPosition,
   CompletionResult as ProtocolCompletionResult,
+  DefinitionLocation as ProtocolDefinitionLocation,
+  DefinitionResult as ProtocolDefinitionResult,
   Error as ProtocolError,
   EvaluateResult,
   FormatResult,
+  HoverInfo as ProtocolHoverInfo,
+  HoverResult as ProtocolHoverResult,
   LintDiagnostic as ProtocolLintDiagnostic,
   ParseResult,
   RelatedLocation as ProtocolRelatedLocation,
   RenderResult,
   Request as WasmRequest,
+  SourceRange as ProtocolSourceRange,
 } from "./protocol.js";
 
 export type MclOperation = WasmRequest["operation"];
@@ -30,11 +35,18 @@ export type LintDiagnostic = ProtocolLintDiagnostic;
 export type CompletionPosition = ProtocolCompletionPosition;
 export type CompletionItem = ProtocolCompletionItem;
 export type CompletionResult = ProtocolCompletionResult;
+export type DefinitionResult = ProtocolDefinitionResult;
+export type DefinitionLocation = ProtocolDefinitionLocation;
+export type HoverResult = ProtocolHoverResult;
+export type HoverInfo = ProtocolHoverInfo;
+export type SourceRange = ProtocolSourceRange;
 
 export type MclResult =
   | ({ operation: "parse" } & ParseResult)
   | { operation: "lint"; diagnostics: ProtocolLintDiagnostic[] }
   | ({ operation: "completion" } & ProtocolCompletionResult)
+  | ({ operation: "definition" } & ProtocolDefinitionResult)
+  | ({ operation: "hover" } & ProtocolHoverResult)
   | ({ operation: "format" } & FormatResult)
   | ({ operation: "check" } & CheckResult)
   | ({ operation: "evaluate" } & EvaluateResult)
@@ -55,6 +67,10 @@ export interface MclRuntime {
   check(source: string, files?: ProjectFiles, options?: RequestOptions): Promise<MclResult & { operation: "check" }>;
   evaluate(source: string, files?: ProjectFiles, options?: RequestOptions): Promise<MclResult & { operation: "evaluate" }>;
   render(source: string, files?: ProjectFiles, options?: RequestOptions): Promise<MclResult & { operation: "render" }>;
+  definition(source: string, options: PositionRequestOptions): Promise<MclResult & { operation: "definition" }>;
+  definition(source: string, files: ProjectFiles | undefined, options: PositionRequestOptions): Promise<MclResult & { operation: "definition" }>;
+  hover(source: string, options: PositionRequestOptions): Promise<MclResult & { operation: "hover" }>;
+  hover(source: string, files: ProjectFiles | undefined, options: PositionRequestOptions): Promise<MclResult & { operation: "hover" }>;
   dispose(): void;
 }
 
@@ -62,6 +78,8 @@ export interface MclProject {
   parse(options?: ProjectOperationOptions): Promise<MclResult & { operation: "parse" }>;
   lint(options?: ProjectOperationOptions): Promise<MclResult & { operation: "lint" }>;
   complete(options: ProjectCompletionOptions): Promise<MclResult & { operation: "completion" }>;
+  definition(options: ProjectNavigationOptions): Promise<MclResult & { operation: "definition" }>;
+  hover(options: ProjectNavigationOptions): Promise<MclResult & { operation: "hover" }>;
   format(options?: ProjectOperationOptions): Promise<MclResult & { operation: "format" }>;
   check(options?: ProjectOperationOptions): Promise<MclResult & { operation: "check" }>;
   evaluate(options?: ProjectOperationOptions): Promise<MclResult & { operation: "evaluate" }>;
@@ -78,6 +96,15 @@ export interface ProjectOperationOptions extends RequestOptions {
 }
 
 export interface ProjectCompletionOptions extends ProjectOperationOptions {
+  position: CompletionPosition;
+}
+
+export interface ProjectNavigationOptions extends ProjectOperationOptions {
+  position: CompletionPosition;
+}
+
+export interface PositionRequestOptions extends RequestOptions {
+  entrypoint?: string;
   position: CompletionPosition;
 }
 

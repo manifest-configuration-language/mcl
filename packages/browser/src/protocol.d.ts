@@ -4,7 +4,7 @@ export type MCLWebAssemblyRequestAndResponseProtocol = Request | Response;
 export type Request = {
   requestId?: number;
   revision?: number;
-  operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion";
+  operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion" | "definition" | "hover";
   position?: CompletionPosition;
   /**
    * Project-relative MCL source path. Defaults to main.mcl.
@@ -38,7 +38,16 @@ export interface Response {
   requestId: number;
   revision?: number;
   ok: boolean;
-  result?: ParseResult | LintResult | FormatResult | CheckResult | EvaluateResult | RenderResult | CompletionResult;
+  result?:
+    | ParseResult
+    | LintResult
+    | FormatResult
+    | CheckResult
+    | EvaluateResult
+    | RenderResult
+    | CompletionResult
+    | DefinitionResult
+    | HoverResult;
   error?: Error;
 }
 export interface ParseResult {
@@ -77,6 +86,24 @@ export interface CompletionItem {
   label: string;
   kind: number;
   insertText?: string;
+}
+export interface DefinitionResult {
+  location: DefinitionLocation | null;
+}
+export interface DefinitionLocation {
+  path: string;
+  range: SourceRange;
+}
+export interface SourceRange {
+  start: CompletionPosition;
+  end: CompletionPosition;
+}
+export interface HoverResult {
+  hover: HoverInfo | null;
+}
+export interface HoverInfo {
+  contents: string;
+  range: SourceRange;
 }
 export interface Error {
   code: string;

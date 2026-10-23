@@ -2,23 +2,14 @@
 
 package wasmprotocol
 
-type CheckResult struct {
-	// Artifacts corresponds to the JSON schema field "artifacts".
-	Artifacts uint64 `json:"artifacts" yaml:"artifacts" mapstructure:"artifacts"`
+type HoverResultHover_0 = HoverInfo
 
-	// Valid corresponds to the JSON schema field "valid".
-	Valid interface{} `json:"valid" yaml:"valid" mapstructure:"valid"`
-}
+type HoverResultHover struct {
+	// Contents corresponds to the JSON schema field "contents".
+	Contents string `json:"contents" yaml:"contents" mapstructure:"contents"`
 
-type CompletionItem struct {
-	// InsertText corresponds to the JSON schema field "insertText".
-	InsertText *string `json:"insertText,omitempty,omitzero" yaml:"insertText,omitempty" mapstructure:"insertText,omitempty"`
-
-	// Kind corresponds to the JSON schema field "kind".
-	Kind uint64 `json:"kind" yaml:"kind" mapstructure:"kind"`
-
-	// Label corresponds to the JSON schema field "label".
-	Label string `json:"label" yaml:"label" mapstructure:"label"`
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
 }
 
 type CompletionPosition struct {
@@ -35,6 +26,42 @@ type CompletionResult struct {
 
 	// Items corresponds to the JSON schema field "items".
 	Items []CompletionItem `json:"items" yaml:"items" mapstructure:"items"`
+}
+
+type CheckResult struct {
+	// Artifacts corresponds to the JSON schema field "artifacts".
+	Artifacts uint64 `json:"artifacts" yaml:"artifacts" mapstructure:"artifacts"`
+
+	// Valid corresponds to the JSON schema field "valid".
+	Valid interface{} `json:"valid" yaml:"valid" mapstructure:"valid"`
+}
+
+type DefinitionLocation struct {
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path" yaml:"path" mapstructure:"path"`
+
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+}
+
+type DefinitionResultLocation_0 = DefinitionLocation
+
+type DefinitionResultLocation struct {
+	// Path corresponds to the JSON schema field "path".
+	Path string `json:"path" yaml:"path" mapstructure:"path"`
+
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+}
+
+type DefinitionResult struct {
+	// Location corresponds to the JSON schema field "location".
+	Location *DefinitionResultLocation `json:"location" yaml:"location" mapstructure:"location"`
+}
+
+type HoverResult struct {
+	// Hover corresponds to the JSON schema field "hover".
+	Hover *HoverResultHover `json:"hover" yaml:"hover" mapstructure:"hover"`
 }
 
 type Error struct {
@@ -71,6 +98,11 @@ type EvaluateResult struct {
 	RenderedBytes uint64 `json:"renderedBytes" yaml:"renderedBytes" mapstructure:"renderedBytes"`
 }
 
+type FileInputEncoding string
+
+const FileInputEncodingUtf8 FileInputEncoding = "utf8"
+const FileInputEncodingBinary FileInputEncoding = "binary"
+
 // Binary files omit content and are supplied in the optional second run argument
 // under the same path.
 type FileInput struct {
@@ -81,14 +113,28 @@ type FileInput struct {
 	Encoding FileInputEncoding `json:"encoding" yaml:"encoding" mapstructure:"encoding"`
 }
 
-type FileInputEncoding string
-
-const FileInputEncodingBinary FileInputEncoding = "binary"
-const FileInputEncodingUtf8 FileInputEncoding = "utf8"
-
 type FormatResult struct {
 	// Source corresponds to the JSON schema field "source".
 	Source string `json:"source" yaml:"source" mapstructure:"source"`
+}
+
+type HoverInfo struct {
+	// Contents corresponds to the JSON schema field "contents".
+	Contents string `json:"contents" yaml:"contents" mapstructure:"contents"`
+
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+}
+
+type CompletionItem struct {
+	// InsertText corresponds to the JSON schema field "insertText".
+	InsertText *string `json:"insertText,omitempty,omitzero" yaml:"insertText,omitempty" mapstructure:"insertText,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind uint64 `json:"kind" yaml:"kind" mapstructure:"kind"`
+
+	// Label corresponds to the JSON schema field "label".
+	Label string `json:"label" yaml:"label" mapstructure:"label"`
 }
 
 type LintDiagnostic struct {
@@ -182,8 +228,10 @@ type RequestOperation string
 
 const RequestOperationCheck RequestOperation = "check"
 const RequestOperationCompletion RequestOperation = "completion"
+const RequestOperationDefinition RequestOperation = "definition"
 const RequestOperationEvaluate RequestOperation = "evaluate"
 const RequestOperationFormat RequestOperation = "format"
+const RequestOperationHover RequestOperation = "hover"
 const RequestOperationLint RequestOperation = "lint"
 const RequestOperationParse RequestOperation = "parse"
 const RequestOperationRender RequestOperation = "render"
@@ -203,4 +251,12 @@ type Response struct {
 
 	// Revision corresponds to the JSON schema field "revision".
 	Revision *uint64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
+}
+
+type SourceRange struct {
+	// End corresponds to the JSON schema field "end".
+	End CompletionPosition `json:"end" yaml:"end" mapstructure:"end"`
+
+	// Start corresponds to the JSON schema field "start".
+	Start CompletionPosition `json:"start" yaml:"start" mapstructure:"start"`
 }

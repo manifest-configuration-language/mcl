@@ -20,11 +20,11 @@ Web WorkerでGoの`wasm_exec.js`を読み込み、Goの実行開始後に`global
 }
 ```
 
-`operation`には`parse`、`lint`、`format`、`evaluate`、`check`、`render`を指定します。`files`のキーは仮想プロジェクトルートからの相対パスです。MCL import、`mcl.toml`、ローカルManifest、Helm Chart、Kustomize入力を含められます。`entrypoint`には評価対象の相対パスを指定します。省略時は`main.mcl`を使います。選択したentrypointの内容には`source`を使い、同じパスを`files`にも指定できません。
+`operation`には`parse`、`lint`、`format`、`completion`、`definition`、`hover`、`evaluate`、`check`、`render`を指定します。`completion`、`definition`、`hover`にはゼロ始まりのUTF-16位置を`position`で指定します。定義ジャンプは同じファイル内と`files`で渡したMCL importを解決し、結果のパスはプロジェクトルート相対です。Hoverは宣言に記述されたkind、名前、シグネチャ、型注釈を返し、値から型を推論しません。`files`のキーは仮想プロジェクトルートからの相対パスです。MCL import、`mcl.toml`、ローカルManifest、Helm Chart、Kustomize入力を含められます。`entrypoint`には評価対象の相対パスを指定します。省略時は`main.mcl`を使います。選択したentrypointの内容には`source`を使い、同じパスを`files`にも指定できません。
 
 ## レスポンス
 
-成功時は`ok: true`と操作結果を返します。`render`は`result.yaml`、`format`は`result.source`、`check`は`result.valid`とリソース数を返します。失敗時は`ok: false`と`error`を返し、入力診断にはCodeMirrorと同じUTF-16列の`line`と`column`を含めます。両方の応答に要求の`requestId`と`revision`をそのまま含めるため、Worker呼び出し元は古い結果を破棄できます。
+成功時は`ok: true`と操作結果を返します。`render`は`result.yaml`、`format`は`result.source`、`check`は`result.valid`とリソース数、`definition`は`result.location`、`hover`は`result.hover`を返します。定義またはHoverが見つからない場合は対応するフィールドが`null`になります。失敗時は`ok: false`と`error`を返し、入力診断にはCodeMirrorと同じUTF-16列の`line`と`column`を含めます。両方の応答に要求の`requestId`と`revision`をそのまま含めるため、Worker呼び出し元は古い結果を破棄できます。
 
 入力サイズと評価時間の上限は[`protocol.schema.json`](protocol.schema.json)の`x-mcl-limits`で定義します。
 

@@ -248,6 +248,8 @@ export function createMclRuntime(options = {}) {
       parse: (requestOptions) => runProjectOperation("parse", requestOptions),
       lint: (requestOptions) => runProjectOperation("lint", requestOptions),
       complete: (requestOptions) => runProjectOperation("completion", requestOptions),
+      definition: (requestOptions) => runProjectOperation("definition", requestOptions),
+      hover: (requestOptions) => runProjectOperation("hover", requestOptions),
       format: (requestOptions) => runProjectOperation("format", requestOptions),
       check: (requestOptions) => runProjectOperation("check", requestOptions),
       evaluate: (requestOptions) => runProjectOperation("evaluate", requestOptions),
@@ -289,6 +291,13 @@ export function createMclRuntime(options = {}) {
     return { files: transferredFiles, transferables };
   }
 
+  function runSourceNavigation(operation, source, filesOrOptions, requestOptions) {
+    const files = requestOptions === undefined ? undefined : filesOrOptions;
+    const options = requestOptions ?? filesOrOptions;
+    if (!options?.position) throw new TypeError("A source position is required");
+    return execute(operation, source, files, options, options.entrypoint ?? "main.mcl", options.position);
+  }
+
   return {
     openProject,
     warmUp,
@@ -298,6 +307,8 @@ export function createMclRuntime(options = {}) {
     check: (source, files, requestOptions) => execute("check", source, files, requestOptions),
     evaluate: (source, files, requestOptions) => execute("evaluate", source, files, requestOptions),
     render: (source, files, requestOptions) => execute("render", source, files, requestOptions),
+    definition: (source, filesOrOptions, requestOptions) => runSourceNavigation("definition", source, filesOrOptions, requestOptions),
+    hover: (source, filesOrOptions, requestOptions) => runSourceNavigation("hover", source, filesOrOptions, requestOptions),
     dispose() {
       if (disposed) return;
       disposed = true;

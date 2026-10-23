@@ -97,9 +97,9 @@ func handle(raw string, binaryArgument js.Value) string {
 		}
 		return marshal(result)
 	}
-	if input.Operation == wasmprotocol.RequestOperationCompletion {
+	if input.Operation == wasmprotocol.RequestOperationCompletion || input.Operation == wasmprotocol.RequestOperationDefinition || input.Operation == wasmprotocol.RequestOperationHover {
 		if input.Position == nil || input.Position.Line > uint64(^uint(0)>>1) || input.Position.Character > uint64(^uint(0)>>1) {
-			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "completion requires a valid non-negative position"}
+			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "operation requires a valid non-negative position"}
 			return marshal(result)
 		}
 		binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
@@ -112,19 +112,50 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: filesErr.Error()}
 			return marshal(result)
 		}
-		items := lsp.CompletionsForProjectFS(lsp.CompletionParams{
-			ProjectRoot: browserProjectRoot(), Entrypoint: entrypoint, Source: input.Source,
+		params := lsp.BrowserNavigationParams{
+			Entrypoint: entrypoint, Source: input.Source,
 			Line: int(input.Position.Line), Character: int(input.Position.Character),
-		}, projectFiles)
-		result.Ok = true
-		completionItems := make([]wasmprotocol.CompletionItem, len(items))
-		for index, item := range items {
-			completionItems[index] = wasmprotocol.CompletionItem{Label: item.Label, Kind: uint64(item.Kind)}
-			if item.InsertText != "" {
-				completionItems[index].InsertText = &item.InsertText
-			}
 		}
-		result.Result = wasmprotocol.CompletionResult{IsIncomplete: false, Items: completionItems}
+		switch input.Operation {
+		case wasmprotocol.RequestOperationCompletion:
+			items := lsp.CompletionsForProjectFS(lsp.CompletionParams{
+				ProjectRoot: browserProjectRoot(), Entrypoint: entrypoint, Source: input.Source,
+				Line: params.Line, Character: params.Character,
+			}, projectFiles)
+			completionItems := make([]wasmprotocol.CompletionItem, len(items))
+			for index, item := range items {
+				completionItems[index] = wasmprotocol.CompletionItem{Label: item.Label, Kind: uint64(item.Kind)}
+				if item.InsertText != "" {
+					completionItems[index].InsertText = &item.InsertText
+				}
+			}
+			result.Result = wasmprotocol.CompletionResult{IsIncomplete: false, Items: completionItems}
+		case wasmprotocol.RequestOperationDefinition:
+			var location *wasmprotocol.DefinitionResultLocation
+			if definition := lsp.DefinitionForProjectFS(params, projectFiles); definition != nil {
+				location = &wasmprotocol.DefinitionResultLocation{
+					Path: definition.Path,
+					Range: wasmprotocol.SourceRange{
+						Start: wasmprotocol.CompletionPosition{Line: uint64(definition.Range.Start.Line), Character: uint64(definition.Range.Start.Character)},
+						End:   wasmprotocol.CompletionPosition{Line: uint64(definition.Range.End.Line), Character: uint64(definition.Range.End.Character)},
+					},
+				}
+			}
+			result.Result = wasmprotocol.DefinitionResult{Location: location}
+		case wasmprotocol.RequestOperationHover:
+			var hover *wasmprotocol.HoverResultHover
+			if info := lsp.HoverForProjectFS(params, projectFiles); info != nil {
+				hover = &wasmprotocol.HoverResultHover{
+					Contents: info.Contents,
+					Range: wasmprotocol.SourceRange{
+						Start: wasmprotocol.CompletionPosition{Line: uint64(info.Range.Start.Line), Character: uint64(info.Range.Start.Character)},
+						End:   wasmprotocol.CompletionPosition{Line: uint64(info.Range.End.Line), Character: uint64(info.Range.End.Character)},
+					},
+				}
+			}
+			result.Result = wasmprotocol.HoverResult{Hover: hover}
+		}
+		result.Ok = true
 		return marshal(result)
 	}
 
@@ -183,7 +214,7 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Result = wasmprotocol.EvaluateResult{Artifacts: uint64(len(bundle.Artifacts)), RenderedBytes: uint64(len(output))}
 		}
 	default:
-		result.Error = &responseError{Code: "MCL-WASM-OPERATION", Message: "operation must be parse, lint, format, evaluate, check, or render"}
+		result.Error = &responseError{Code: "MCL-WASM-OPERATION", Message: "operation must be parse, lint, format, completion, definition, hover, evaluate, check, or render"}
 	}
 
 	return marshal(result)
