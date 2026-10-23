@@ -3,6 +3,7 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creachadair/jrpc2"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
@@ -29,6 +31,13 @@ const (
 	initializeRequest = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
 	exitRequest       = `{"jsonrpc":"2.0","method":"exit"}`
 )
+
+func handleForTest(s *server, method string, params jsontext.Value, diagnostics chan<- diagnosticResult) error {
+	s.diagnosticResults = diagnostics
+	_, err := s.handle(method, params, true, context.Background())
+
+	return err
+}
 
 func TestRunPublishesDiagnosticsForOpenDocument(t *testing.T) {
 	t.Parallel()
@@ -49,6 +58,33 @@ func TestRunPublishesDiagnosticsForOpenDocument(t *testing.T) {
 		}
 	}
 	session.shutdown(t)
+}
+
+func TestRunCompletesDynamicWatcherRegistrationCallback(t *testing.T) {
+	t.Parallel()
+	session := newTestLSPConnection()
+	defer session.close(t)
+	session.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"workspace":{"didChangeWatchedFiles":{"dynamicRegistration":true}}}}}`)
+	session.receive(t)
+	session.send(t, `{"jsonrpc":"2.0","method":"initialized"}`)
+	registration := session.receive(t)
+	var callback struct {
+		ID jsontext.Value `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(registration), &callback); err != nil {
+		t.Fatal(err)
+	}
+	if len(callback.ID) == 0 {
+		t.Fatalf("watch registration callback omitted its generated ID: %s", registration)
+	}
+	session.send(t, string(fmt.Appendf(nil, `{"jsonrpc":"2.0","id":%s,"result":null}`, callback.ID)))
+	session.send(t, `{"jsonrpc":"2.0","id":2,"method":"shutdown"}`)
+	session.receive(t)
+	session.send(t, exitRequest)
+	if err := <-session.done; err != nil {
+		t.Fatal(err)
+	}
+	session.finished = true
 }
 
 func TestCollectSourceDiagnosticsFromJoinedErrors(t *testing.T) {
@@ -84,9 +120,17 @@ func TestPublishDiagnosticResultClearsOldURIOneTime(t *testing.T) {
 	t.Parallel()
 	var output bytes.Buffer
 	s := server{
-		writer:         &output,
 		documents:      map[string]documentState{"file:///current.mcl": {Version: 1, Diagnostics: map[string][]diagnostic{"file:///current.mcl": {}}}},
 		diagnosticURIs: map[string]struct{}{"file:///old.mcl": {}},
+	}
+	s.notify = func(method string, params any) error {
+		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(&output, "Content-Length: %d\r\n\r\n%s", len(body), body)
+
+		return err
 	}
 	result := diagnosticResult{versions: map[string]int{"file:///current.mcl": 1}}
 	if err := s.publishDiagnosticResult(result); err != nil {
@@ -166,7 +210,7 @@ func TestWatchedFileChangesScheduleDependentDiagnostics(t *testing.T) {
 	uri := filePathToURI(filepath.Join(root, "main.mcl"))
 	results := make(chan diagnosticResult, 1)
 	s := server{documents: map[string]documentState{uri: {Text: "emit \"ok\"\n", Version: 1, Dependencies: []string{dependency}}}}
-	s.scheduleDiagnosticsForChanges([]string{filePathToURI(dependency)}, results)
+	s.scheduleDiagnosticsForChanges(t.Context(), []string{filePathToURI(dependency)}, results)
 	select {
 	case result := <-results:
 		if _, exists := result.states[uri]; !exists {
@@ -221,21 +265,21 @@ func TestDidChangeRejectsNonIncreasingVersionsAndResynchronizesFullText(t *testi
 	documents := map[string]documentState{"file:///main.mcl": {Text: "old", Version: 4}}
 	s := server{documents: documents}
 	params := `{"textDocument":{"uri":"file:///main.mcl","version":4},"contentChanges":[{"text":"duplicate"}]}`
-	if err := s.handle(request{Method: "textDocument/didChange", Params: jsontext.Value(params)}, make(chan diagnosticResult, 1)); err != nil {
+	if err := handleForTest(&s, "textDocument/didChange", jsontext.Value(params), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.documents["file:///main.mcl"].Text; got != "old" {
 		t.Fatalf("duplicate version changed document to %q", got)
 	}
 	params = `{"textDocument":{"uri":"file:///main.mcl","version":5},"contentChanges":[{"range":{"start":{"line":9,"character":0},"end":{"line":9,"character":0}},"text":"bad"}]}`
-	if err := s.handle(request{Method: "textDocument/didChange", Params: jsontext.Value(params)}, make(chan diagnosticResult, 1)); err != nil {
+	if err := handleForTest(&s, "textDocument/didChange", jsontext.Value(params), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if !s.documents["file:///main.mcl"].SyncLost {
 		t.Fatal("invalid range did not mark document synchronization as lost")
 	}
 	params = `{"textDocument":{"uri":"file:///main.mcl","version":6},"contentChanges":[{"text":"resynchronized"}]}`
-	if err := s.handle(request{Method: "textDocument/didChange", Params: jsontext.Value(params)}, make(chan diagnosticResult, 1)); err != nil {
+	if err := handleForTest(&s, "textDocument/didChange", jsontext.Value(params), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if state := s.documents["file:///main.mcl"]; state.Text != "resynchronized" || state.SyncLost {
@@ -500,20 +544,32 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 	if _, err := index.Sources(target, []string{root}, nil); err != nil {
 		t.Fatal(err)
 	}
-	var output bytes.Buffer
-	s := server{writer: &output, renameIndex: index, canWatchMCLFiles: true}
-	if err := s.handle(request{Method: "initialized"}, nil); err != nil {
-		t.Fatal(err)
+	s := server{renameIndex: index, canWatchMCLFiles: true, watchRegistrationResults: make(chan watchRegistrationResult, 1)}
+	s.callback = func(method string, params any) (*jrpc2.Response, error) {
+		if method != "client/registerCapability" {
+			t.Fatalf("callback method = %q", method)
+		}
+		encoded, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		for _, expected := range []string{`"method":"workspace/didChangeWatchedFiles"`, `"globPattern":"**/*.mcl"`, `"globPattern":"**/mcl.toml"`} {
+			if !bytes.Contains(encoded, []byte(expected)) {
+				t.Errorf("watch registration parameters omit %q: %s", expected, encoded)
+			}
+		}
+
+		return nil, nil
 	}
-	if !strings.Contains(output.String(), "\"method\":\"client/registerCapability\"") || !strings.Contains(output.String(), "\"globPattern\":\"**/*.mcl\"") || !strings.Contains(output.String(), "\"globPattern\":\"**/mcl.toml\"") {
-		t.Fatalf("watch registration request is missing: %s", output.String())
+	if err := handleForTest(&s, "initialized", jsontext.Value(""), make(chan diagnosticResult, 1)); err != nil {
+		t.Fatal(err)
 	}
 	if !s.watchRegistrationPending || s.watchRegistered {
 		t.Fatalf("watch registration state = pending:%t registered:%t", s.watchRegistrationPending, s.watchRegistered)
 	}
-	if err := s.handle(request{ID: jsontext.Value("\"mcl-didChangeWatchedFiles\"")}, nil); err != nil {
-		t.Fatal(err)
-	}
+	registration := <-s.watchRegistrationResults
+	s.watchRegistrationPending = false
+	s.watchRegistered = registration.success
 	if !s.watchRegistered {
 		t.Fatal("successful client registration response did not enable watcher updates")
 	}
@@ -524,7 +580,7 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 	}
 	importerURI := (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(importer)}).String()
 	params := jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":2}]}", importerURI))
-	if err := s.handle(request{Method: workspaceWatchedFilesMethod, Params: params}, nil); err != nil {
+	if err := handleForTest(&s, workspaceWatchedFilesMethod, params, make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	dependent, err := index.SourcesFromIndex(target, []string{root}, nil)
@@ -536,7 +592,7 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 	}
 	markerURI := (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(filepath.Join(root, "mcl.toml"))}).String()
 	markerParams := jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":2}]}", markerURI))
-	if err := s.handle(request{Method: workspaceWatchedFilesMethod, Params: markerParams}, nil); err != nil {
+	if err := handleForTest(&s, workspaceWatchedFilesMethod, markerParams, make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := index.SourcesFromIndex(target, []string{root}, nil); err != nil {
@@ -557,7 +613,7 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 	}
 	innerURI := (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(innerPath)}).String()
 	innerParams := jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":1}]}", innerURI))
-	if err := s.handle(request{Method: workspaceWatchedFilesMethod, Params: innerParams}, nil); err != nil {
+	if err := handleForTest(&s, workspaceWatchedFilesMethod, innerParams, make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	dependent, err = index.SourcesFromIndex(target, []string{root}, nil)
@@ -572,7 +628,7 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 	}
 	markerURI = (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(filepath.Join(nestedRoot, "mcl.toml"))}).String()
 	markerParams = jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":1}]}", markerURI))
-	if err := s.handle(request{Method: workspaceWatchedFilesMethod, Params: markerParams}, nil); err != nil {
+	if err := handleForTest(&s, workspaceWatchedFilesMethod, markerParams, make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	dependent, err = index.SourcesFromIndex(target, []string{root}, nil)

@@ -2,17 +2,17 @@ package lsp
 
 import (
 	"bufio"
-	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/creachadair/jrpc2"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
@@ -25,38 +25,15 @@ const (
 
 // JSON-RPCとURI、MCL構文で共通して使う固定値。
 const (
-	jsonrpcVersion              = "2.0"
 	uriSchemeFile               = "file"
 	localhostHost               = "localhost"
 	letKeyword                  = "let"
 	fnKeyword                   = "fn"
 	importKeyword               = "import"
-	methodKey                   = "method"
 	globPatternKey              = "globPattern"
 	workspaceWatchedFilesMethod = "workspace/didChangeWatchedFiles"
 	watchRegistrationID         = "mcl-didChangeWatchedFiles"
 )
-
-type request struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      jsontext.Value `json:"id"`
-	Method  string         `json:"method"`
-	Params  jsontext.Value `json:"params"`
-	Result  jsontext.Value `json:"result"`
-	Error   *protocolError `json:"error"`
-}
-
-type response struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      jsontext.Value `json:"id"`
-	Result  any            `json:"result"`
-	Error   *protocolError `json:"error,omitzero"`
-}
-
-type protocolError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
 
 type initializeParams struct {
 	RootURI          string            `json:"rootUri"`
@@ -95,64 +72,6 @@ type formattingParams struct {
 	TextDocument struct {
 		URI string `json:"uri"`
 	} `json:"textDocument"`
-}
-
-func Run(input io.Reader, output io.Writer) error {
-	s := server{reader: bufio.NewReaderSize(input, maximumHeaderSize), writer: output, documents: make(map[string]documentState), diagnosticURIs: make(map[string]struct{})}
-	defer func() {
-		if s.diagnosticCancel != nil {
-			s.diagnosticCancel()
-		}
-	}()
-	type messageResult struct {
-		body []byte
-		err  error
-	}
-	messages := make(chan messageResult)
-	diagnostics := make(chan diagnosticResult)
-	go func() {
-		defer close(messages)
-		for {
-			body, err := s.readMessage()
-			messages <- messageResult{body: body, err: err}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	for {
-		select {
-		case message, ok := <-messages:
-			if !ok || errors.Is(message.err, io.EOF) {
-				return nil
-			}
-			if message.err != nil {
-				return message.err
-			}
-			var req request
-			if err := json.Unmarshal(message.body, &req); err != nil {
-				if writeErr := s.write(response{JSONRPC: jsonrpcVersion, ID: jsontext.Value("null"), Error: &protocolError{Code: -32700, Message: "Invalid JSON"}}); writeErr != nil {
-					return writeErr
-				}
-
-				continue
-			}
-			if err := s.handle(req, diagnostics); err != nil {
-				return err
-			}
-			if req.Method == "exit" {
-				if s.diagnosticCancel != nil {
-					s.diagnosticCancel()
-				}
-
-				return nil
-			}
-		case result := <-diagnostics:
-			if err := s.publishDiagnosticResult(result); err != nil {
-				return err
-			}
-		}
-	}
 }
 
 func (s *server) readMessage() ([]byte, error) {
@@ -197,20 +116,20 @@ func (s *server) readMessage() ([]byte, error) {
 	return body, nil
 }
 
-func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error {
-	if req.Method == "" {
-		if strings.Trim(string(req.ID), "\"") == watchRegistrationID && s.watchRegistrationPending {
-			s.watchRegistrationPending = false
-			s.watchRegistered = req.Error == nil
-		}
+func (s *server) handle(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-		return nil
-	}
-	switch req.Method {
+	return s.handleLocked(method, rawParams, notification, ctx)
+}
+
+func (s *server) handleLocked(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
+	diagnostics := s.diagnosticResults
+	switch method {
 	case "initialize":
 		var params initializeParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		s.canWatchMCLFiles = params.Capabilities.Workspace.DidChangeWatchedFiles.DynamicRegistration
 		s.workspaceRoots = workspaceFolderPaths(params.WorkspaceFolders)
@@ -224,7 +143,7 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 			}
 		}
 
-		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: map[string]any{
+		return map[string]any{
 			"capabilities": map[string]any{
 				"textDocumentSync":           map[string]any{"openClose": true, "change": 1, "save": true},
 				"completionProvider":         map[string]any{"triggerCharacters": []string{"."}},
@@ -234,22 +153,23 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 				"workspace":                  map[string]any{"workspaceFolders": map[string]any{"supported": true, "changeNotifications": true}},
 			},
 			"serverInfo": map[string]any{"name": "mcl", "version": mcl.ToolchainVersion},
-		}})
+		}, nil
 	case "textDocument/completion":
 		var params completionParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
+		//nolint:contextcheck // The engine completion APIs do not accept a context.
 		items := s.completions(params)
 		if state, exists := s.documents[params.TextDocument.URI]; exists && state.SyncLost {
 			items = []completionItem{}
 		}
 
-		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: map[string]any{"isIncomplete": false, "items": items}})
+		return map[string]any{"isIncomplete": false, "items": items}, nil
 	case "textDocument/formatting":
 		var params formattingParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 
 		result := s.formatDocument(params)
@@ -257,11 +177,11 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 			result = []textEdit{}
 		}
 
-		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result})
+		return result, nil
 	case "textDocument/definition":
 		var params definitionParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 
 		result := s.definition(params)
@@ -269,23 +189,24 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 			result = nil
 		}
 
-		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result})
+		return result, nil
 	case "textDocument/rename":
 		var params renameParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 
+		//nolint:contextcheck // Schema completion APIs used by rename do not accept a context.
 		result := s.rename(params)
 		if state, exists := s.documents[params.TextDocument.URI]; exists && state.SyncLost {
 			result = nil
 		}
 
-		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: result})
+		return result, nil
 	case "workspace/didChangeWorkspaceFolders":
 		var params workspaceFolderChange
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		removed := make(map[string]struct{}, len(params.Event.Removed))
 		for _, folder := range params.Event.Removed {
@@ -304,15 +225,16 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 		s.workspaceRoots = slices.Compact(roots)
 		s.watchRegistrationPending = false
 		s.watchRegistered = false
+		s.watchRegistrationGen++
 		if s.renameIndex != nil {
 			s.renameIndex.Invalidate()
 		}
 
-		return nil
+		return nil, nil
 	case "workspace/didChangeWatchedFiles":
 		var params watchedFilesParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		changes := make([]engine.DependentMCLFileChange, 0, len(params.Changes))
 		changedURIs := make([]string, 0, len(params.Changes))
@@ -337,42 +259,42 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 			if invalidateRenameIndex {
 				s.renameIndex.Invalidate()
 			} else if err := s.renameIndex.ApplyFileChanges(changes); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if len(changedURIs) > 0 {
-			s.scheduleDiagnosticsForChanges(changedURIs, diagnostics)
+			s.scheduleDiagnosticsForChanges(context.WithoutCancel(ctx), changedURIs, diagnostics)
 		}
 
-		return nil
+		return nil, nil
 	case "shutdown":
-		return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Result: nil})
+		return nil, nil
 	case "textDocument/didOpen":
 		var params documentParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		uri := params.TextDocument.URI
 		if previous, exists := s.documents[uri]; exists && params.TextDocument.Version <= previous.Version {
-			return nil
+			return nil, nil
 		}
 		s.documents[uri] = documentState{Text: params.TextDocument.Text, Version: params.TextDocument.Version}
 
-		s.scheduleDiagnostics(uri, diagnostics)
+		s.scheduleDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 
-		return nil
+		return nil, nil
 	case "textDocument/didChange":
 		var params documentParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		if len(params.ContentChanges) == 0 {
-			return nil
+			return nil, nil
 		}
 		uri := params.TextDocument.URI
 		state, exists := s.documents[uri]
 		if exists && params.TextDocument.Version <= state.Version {
-			return nil
+			return nil, nil
 		}
 		if len(params.ContentChanges) != 1 || params.ContentChanges[0].Range != nil {
 			if exists {
@@ -380,106 +302,91 @@ func (s *server) handle(req request, diagnostics chan<- diagnosticResult) error 
 				state.Diagnostics = nil
 				s.documents[uri] = state
 			}
-			s.scheduleStaticDiagnostics(uri, diagnostics)
+			s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 
-			return nil
+			return nil, nil
 		}
 		updated, ok := applyContentChanges(state.Text, params.ContentChanges)
 		if !ok {
 			state.SyncLost = true
 			state.Diagnostics = nil
 			s.documents[uri] = state
-			s.scheduleStaticDiagnostics(uri, diagnostics)
+			s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 
-			return nil
+			return nil, nil
 		}
 		s.documents[uri] = documentState{Text: updated, Version: params.TextDocument.Version, Dependencies: state.Dependencies, Diagnostics: state.Diagnostics}
 
-		s.scheduleStaticDiagnostics(uri, diagnostics)
+		s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 
-		return nil
+		return nil, nil
 	case "textDocument/didSave":
 		var params documentParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		if _, exists := s.documents[params.TextDocument.URI]; exists {
-			s.scheduleDiagnostics(params.TextDocument.URI, diagnostics)
+			s.scheduleDiagnostics(context.WithoutCancel(ctx), params.TextDocument.URI, diagnostics)
 		}
 
-		return nil
+		return nil, nil
 	case "textDocument/didClose":
 		var params documentParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return s.invalidParams(req)
+		if err := json.Unmarshal(rawParams, &params); err != nil {
+			return nil, invalidParamsError()
 		}
 		delete(s.documents, params.TextDocument.URI)
 
-		s.scheduleDiagnostics(params.TextDocument.URI, diagnostics)
+		s.scheduleDiagnostics(context.WithoutCancel(ctx), params.TextDocument.URI, diagnostics)
 
-		return nil
+		return nil, nil
 	case "initialized":
-		return s.registerMCLFileWatcher()
+		s.registerMCLFileWatcher()
+
+		return nil, nil
 	case "exit":
-		return nil
-	default:
-		if len(req.ID) != 0 {
-			return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: &protocolError{Code: -32601, Message: "Method not found"}})
+		select {
+		case s.exitRequested <- struct{}{}:
+		default:
 		}
 
-		return nil
+		return nil, nil
+	default:
+		if notification {
+			return nil, nil
+		}
+
+		return nil, &jrpc2.Error{Code: jrpc2.MethodNotFound, Message: "Method not found"}
 	}
 }
 
-func (s *server) invalidParams(req request) error {
-	if len(req.ID) == 0 {
-		return nil
-	}
-
-	return s.write(response{JSONRPC: jsonrpcVersion, ID: req.ID, Error: &protocolError{Code: -32602, Message: "Invalid params"}})
-}
-
-func (s *server) registerMCLFileWatcher() error {
+func (s *server) registerMCLFileWatcher() {
 	if !s.canWatchMCLFiles || s.watchRegistrationPending || s.watchRegistered {
-		return nil
+		return
 	}
 	s.watchRegistrationPending = true
-	request := map[string]any{
-		"jsonrpc": jsonrpcVersion,
-		"id":      jsontext.Value("\"" + watchRegistrationID + "\""),
-		methodKey: "client/registerCapability",
-		"params": map[string]any{"registrations": []map[string]any{{
-			"id":      watchRegistrationID,
-			methodKey: workspaceWatchedFilesMethod,
-			"registerOptions": map[string]any{"watchers": []map[string]any{
-				{globPatternKey: "**/*.mcl", "kind": 7},
-				{globPatternKey: "mcl.toml", "kind": 7},
-				{globPatternKey: "**/mcl.toml", "kind": 7},
-			}},
-		}}},
-	}
-	if err := s.write(request); err != nil {
-		s.watchRegistrationPending = false
-
-		return err
-	}
-
-	return nil
+	s.watchRegistrationGen++
+	generation := s.watchRegistrationGen
+	params := map[string]any{"registrations": []map[string]any{{
+		"id":     watchRegistrationID,
+		"method": workspaceWatchedFilesMethod,
+		"registerOptions": map[string]any{"watchers": []map[string]any{
+			{globPatternKey: "**/*.mcl", "kind": 7},
+			{globPatternKey: "mcl.toml", "kind": 7},
+			{globPatternKey: "**/mcl.toml", "kind": 7},
+		}},
+	}}}
+	go func() {
+		response, err := s.callback("client/registerCapability", params)
+		success := err == nil && (response == nil || response.Error() == nil)
+		result := watchRegistrationResult{generation: generation, success: success}
+		select {
+		case s.watchRegistrationResults <- result:
+		case <-s.rpcDone:
+		}
+	}()
 }
 
-func (s *server) notify(method string, params any) error {
-	return s.write(map[string]any{"jsonrpc": jsonrpcVersion, "method": method, "params": params})
-}
-
-func (s *server) write(message any) error {
-	body, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-	frame := make([]byte, 0, len(body)+40)
-	frame = fmt.Appendf(frame, "Content-Length: %d\r\n\r\n", len(body))
-	frame = append(frame, body...)
-	_, err = io.Copy(s.writer, bytes.NewReader(frame))
-
-	return err
+func invalidParamsError() error {
+	return &jrpc2.Error{Code: jrpc2.InvalidParams, Message: "Invalid params"}
 }

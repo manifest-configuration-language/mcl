@@ -169,19 +169,19 @@ func normalizePaths(paths []string) []string {
 	return result
 }
 
-func (s *server) scheduleDiagnostics(changedURI string, results chan<- diagnosticResult) {
-	s.scheduleDiagnosticsForChanges([]string{changedURI}, results)
+func (s *server) scheduleDiagnostics(ctx context.Context, changedURI string, results chan<- diagnosticResult) {
+	s.scheduleDiagnosticsForChanges(ctx, []string{changedURI}, results)
 }
 
-func (s *server) scheduleDiagnosticsForChanges(changedURIs []string, results chan<- diagnosticResult) {
-	s.scheduleDiagnosticsForChangesWithMode(changedURIs, results, true)
+func (s *server) scheduleDiagnosticsForChanges(ctx context.Context, changedURIs []string, results chan<- diagnosticResult) {
+	s.scheduleDiagnosticsForChangesWithMode(ctx, changedURIs, results, true)
 }
 
-func (s *server) scheduleStaticDiagnostics(uri string, results chan<- diagnosticResult) {
-	s.scheduleDiagnosticsForChangesWithMode([]string{uri}, results, false)
+func (s *server) scheduleStaticDiagnostics(ctx context.Context, uri string, results chan<- diagnosticResult) {
+	s.scheduleDiagnosticsForChangesWithMode(ctx, []string{uri}, results, false)
 }
 
-func (s *server) scheduleDiagnosticsForChangesWithMode(changedURIs []string, results chan<- diagnosticResult, includeEvaluation bool) {
+func (s *server) scheduleDiagnosticsForChangesWithMode(parent context.Context, changedURIs []string, results chan<- diagnosticResult, includeEvaluation bool) {
 	if s.pendingDiagnosticURIs == nil {
 		s.pendingDiagnosticURIs = make(map[string]struct{})
 	}
@@ -191,7 +191,7 @@ func (s *server) scheduleDiagnosticsForChangesWithMode(changedURIs []string, res
 	if s.diagnosticCancel != nil {
 		s.diagnosticCancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	s.diagnosticCancel = cancel
 	s.diagnosticGeneration++
 	generation := s.diagnosticGeneration
@@ -271,6 +271,9 @@ func hasURI(uris map[string]struct{}, uri string) bool {
 }
 
 func (s *server) publishDiagnosticResult(result diagnosticResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if result.generation != s.diagnosticGeneration {
 		return nil
 	}
