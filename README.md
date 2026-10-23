@@ -18,7 +18,7 @@ go build -o ./mcl ./cmd/mcl
 ./mcl help
 ```
 
-CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`などのコマンドを提供します。使い方は`mcl help`で確認できます。
+CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`などのコマンドを提供します。使い方は`mcl help`で確認できます。
 
 ## 関連リポジトリ
 
