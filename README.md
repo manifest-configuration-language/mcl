@@ -24,7 +24,7 @@ CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`な�
 
 - [ドキュメントとPlayground](https://github.com/manifest-configuration-language/website)
 - [VS Code拡張](https://github.com/manifest-configuration-language/vscode)
-- [サンプル集](https://github.com/manifest-configuration-language/examples)
+- [サンプル集](https://mcl.walnuts.dev/examples/)
 
 ## 開発
 
