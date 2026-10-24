@@ -5,7 +5,17 @@ export type Request = {
   requestId?: number;
   revision?: number;
   operation:
-    "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion" | "definition" | "hover" | "rename";
+    | "parse"
+    | "lint"
+    | "format"
+    | "check"
+    | "evaluate"
+    | "render"
+    | "completion"
+    | "definition"
+    | "hover"
+    | "references"
+    | "rename";
   position?: CompletionPosition;
   newName?: string;
   entrypoint?: ProjectPath;
@@ -53,6 +63,7 @@ export interface Response {
     | CompletionResult
     | DefinitionResult
     | HoverResult
+    | ReferencesResult
     | RenameResult;
   error?: Error;
 }
@@ -134,6 +145,13 @@ export interface HoverResult {
 }
 export interface HoverInfo {
   contents: string;
+  range: SourceRange;
+}
+export interface ReferencesResult {
+  references: ReferenceLocation[];
+}
+export interface ReferenceLocation {
+  path: ProjectPath1;
   range: SourceRange;
 }
 export interface RenameResult {

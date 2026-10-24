@@ -1,6 +1,8 @@
 package languageservice
 
 import (
+	"io/fs"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +19,7 @@ type ReferenceTarget struct {
 	Declaration syntax.SourceSpan
 	Local       bool
 	Exported    bool
+	ImportAlias bool
 }
 
 // Reference is a source location that resolves to a declaration.
@@ -44,6 +47,20 @@ func ReferenceTargetAt(path, source string, position Position, resolveImport Ref
 	name, selected, ok := identifierAt(source, offset)
 	if !ok {
 		return ReferenceTarget{}, false
+	}
+	for _, node := range index.Module.Nodes {
+		declaration, ok := node.(*syntax.ImportDeclaration)
+		if !ok || declaration.Name != name || !spanContains(declaration.NameSpan, offset) {
+			continue
+		}
+		for _, candidate := range index.Module.Nodes {
+			other, ok := candidate.(*syntax.ImportDeclaration)
+			if ok && other.Name == name && other.NameSpan != declaration.NameSpan {
+				return ReferenceTarget{}, false
+			}
+		}
+
+		return ReferenceTarget{Path: path, Name: name, Declaration: declaration.NameSpan, ImportAlias: true}, true
 	}
 
 	for _, reference := range append(append([]QualifiedReference(nil), index.Qualified...), index.QualifiedType...) {
@@ -118,6 +135,15 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 			if includeDeclaration {
 				result = append(result, Reference{Path: path, Range: SourceRangeAt(source, target.Declaration)})
 			}
+			if target.ImportAlias {
+				for _, reference := range append(append([]QualifiedReference(nil), index.Qualified...), index.QualifiedType...) {
+					if reference.Alias == target.Name && !index.LocalAt(target.Name, reference.Span.Start).Found {
+						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
+					}
+				}
+
+				continue
+			}
 			if target.Local {
 				for _, reference := range index.References {
 					if reference.Name != target.Name || reference.TypeName {
@@ -179,4 +205,35 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 	}
 
 	return result
+}
+
+// ReferencesForProjectFS finds references to the symbol at the requested position
+// using only files available in projectFiles and the supplied entrypoint source.
+func ReferencesForProjectFS(params NavigationParams, projectFiles fs.FS, includeDeclaration bool) []Reference {
+	sources, _, ok := projectSourceSnapshot(params, projectFiles)
+	if !ok {
+		return nil
+	}
+	resolveImport := func(importer, modulePath string) (string, bool) {
+		if path.IsAbs(modulePath) || strings.Contains(modulePath, `\\`) {
+			return "", false
+		}
+		resolved := path.Clean(path.Join(path.Dir(importer), modulePath))
+		if !fs.ValidPath(resolved) {
+			return "", false
+		}
+		_, exists := sources[resolved]
+
+		return resolved, exists
+	}
+	target, found := ReferenceTargetAt(params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, resolveImport, func(path string) (string, bool) {
+		source, exists := sources[path]
+
+		return source, exists
+	})
+	if !found {
+		return nil
+	}
+
+	return ReferencesForProject(target, sources, resolveImport, includeDeclaration)
 }

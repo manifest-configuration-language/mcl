@@ -20,7 +20,7 @@
       "properties": {
         "requestId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-        "operation": { "enum": ["parse", "lint", "format", "check", "evaluate", "render", "completion", "definition", "hover", "rename"] },
+        "operation": { "enum": ["parse", "lint", "format", "check", "evaluate", "render", "completion", "definition", "hover", "references", "rename"] },
         "position": { "$ref": "#/$defs/completionPosition" },
         "newName": { "type": "string", "maxLength": 256 },
         "entrypoint": { "$ref": "#/$defs/projectPath", "description": "Project-relative MCL source path. Defaults to main.mcl." },
@@ -36,7 +36,7 @@
       "required": ["operation", "source"],
       "allOf": [
         {
-          "if": { "properties": { "operation": { "enum": ["completion", "definition", "hover", "rename"] } }, "required": ["operation"] },
+          "if": { "properties": { "operation": { "enum": ["completion", "definition", "hover", "references", "rename"] } }, "required": ["operation"] },
           "then": { "required": ["position"] }
         },
         {
@@ -92,6 +92,7 @@
             { "$ref": "#/$defs/completionResult" },
             { "$ref": "#/$defs/definitionResult" },
             { "$ref": "#/$defs/hoverResult" },
+            { "$ref": "#/$defs/referencesResult" },
             { "$ref": "#/$defs/renameResult" }
           ]
         },
@@ -230,6 +231,15 @@
       "required": ["path", "range"],
       "additionalProperties": false
     },
+    "referenceLocation": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "#/$defs/projectPath" },
+        "range": { "$ref": "#/$defs/sourceRange" }
+      },
+      "required": ["path", "range"],
+      "additionalProperties": false
+    },
     "definitionResult": {
       "type": "object",
       "properties": {
@@ -263,6 +273,14 @@
         }
       },
       "required": ["hover"],
+      "additionalProperties": false
+    },
+    "referencesResult": {
+      "type": "object",
+      "properties": {
+        "references": { "type": "array", "items": { "$ref": "#/$defs/referenceLocation" } }
+      },
+      "required": ["references"],
       "additionalProperties": false
     },
     "renameEdit": {

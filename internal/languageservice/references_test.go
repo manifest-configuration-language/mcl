@@ -3,6 +3,7 @@ package languageservice
 import (
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 func TestReferencesForProjectFindsImportedExport(t *testing.T) {
@@ -42,5 +43,43 @@ func TestReferencesForProjectFindsImportedExport(t *testing.T) {
 	}
 	if !foundDeclaration || !foundImport {
 		t.Errorf("ReferencesForProject() omitted declaration or imported member: %#v", references)
+	}
+}
+
+func TestReferencesForProjectFSFindsImportedExport(t *testing.T) {
+	t.Parallel()
+	const targetSource = "export let value = \"ok\"\n"
+	const importerSource = "import \"./target.mcl\" as target\nemit target.value\n"
+	files := fstest.MapFS{
+		mainMCLPath:  {Data: []byte(importerSource)},
+		"target.mcl": {Data: []byte(targetSource)},
+		otherMCLPath: {Data: []byte("emit value\n")},
+	}
+	params := NavigationParams{Entrypoint: mainMCLPath, Source: importerSource, Line: 1, Character: 12}
+	references := ReferencesForProjectFS(params, files, true)
+	if len(references) != 2 {
+		t.Fatalf("ReferencesForProjectFS() returned %d locations, want declaration and imported reference: %#v", len(references), references)
+	}
+	if references[0].Path != mainMCLPath || references[1].Path != "target.mcl" {
+		t.Fatalf("ReferencesForProjectFS() = %#v, want importer reference and target declaration", references)
+	}
+}
+
+func TestReferencesForProjectFSFindsImportAliasReferences(t *testing.T) {
+	t.Parallel()
+	const source = "import \"./defs.mcl\" as defs\nlet config: defs.Config = {}\nemit defs.value\n"
+	files := fstest.MapFS{
+		mainMCLPath: {Data: []byte(source)},
+		"defs.mcl":  {Data: []byte("export type Config = { name: String }\nexport let value = 1\n")},
+	}
+	params := NavigationParams{Entrypoint: mainMCLPath, Source: source, Line: 0, Character: 25}
+	references := ReferencesForProjectFS(params, files, true)
+	if len(references) != 3 {
+		t.Fatalf("ReferencesForProjectFS() returned %d locations, want alias declaration and qualified value/type references: %#v", len(references), references)
+	}
+	for _, reference := range references {
+		if reference.Path != mainMCLPath {
+			t.Errorf("reference = %#v, want all references in main.mcl", reference)
+		}
 	}
 }

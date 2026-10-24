@@ -507,6 +507,7 @@ export function createMclRuntime(options = {}) {
       complete: (requestOptions) => runProjectOperation("completion", requestOptions),
       definition: (requestOptions) => runProjectOperation("definition", requestOptions),
       hover: (requestOptions) => runProjectOperation("hover", requestOptions),
+      references: (requestOptions) => runProjectOperation("references", requestOptions),
       rename: (requestOptions) => runProjectOperation("rename", requestOptions),
       format: (requestOptions) => runProjectOperation("format", requestOptions),
       check: (requestOptions) => runProjectOperation("check", requestOptions),
@@ -587,6 +588,8 @@ export function createMclRuntime(options = {}) {
       runSourceNavigation("definition", source, filesOrOptions, requestOptions),
     hover: (source, filesOrOptions, requestOptions) =>
       runSourceNavigation("hover", source, filesOrOptions, requestOptions),
+    references: (source, filesOrOptions, requestOptions) =>
+      runSourceNavigation("references", source, filesOrOptions, requestOptions),
     rename: (source, filesOrOptions, requestOptions) =>
       runSourceNavigation("rename", source, filesOrOptions, requestOptions),
     dispose() {

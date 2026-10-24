@@ -135,7 +135,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 		}
 		return marshal(result)
 	}
-	if input.Operation == wasmprotocol.RequestOperationCompletion || input.Operation == wasmprotocol.RequestOperationDefinition || input.Operation == wasmprotocol.RequestOperationHover || input.Operation == wasmprotocol.RequestOperationRename {
+	if input.Operation == wasmprotocol.RequestOperationCompletion || input.Operation == wasmprotocol.RequestOperationDefinition || input.Operation == wasmprotocol.RequestOperationHover || input.Operation == wasmprotocol.RequestOperationReferences || input.Operation == wasmprotocol.RequestOperationRename {
 		if input.Position == nil || input.Position.Line > uint64(^uint(0)>>1) || input.Position.Character > uint64(^uint(0)>>1) {
 			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "operation requires a valid non-negative position"}
 			return marshal(result)
@@ -197,12 +197,25 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 				}
 			}
 			result.Result = wasmprotocol.HoverResult{Hover: hover}
+		case wasmprotocol.RequestOperationReferences:
+			references := languageservice.ReferencesForProjectFS(params, projectFiles, true)
+			locations := make([]wasmprotocol.ReferenceLocation, len(references))
+			for index, reference := range references {
+				locations[index] = wasmprotocol.ReferenceLocation{
+					Path: wasmprotocol.ProjectPath(reference.Path),
+					Range: wasmprotocol.SourceRange{
+						Start: wasmprotocol.CompletionPosition{Line: uint64(reference.Range.Start.Line), Character: uint64(reference.Range.Start.Character)},
+						End:   wasmprotocol.CompletionPosition{Line: uint64(reference.Range.End.Line), Character: uint64(reference.Range.End.Character)},
+					},
+				}
+			}
+			result.Result = wasmprotocol.ReferencesResult{References: locations}
 		case wasmprotocol.RequestOperationRename:
 			if input.NewName == nil || len(*input.NewName) > wasmprotocol.MaxRenameNameLength {
 				result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: fmt.Sprintf("rename requires a name no longer than %d bytes", wasmprotocol.MaxRenameNameLength)}
 				return marshal(result)
 			}
-			rename := languageservice.RenameForSource(entrypoint, input.Source, languageservice.Position{Line: params.Line, Character: params.Character}, *input.NewName)
+			rename := languageservice.RenameForProjectFS(params, projectFiles, *input.NewName)
 			edits := make([]wasmprotocol.RenameEdit, 0)
 			if rename != nil {
 				edits = make([]wasmprotocol.RenameEdit, len(rename.Edits))

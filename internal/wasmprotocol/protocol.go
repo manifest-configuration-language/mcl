@@ -168,6 +168,19 @@ type ParseResult struct {
 
 type ProjectPath string
 
+type ReferenceLocation struct {
+	// Path corresponds to the JSON schema field "path".
+	Path ProjectPath `json:"path" yaml:"path" mapstructure:"path"`
+
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+}
+
+type ReferencesResult struct {
+	// References corresponds to the JSON schema field "references".
+	References []ReferenceLocation `json:"references" yaml:"references" mapstructure:"references"`
+}
+
 type RelatedLocation struct {
 	// Column corresponds to the JSON schema field "column".
 	Column uint64 `json:"column" yaml:"column" mapstructure:"column"`
@@ -244,38 +257,45 @@ type Request struct {
 // Project files are limited by the runtime; this count excludes the entrypoint.
 type RequestFiles map[string]FileInput
 
-type HoverResultHover_0 = HoverInfo
+type RequestOperation string
 
-const SourceMapEntryKindKey SourceMapEntryKind = "key"
-const SourceMapEntryKindValue SourceMapEntryKind = "value"
+const RequestOperationCheck RequestOperation = "check"
+const RequestOperationCompletion RequestOperation = "completion"
+const RequestOperationDefinition RequestOperation = "definition"
+const RequestOperationEvaluate RequestOperation = "evaluate"
+const RequestOperationFormat RequestOperation = "format"
+const RequestOperationHover RequestOperation = "hover"
+const RequestOperationLint RequestOperation = "lint"
+const RequestOperationParse RequestOperation = "parse"
+const RequestOperationReferences RequestOperation = "references"
+const RequestOperationRename RequestOperation = "rename"
+const RequestOperationRender RequestOperation = "render"
 
-type SourceMapOriginKind string
+type Response struct {
+	// Error corresponds to the JSON schema field "error".
+	Error *Error `json:"error,omitempty,omitzero" yaml:"error,omitempty" mapstructure:"error,omitempty"`
 
-const SourceMapOriginKindMcl SourceMapOriginKind = "mcl"
-const SourceMapOriginKindMclOverlayBase SourceMapOriginKind = "mcl-overlay-base"
-const SourceMapOriginKindMclOverlayPatch SourceMapOriginKind = "mcl-overlay-patch"
+	// Ok corresponds to the JSON schema field "ok".
+	Ok bool `json:"ok" yaml:"ok" mapstructure:"ok"`
 
-type SourceMapOriginMultiplicity string
+	// RequestID corresponds to the JSON schema field "requestId".
+	RequestID uint64 `json:"requestId" yaml:"requestId" mapstructure:"requestId"`
 
-const SourceMapOriginMultiplicityUnique SourceMapOriginMultiplicity = "unique"
-const SourceMapOriginMultiplicityRepeated SourceMapOriginMultiplicity = "repeated"
-const SourceMapOriginMultiplicityAmbiguous SourceMapOriginMultiplicity = "ambiguous"
+	// Result corresponds to the JSON schema field "result".
+	Result interface{} `json:"result,omitempty,omitzero" yaml:"result,omitempty" mapstructure:"result,omitempty"`
 
-type SourceMapOrigin struct {
-	// Kind corresponds to the JSON schema field "kind".
-	Kind SourceMapOriginKind `json:"kind" yaml:"kind" mapstructure:"kind"`
+	// Revision corresponds to the JSON schema field "revision".
+	Revision *uint64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
+}
 
-	// Multiplicity corresponds to the JSON schema field "multiplicity".
-	Multiplicity SourceMapOriginMultiplicity `json:"multiplicity" yaml:"multiplicity" mapstructure:"multiplicity"`
+// Source map entries are limited by maxSourceMapBytes. Ranges use zero-based
+// UTF-16 line and character positions with an exclusive end.
+type SourceMap struct {
+	// Complete corresponds to the JSON schema field "complete".
+	Complete bool `json:"complete" yaml:"complete" mapstructure:"complete"`
 
-	// Occurrences corresponds to the JSON schema field "occurrences".
-	Occurrences uint64 `json:"occurrences" yaml:"occurrences" mapstructure:"occurrences"`
-
-	// Path corresponds to the JSON schema field "path".
-	Path ProjectPath `json:"path" yaml:"path" mapstructure:"path"`
-
-	// Range corresponds to the JSON schema field "range".
-	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+	// Entries corresponds to the JSON schema field "entries".
+	Entries []SourceMapEntry `json:"entries" yaml:"entries" mapstructure:"entries"`
 }
 
 type SourceMapEntry struct {
@@ -295,32 +315,42 @@ type SourceMapEntry struct {
 	Sources []SourceMapOrigin `json:"sources" yaml:"sources" mapstructure:"sources"`
 }
 
-// Source map entries are limited by maxSourceMapBytes. Ranges use zero-based
-// UTF-16 line and character positions with an exclusive end.
-type SourceMap struct {
-	// Complete corresponds to the JSON schema field "complete".
-	Complete bool `json:"complete" yaml:"complete" mapstructure:"complete"`
-
-	// Entries corresponds to the JSON schema field "entries".
-	Entries []SourceMapEntry `json:"entries" yaml:"entries" mapstructure:"entries"`
-}
-
 type SourceMapEntryKind string
 
-type DefinitionResultLocation_0 = DefinitionLocation
+const SourceMapEntryKindKey SourceMapEntryKind = "key"
+const SourceMapEntryKindValue SourceMapEntryKind = "value"
 
-type RequestOperation string
+type SourceMapOrigin struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind SourceMapOriginKind `json:"kind" yaml:"kind" mapstructure:"kind"`
 
-const RequestOperationParse RequestOperation = "parse"
-const RequestOperationLint RequestOperation = "lint"
-const RequestOperationFormat RequestOperation = "format"
-const RequestOperationCheck RequestOperation = "check"
-const RequestOperationEvaluate RequestOperation = "evaluate"
-const RequestOperationRender RequestOperation = "render"
-const RequestOperationCompletion RequestOperation = "completion"
-const RequestOperationDefinition RequestOperation = "definition"
-const RequestOperationHover RequestOperation = "hover"
-const RequestOperationRename RequestOperation = "rename"
+	// Multiplicity corresponds to the JSON schema field "multiplicity".
+	Multiplicity SourceMapOriginMultiplicity `json:"multiplicity" yaml:"multiplicity" mapstructure:"multiplicity"`
+
+	// Occurrences corresponds to the JSON schema field "occurrences".
+	Occurrences uint64 `json:"occurrences" yaml:"occurrences" mapstructure:"occurrences"`
+
+	// Path corresponds to the JSON schema field "path".
+	Path ProjectPath `json:"path" yaml:"path" mapstructure:"path"`
+
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+}
+
+type SourceMapOriginKind string
+
+const SourceMapOriginKindMcl SourceMapOriginKind = "mcl"
+const SourceMapOriginKindMclOverlayBase SourceMapOriginKind = "mcl-overlay-base"
+
+type HoverResultHover_0 = HoverInfo
+
+const SourceMapOriginKindMclOverlayPatch SourceMapOriginKind = "mcl-overlay-patch"
+
+type SourceMapOriginMultiplicity string
+
+const SourceMapOriginMultiplicityAmbiguous SourceMapOriginMultiplicity = "ambiguous"
+const SourceMapOriginMultiplicityRepeated SourceMapOriginMultiplicity = "repeated"
+const SourceMapOriginMultiplicityUnique SourceMapOriginMultiplicity = "unique"
 
 type SourceRange struct {
 	// End corresponds to the JSON schema field "end".
@@ -330,19 +360,4 @@ type SourceRange struct {
 	Start CompletionPosition `json:"start" yaml:"start" mapstructure:"start"`
 }
 
-type Response struct {
-	// Error corresponds to the JSON schema field "error".
-	Error *Error `json:"error,omitempty,omitzero" yaml:"error,omitempty" mapstructure:"error,omitempty"`
-
-	// Ok corresponds to the JSON schema field "ok".
-	Ok bool `json:"ok" yaml:"ok" mapstructure:"ok"`
-
-	// RequestID corresponds to the JSON schema field "requestId".
-	RequestID uint64 `json:"requestId" yaml:"requestId" mapstructure:"requestId"`
-
-	// Result corresponds to the JSON schema field "result".
-	Result interface{} `json:"result,omitempty,omitzero" yaml:"result,omitempty" mapstructure:"result,omitempty"`
-
-	// Revision corresponds to the JSON schema field "revision".
-	Revision *uint64 `json:"revision,omitempty,omitzero" yaml:"revision,omitempty" mapstructure:"revision,omitempty"`
-}
+type DefinitionResultLocation_0 = DefinitionLocation

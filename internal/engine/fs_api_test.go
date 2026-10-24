@@ -89,7 +89,7 @@ func TestEvaluateProjectFileMapsKustomizeOriginForRootRelativeFilesystem(t *test
 	files := fstest.MapFS{
 		projectFileEntrypoint:           &fstest.MapFile{Data: []byte("let resources = kustomize.build(\"fixtures\", \"\", \"base\")\nemit resources\n")},
 		"fixtures/base/Kustomization":   &fstest.MapFile{Data: []byte("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - deployment.yaml\n")},
-		"fixtures/base/deployment.yaml": &fstest.MapFile{Data: []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sample\n")},
+		"fixtures/base/deployment.yaml": &fstest.MapFile{Data: []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sample\nspec:\n  selector:\n    matchLabels:\n      app: sample\n  template:\n    metadata:\n      labels:\n        app: sample\n    spec:\n      containers:\n        - name: sample\n          image: busybox\n")},
 	}
 
 	bundle, err := EvaluateProjectFileContext(t.Context(), root, projectFileEntrypoint, files)

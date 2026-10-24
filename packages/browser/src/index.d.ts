@@ -13,6 +13,8 @@ import type {
   LintDiagnostic as ProtocolLintDiagnostic,
   ParseResult,
   RelatedLocation as ProtocolRelatedLocation,
+  ReferenceLocation as ProtocolReferenceLocation,
+  ReferencesResult as ProtocolReferencesResult,
   RenderResult,
   RenameEdit as ProtocolRenameEdit,
   RenameResult as ProtocolRenameResult,
@@ -52,6 +54,8 @@ export type HoverResult = ProtocolHoverResult;
 export type HoverInfo = ProtocolHoverInfo;
 export type RenameEdit = ProtocolRenameEdit;
 export type RenameResult = ProtocolRenameResult;
+export type ReferenceLocation = ProtocolReferenceLocation;
+export type ReferencesResult = ProtocolReferencesResult;
 export type SourceRange = ProtocolSourceRange;
 export type SourceMap = ProtocolSourceMap;
 export type SourceMapEntry = ProtocolSourceMapEntry;
@@ -63,6 +67,7 @@ export type MclResult =
   | ({ operation: "completion" } & ProtocolCompletionResult)
   | ({ operation: "definition" } & ProtocolDefinitionResult)
   | ({ operation: "hover" } & ProtocolHoverResult)
+  | ({ operation: "references" } & ProtocolReferencesResult)
   | ({ operation: "rename" } & ProtocolRenameResult)
   | ({ operation: "format" } & FormatResult)
   | ({ operation: "check" } & CheckResult)
@@ -114,6 +119,15 @@ export interface MclRuntime {
     files: ProjectFiles | undefined,
     options: PositionRequestOptions,
   ): Promise<MclResult & { operation: "hover" }>;
+  references(
+    source: string,
+    options: PositionRequestOptions,
+  ): Promise<MclResult & { operation: "references" }>;
+  references(
+    source: string,
+    files: ProjectFiles | undefined,
+    options: PositionRequestOptions,
+  ): Promise<MclResult & { operation: "references" }>;
   rename(
     source: string,
     options: RenameRequestOptions,
@@ -134,6 +148,7 @@ export interface MclProject {
   complete(options: ProjectCompletionOptions): Promise<MclResult & { operation: "completion" }>;
   definition(options: ProjectNavigationOptions): Promise<MclResult & { operation: "definition" }>;
   hover(options: ProjectNavigationOptions): Promise<MclResult & { operation: "hover" }>;
+  references(options: ProjectNavigationOptions): Promise<MclResult & { operation: "references" }>;
   rename(options: ProjectRenameOptions): Promise<MclResult & { operation: "rename" }>;
   format(options?: ProjectOperationOptions): Promise<MclResult & { operation: "format" }>;
   check(options?: ProjectOperationOptions): Promise<MclResult & { operation: "check" }>;

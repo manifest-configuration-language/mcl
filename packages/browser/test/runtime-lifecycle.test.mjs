@@ -27,6 +27,14 @@ class FakeWorker {
 
   postMessage(message) {
     if (message.type === "configure") this.configure?.(this);
+    if (message.type === "project-update") {
+      if (this.projectUpdate) return this.projectUpdate(this, message);
+      this.emit("message", {
+        type: "project-updated",
+        requestId: message.requestId,
+        value: { ok: true },
+      });
+    }
     if (message.type === "run") this.run?.(this, message);
   }
 
@@ -120,10 +128,15 @@ test("Browser SDK runtime lifecycle", async () => {
   {
     const { runtime, workers } = runtimeWithWorkers(() => new FakeWorker({
       configure: ready,
-      run(worker, request) {
-        assert.deepEqual([...request.files["schema.bin"]], [1, 2, 3]);
-        respond(worker, request.requestId);
+      projectUpdate(worker, request) {
+        assert.deepEqual([...request.binaryFiles["schema.bin"]], [1, 2, 3]);
+        worker.emit("message", {
+          type: "project-updated",
+          requestId: request.requestId,
+          value: { ok: true },
+        });
       },
+      run(worker, request) { respond(worker, request.requestId); },
     }));
     const input = Buffer.from([1, 2, 3]);
     const project = runtime.openProject({ "main.mcl": "emit 1", "schema.bin": input });
@@ -228,7 +241,7 @@ test("Browser SDK runtime lifecycle", async () => {
 
     assert.throws(() => runtime.openProject({}), /at least one MCL source file/);
     for (const filePath of ["/main.mcl", "C:/main.mcl", "../main.mcl", "app/../main.mcl", "app\\main.mcl", "app//main.mcl"]) {
-      assert.throws(() => runtime.openProject({ [filePath]: "emit 1" }), /Invalid project file path/);
+      assert.throws(() => runtime.openProject({ [filePath]: "emit 1" }), /Project file paths must be valid/);
     }
     const project = runtime.openProject({ "main.mcl": "emit 1", "nested/other.mcl": "emit 2" });
     await assert.rejects(project.parse({ entrypoint: "C:/main.mcl" }), /Project entrypoint does not exist/);

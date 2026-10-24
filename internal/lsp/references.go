@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -75,9 +76,10 @@ func (s *server) References(_ context.Context, params *protocol.ReferenceParams)
 		} else {
 			dependent, err = s.renameIndex.Sources(target.Path, s.workspaceRoots, overlays)
 		}
-		if err == nil {
-			sources = dependent
+		if err != nil {
+			return nil, fmt.Errorf("collect project sources for references: %w", err)
 		}
+		sources = dependent
 	}
 	resolved := languageservice.ReferencesForProject(target, sources, resolver, params.Context.IncludeDeclaration)
 	locations := make([]protocol.Location, 0, len(resolved))
