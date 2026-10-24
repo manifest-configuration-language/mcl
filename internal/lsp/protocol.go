@@ -95,6 +95,27 @@ func (s *server) dispatch(ctx context.Context, method string, params any, notifi
 	return protocol.Unmarshal(rawResult, result)
 }
 
+func (s *server) dispatchReadOnly(result any, handler func(*server) (any, error)) error {
+	s.mu.Lock()
+	documents := make(map[string]documentState, len(s.documents))
+	for uri, document := range s.documents {
+		documents[uri] = document
+	}
+	s.mu.Unlock()
+	state := &server{documents: documents}
+
+	value, err := handler(state)
+	if err != nil || result == nil {
+		return err
+	}
+	rawResult, err := protocol.Marshal(value)
+	if err != nil {
+		return err
+	}
+
+	return protocol.Unmarshal(rawResult, result)
+}
+
 func (s *server) Initialize(ctx context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
 	var result protocol.InitializeResult
 	err := s.dispatch(ctx, "initialize", params, false, &result)
@@ -116,21 +137,52 @@ func (s *server) Exit(ctx context.Context) error {
 
 func (s *server) Completion(ctx context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
 	var result protocol.CompletionResult
-	err := s.dispatch(ctx, "textDocument/completion", params, false, &result)
+	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
+		request := completionParams{}
+		request.TextDocument.URI = string(params.TextDocument.URI)
+		request.Position.Line = int(params.Position.Line)
+		request.Position.Character = int(params.Position.Character)
+		items := state.completions(request)
+		if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
+			items = []completionItem{}
+		}
+
+		return map[string]any{"isIncomplete": false, "items": items}, nil
+	})
 
 	return result, err
 }
 
 func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
 	var result []protocol.TextEdit
-	err := s.dispatch(ctx, "textDocument/formatting", params, false, &result)
+	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
+		request := formattingParams{}
+		request.TextDocument.URI = string(params.TextDocument.URI)
+		edits := state.formatDocument(request)
+		if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
+			edits = []textEdit{}
+		}
+
+		return edits, nil
+	})
 
 	return result, err
 }
 
 func (s *server) Definition(ctx context.Context, params *protocol.DefinitionParams) (protocol.DefinitionResult, error) {
 	var result protocol.DefinitionResult
-	err := s.dispatch(ctx, "textDocument/definition", params, false, &result)
+	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
+		request := definitionParams{}
+		request.TextDocument.URI = string(params.TextDocument.URI)
+		request.Position.Line = int(params.Position.Line)
+		request.Position.Character = int(params.Position.Character)
+		location := state.definition(request)
+		if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
+			location = nil
+		}
+
+		return location, nil
+	})
 
 	return result, err
 }
