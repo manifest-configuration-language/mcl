@@ -36,8 +36,8 @@ type contentChange struct {
 	Text  string     `json:"text"`
 }
 
-func (s *server) formatDocument(params formattingParams) []textEdit {
-	state, exists := s.documents[params.TextDocument.URI]
+func (s *server) formatDocument(documentURI string) []textEdit {
+	state, exists := s.documents[documentURI]
 	if !exists {
 		return []textEdit{}
 	}

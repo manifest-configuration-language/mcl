@@ -33,21 +33,6 @@ const (
 
 type workspaceFolder = protocol.WorkspaceFolder
 
-type watchedFileChange struct {
-	URI  string `json:"uri"`
-	Type int    `json:"type"`
-}
-
-type watchedFilesParams struct {
-	Changes []watchedFileChange `json:"changes"`
-}
-
-type formattingParams struct {
-	TextDocument struct {
-		URI string `json:"uri"`
-	} `json:"textDocument"`
-}
-
 func (s *server) dispatchReadOnly(result any, handler func(*server) (any, error)) error {
 	s.mu.Lock()
 	documents := make(map[string]documentState, len(s.documents))
@@ -117,10 +102,9 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
 	var result []protocol.TextEdit
 	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
-		request := formattingParams{}
-		request.TextDocument.URI = string(params.TextDocument.URI)
-		edits := state.formatDocument(request)
-		if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
+		uri := params.TextDocument.URI.String()
+		edits := state.formatDocument(uri)
+		if document, exists := state.documents[uri]; exists && document.SyncLost {
 			edits = []textEdit{}
 		}
 
@@ -180,15 +164,11 @@ func (s *server) DidChangeWatchedFiles(ctx context.Context, params *protocol.Did
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var request watchedFilesParams
-	if params != nil {
-		request.Changes = make([]watchedFileChange, 0, len(params.Changes))
-		for _, change := range params.Changes {
-			request.Changes = append(request.Changes, watchedFileChange{URI: change.URI.String(), Type: int(change.Type)})
-		}
+	if params == nil {
+		params = &protocol.DidChangeWatchedFilesParams{}
 	}
 
-	return s.didChangeWatchedFilesLocked(ctx, request)
+	return s.didChangeWatchedFilesLocked(ctx, params)
 }
 
 func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocumentParams) error {
@@ -385,14 +365,17 @@ func (s *server) didChangeWorkspaceFoldersLocked(params *protocol.DidChangeWorks
 	}
 }
 
-func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params watchedFilesParams) error {
+func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params *protocol.DidChangeWatchedFilesParams) error {
+	if params == nil {
+		return nil
+	}
 	changes := make([]engine.DependentMCLFileChange, 0, len(params.Changes))
 	changedURIs := make([]string, 0, len(params.Changes))
 	invalidateRenameIndex := false
 	for _, change := range params.Changes {
-		uri := change.URI
+		uri := change.URI.String()
 		path := documentPath(uri)
-		if path == "" || change.Type < 1 || change.Type > 3 {
+		if path == "" || change.Type < protocol.FileChangeTypeCreated || change.Type > protocol.FileChangeTypeDeleted {
 			continue
 		}
 		changedURIs = append(changedURIs, uri)
@@ -404,7 +387,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params watched
 		if filepath.Ext(path) != ".mcl" {
 			continue
 		}
-		changes = append(changes, engine.DependentMCLFileChange{Path: path, Deleted: change.Type == 3})
+		changes = append(changes, engine.DependentMCLFileChange{Path: path, Deleted: change.Type == protocol.FileChangeTypeDeleted})
 	}
 	if s.watchRegistered && s.renameIndex != nil {
 		if invalidateRenameIndex {
