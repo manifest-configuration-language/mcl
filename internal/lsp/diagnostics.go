@@ -48,7 +48,25 @@ type diagnostic struct {
 }
 
 func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string, includeEvaluation bool) (string, []diagnostic, []string) {
+	byURI, dependencies := s.diagnosticsByURIForDocument(ctx, uri, source, includeEvaluation)
+	diagnosticURIs := make([]string, 0, len(byURI))
+	for diagnosticURI := range byURI {
+		diagnosticURIs = append(diagnosticURIs, diagnosticURI)
+	}
+	slices.Sort(diagnosticURIs)
 	var diagnostics []diagnostic
+	for _, diagnosticURI := range diagnosticURIs {
+		diagnostics = append(diagnostics, byURI[diagnosticURI]...)
+	}
+
+	return uri, diagnostics, dependencies
+}
+
+func (s *server) diagnosticsByURIForDocument(ctx context.Context, uri, source string, includeEvaluation bool) (map[string][]diagnostic, []string) {
+	diagnostics := make(map[string][]diagnostic)
+	appendDiagnostic := func(uri string, value diagnostic) {
+		diagnostics[uri] = append(diagnostics[uri], value)
+	}
 	indices := map[string]*sourceindex.Index{uri: sourceindex.New(source)}
 	indexFor := func(uri, source string) *sourceindex.Index {
 		if index, exists := indices[uri]; exists {
@@ -60,20 +78,18 @@ func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string,
 		return index
 	}
 	dependencies := []string{documentPath(uri)}
-	diagnosticURI := uri
-	diagnosticSource := source
 	module, err := syntax.ParseAST(source)
 	if err != nil {
 		if sourceDiagnostics := collectSourceDiagnostics(err); len(sourceDiagnostics) > 0 {
 			for _, sourceDiagnostic := range sourceDiagnostics {
-				diagnostics = append(diagnostics, makeSpanDiagnostic(indices[uri], sourceDiagnostic.Span, sourceDiagnostic.Code, 1, sourceDiagnostic.DisplayMessage()))
+				appendDiagnostic(uri, makeSpanDiagnostic(indices[uri], sourceDiagnostic.Span, sourceDiagnostic.Code, 1, sourceDiagnostic.DisplayMessage()))
 			}
 		} else {
-			diagnostics = append(diagnostics, makeDiagnostic(0, 1, err.Error()))
+			appendDiagnostic(uri, makeDiagnostic(0, 1, err.Error()))
 		}
 	} else {
 		for _, warning := range engine.LintAST(module) {
-			diagnostics = append(diagnostics, makeSpanDiagnostic(indices[uri], warning.Span, warning.Code, warning.Severity, warning.Message))
+			appendDiagnostic(uri, makeSpanDiagnostic(indices[uri], warning.Span, warning.Code, warning.Severity, warning.Message))
 		}
 		if includeEvaluation {
 			loadedModules, err := evaluateDocument(ctx, uri, source, module, s.overlayFiles())
@@ -81,6 +97,8 @@ func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string,
 			if err != nil {
 				if sourceDiagnostics := collectSourceDiagnostics(err); len(sourceDiagnostics) > 0 {
 					for _, sourceDiagnostic := range sourceDiagnostics {
+						diagnosticURI := uri
+						diagnosticSource := source
 						if sourceDiagnostic.Path != "" {
 							diagnosticURI = s.diagnosticURIForPath(sourceDiagnostic.Path)
 							diagnosticSource = s.sourceForPath(sourceDiagnostic.Path, source)
@@ -104,17 +122,17 @@ func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string,
 							information.Location.Range.End = sourcePositionAt(relatedIndex, related.Span.End)
 							result.RelatedInformation = append(result.RelatedInformation, information)
 						}
-						diagnostics = append(diagnostics, result)
+						appendDiagnostic(diagnosticURI, result)
 					}
 				} else {
-					diagnostics = append(diagnostics, makeDiagnostic(0, 1, err.Error()))
+					appendDiagnostic(uri, makeDiagnostic(0, 1, err.Error()))
 				}
 			}
 		}
 	}
 	dependencies = normalizePaths(dependencies)
 
-	return diagnosticURI, diagnostics, dependencies
+	return diagnostics, dependencies
 }
 
 func collectSourceDiagnostics(err error) []mcl.SourceDiagnosticError {
@@ -247,11 +265,11 @@ func (s *server) scheduleDiagnosticsForChangesWithMode(parent context.Context, c
 			}
 			_, sourceChanged := changedSet[uri]
 			evaluate := includeEvaluation || !sourceChanged
-			diagnosticURI, diagnostics, dependencies := snapshot.diagnosticsForDocument(ctx, uri, state.Text, evaluate)
+			diagnostics, dependencies := snapshot.diagnosticsByURIForDocument(ctx, uri, state.Text, evaluate)
 			if evaluate {
 				state.Dependencies = dependencies
 			}
-			state.Diagnostics = map[string][]diagnostic{diagnosticURI: diagnostics}
+			state.Diagnostics = diagnostics
 			updatedDocuments[uri] = state
 			if ctx.Err() != nil {
 				return

@@ -207,6 +207,10 @@ func (fs *overlayFileSystem) ReadDir(path string) ([]string, error) {
 }
 
 func (fs *overlayFileSystem) Glob(pattern string) ([]string, error) {
+	if err := fs.materializeSourceTree(fs.overlayRoot); err != nil {
+		return nil, err
+	}
+
 	return fs.FileSystem.Glob(pattern)
 }
 
@@ -251,7 +255,55 @@ func (fs *overlayFileSystem) CleanedAbs(overlayPath string) (filesys.ConfirmedDi
 }
 
 func (fs *overlayFileSystem) Walk(overlayPath string, walkFn filepath.WalkFunc) error {
+	if err := fs.materializeSourceTree(overlayPath); err != nil {
+		return err
+	}
+
 	return fs.FileSystem.Walk(overlayPath, walkFn)
+}
+
+func (fs *overlayFileSystem) materializeSourceTree(overlayPath string) error {
+	sourcePath, ok := fs.sourcePath(overlayPath)
+	if !ok {
+		return fmt.Errorf("kustomize path escapes the overlay: %q", overlayPath)
+	}
+	relative, err := filepath.Rel(fs.sourceRoot, sourcePath)
+	if err != nil || isManagedDirectory(relative) || !fs.sourceFileSystem.Exists(sourcePath) {
+		return nil
+	}
+	if !fs.sourceFileSystem.IsDir(sourcePath) {
+		if fs.FileSystem.Exists(overlayPath) {
+			return nil
+		}
+		_, err := fs.readSourceFile(sourcePath, relative)
+		return err
+	}
+
+	return fs.sourceFileSystem.Walk(sourcePath, func(sourcePath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(fs.sourceRoot, sourcePath)
+		if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("kustomize walk escapes the source: %q", sourcePath)
+		}
+		if isManagedDirectory(relative) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(fs.overlayRoot, relative)
+		if info.IsDir() {
+			return fs.MkdirAll(target)
+		}
+		if fs.FileSystem.Exists(target) {
+			return nil
+		}
+
+		_, err = fs.readSourceFile(sourcePath, relative)
+		return err
+	})
 }
 
 func (fs *overlayFileSystem) readSourceFile(path, relative string) ([]byte, error) {

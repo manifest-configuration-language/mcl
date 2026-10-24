@@ -35,8 +35,14 @@ func functionBodySpan(definition *FunctionDefinition) SourceSpan {
 
 func expressionTreeSpan(expression Expr) SourceSpan {
 	var span SourceSpan
+	hasSpan := false
 	WalkExpr(expression, func(expression Expr) {
-		span = mergeASTSpans(span, expression.ExprSpan())
+		if !hasSpan {
+			span = expression.ExprSpan()
+			hasSpan = true
+		} else {
+			span = mergeASTSpans(span, expression.ExprSpan())
+		}
 		if mapping, ok := expression.(*MapExpr); ok {
 			for _, entry := range mapping.Entries {
 				span = mergeASTSpans(span, entry.KeySpan)
@@ -48,12 +54,5 @@ func expressionTreeSpan(expression Expr) SourceSpan {
 }
 
 func mergeASTSpans(left, right SourceSpan) SourceSpan {
-	if right.End > left.End {
-		left.End = right.End
-	}
-	if left.Start == 0 || right.Start > 0 && right.Start < left.Start {
-		left.Start = right.Start
-	}
-
-	return left
+	return SourceSpan{Start: min(left.Start, right.Start), End: max(left.End, right.End)}
 }
