@@ -1,3 +1,4 @@
+import PQueue from "p-queue";
 import {
   maxProjectBytes,
   maxProjectFileBytes,
@@ -61,6 +62,21 @@ export function isValidProjectFileSet(paths) {
 
 const defaultInitializationTimeoutMs = 30_000;
 const defaultOperationTimeoutMs = 10_000;
+const operationPriorities = {
+  render: 30,
+  evaluate: 30,
+  check: 30,
+  parse: 20,
+  format: 20,
+  rename: 20,
+  references: 20,
+  definition: 20,
+  completion: 20,
+  hover: 20,
+  lint: 10,
+};
+const latestOnlyOperations = new Set(["completion", "hover", "lint"]);
+const requestPriorities = { interactive: 40, background: 0 };
 const wasmURL = new URL("../dist/mcl.wasm", import.meta.url).href;
 const wasmExecURL = new URL("../dist/wasm_exec.js", import.meta.url).href;
 
@@ -86,12 +102,83 @@ export function createMclRuntime(options = {}) {
   let worker;
   let ready;
   let disposed = false;
-  let queue = Promise.resolve();
+  const queue = new PQueue({ concurrency: 1 });
+  queue.on("error", () => {});
+  const queueSignals = new Set();
+  const latestPending = new Map();
   let sequence = 0;
   let workerGeneration = 0;
   let workerProject;
   let stopCurrent;
   let stopInitialization;
+
+  function enqueue(operation, run, signal, scope = "runtime", requestedPriority) {
+    if (signal?.aborted) return Promise.reject(signal.reason ?? abortError());
+    const priority =
+      requestPriorities[requestedPriority] ?? operationPriorities[operation] ?? 0;
+    const key = (name) => JSON.stringify([scope, name]);
+    const pendingKey = key(operation);
+    const pendingGroup = () => {
+      let group = latestPending.get(pendingKey);
+      if (!group) {
+        group = new Map();
+        latestPending.set(pendingKey, group);
+      }
+      return group;
+    };
+    const removePending = (pendingPriority, pending) => {
+      const group = latestPending.get(pendingKey);
+      if (group?.get(pendingPriority) !== pending) return;
+      group.delete(pendingPriority);
+      if (group.size === 0) latestPending.delete(pendingKey);
+    };
+    const supersedePending = (name, maximumPriority, message) => {
+      const groupKey = key(name);
+      const group = latestPending.get(groupKey);
+      if (!group) return;
+      for (const [pendingPriority, pending] of group) {
+        if (pendingPriority > maximumPriority) continue;
+        group.delete(pendingPriority);
+        pending.controller.abort(new DOMException(message, "AbortError"));
+      }
+      if (group.size === 0) latestPending.delete(groupKey);
+    };
+
+    if (["render", "evaluate", "check"].includes(operation))
+      supersedePending("lint", priority, "An explicit run replaced this pending lint");
+
+    const queueController = new AbortController();
+    const pending = { controller: queueController, started: false };
+    if (latestOnlyOperations.has(operation)) {
+      supersedePending(operation, priority, "A newer operation replaced this request");
+      pendingGroup().set(priority, pending);
+    }
+
+    queueSignals.add(queueController);
+    const abortWhileQueued = () => {
+      if (!pending.started) queueController.abort(signal.reason ?? abortError());
+    };
+    signal?.addEventListener("abort", abortWhileQueued, { once: true });
+
+    return queue
+      .add(
+        async () => {
+          pending.started = true;
+          if (latestOnlyOperations.has(operation)) removePending(priority, pending);
+          return run();
+        },
+        { priority, signal: queueController.signal },
+      )
+      .finally(() => {
+        signal?.removeEventListener("abort", abortWhileQueued);
+        queueSignals.delete(queueController);
+        if (latestOnlyOperations.has(operation)) removePending(priority, pending);
+      });
+  }
+
+  function abortError() {
+    return new DOMException("The operation was aborted", "AbortError");
+  }
 
   function startWorker() {
     if (disposed) return Promise.reject(new Error("MCL runtime has been disposed"));
@@ -355,19 +442,7 @@ export function createMclRuntime(options = {}) {
         throw error;
       }
     };
-    const result = queue.then(run, run);
-    queue = result.catch(() => {});
-    if (!signal) return result;
-
-    let onAbort;
-    const aborted = new Promise((_, reject) => {
-      onAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
-    });
-    return Promise.race([result, aborted]).finally(() =>
-      signal.removeEventListener("abort", onAbort),
-    );
+    return enqueue(operation, run, signal, project?.id ?? "runtime", requestOptions.priority);
   }
 
   function warmUp(requestOptions = {}) {
@@ -391,18 +466,7 @@ export function createMclRuntime(options = {}) {
         clearTimeout(timer);
       }
     };
-    const result = queue.then(run, run);
-    queue = result.catch(() => {});
-    if (!signal) return result;
-    let onAbort;
-    const aborted = new Promise((_, reject) => {
-      onAbort = () => reject(new DOMException("The operation was aborted", "AbortError"));
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
-    });
-    return Promise.race([result, aborted]).finally(() =>
-      signal.removeEventListener("abort", onAbort),
-    );
+    return enqueue("warmUp", run, signal, "runtime", requestOptions.priority);
   }
 
   function openProject(files) {
@@ -595,6 +659,8 @@ export function createMclRuntime(options = {}) {
     dispose() {
       if (disposed) return;
       disposed = true;
+      for (const controller of queueSignals)
+        controller.abort(new Error("MCL runtime has been disposed"));
       stopCurrent?.(new Error("MCL runtime has been disposed"));
       stopInitialization?.(new Error("MCL runtime has been disposed"));
       worker?.terminate();

@@ -159,6 +159,8 @@ export interface MclProject {
 export interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Queue requests ahead of default-priority work or yield to interactive requests. */
+  priority?: "interactive" | "background";
 }
 
 export interface ProjectOperationOptions extends RequestOptions {

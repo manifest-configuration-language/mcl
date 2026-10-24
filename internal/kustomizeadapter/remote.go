@@ -104,13 +104,22 @@ func loadSourceFS(source fs.FS) (filesys.FileSystem, string, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("source contains unsupported file %q", name)
 		}
+		size := info.Size()
 		fileCount++
-		if fileCount > maxSourceFiles || info.Size() > maxSourceBytes-totalBytes {
+		if fileCount > maxSourceFiles || size < 0 || size > maxSourceBytes-totalBytes {
 			return fmt.Errorf("source exceeds the file-count or %d-byte limit", maxSourceBytes)
 		}
-		data, err := fs.ReadFile(source, name)
+		file, err := source.Open(name)
 		if err != nil {
 			return err
+		}
+		data, exceeded, readErr := content.ReadAllLimited(file, size)
+		closeErr := file.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return err
+		}
+		if exceeded || int64(len(data)) != size {
+			return fmt.Errorf("source file %q size does not match its metadata", name)
 		}
 		totalBytes += int64(len(data))
 

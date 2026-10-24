@@ -132,6 +132,8 @@ export interface CompletionItem {
   label: string;
   kind: number;
   insertText?: string;
+  detail?: string;
+  documentation?: string;
 }
 export interface DefinitionResult {
   location: DefinitionLocation | null;

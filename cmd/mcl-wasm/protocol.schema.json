@@ -199,7 +199,9 @@
       "properties": {
         "label": { "type": "string" },
         "kind": { "type": "integer", "minimum": 0 },
-        "insertText": { "type": "string" }
+        "insertText": { "type": "string" },
+        "detail": { "type": "string" },
+        "documentation": { "type": "string" }
       },
       "required": ["label", "kind"],
       "additionalProperties": false

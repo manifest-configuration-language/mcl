@@ -55,7 +55,6 @@ gzip -dc .build/release-assets/mcl.wasm.gz | cmp - packages/browser/dist/mcl.was
 description = "Package CLI and WebAssembly release assets with checksums"
 run = '''
 set -eu
-mise run release:reference
 if [ "${MCL_RELEASE_ASSETS_STAGED:-false}" != true ]; then
   mise run wasm:build
   mise run release:wasm

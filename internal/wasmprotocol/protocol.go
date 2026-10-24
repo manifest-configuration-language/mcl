@@ -11,6 +11,12 @@ type CheckResult struct {
 }
 
 type CompletionItem struct {
+	// Detail corresponds to the JSON schema field "detail".
+	Detail *string `json:"detail,omitempty,omitzero" yaml:"detail,omitempty" mapstructure:"detail,omitempty"`
+
+	// Documentation corresponds to the JSON schema field "documentation".
+	Documentation *string `json:"documentation,omitempty,omitzero" yaml:"documentation,omitempty" mapstructure:"documentation,omitempty"`
+
 	// InsertText corresponds to the JSON schema field "insertText".
 	InsertText *string `json:"insertText,omitempty,omitzero" yaml:"insertText,omitempty" mapstructure:"insertText,omitempty"`
 

@@ -1,24 +1,27 @@
 {
   "name": "@manifest-configuration-language/browser",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Run MCL projects in a browser Web Worker using the Go WebAssembly runtime.",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/manifest-configuration-language/mcl.git",
     "directory": "packages/browser"
   },
-  "type": "module",
-  "license": "Apache-2.0",
   "files": [
     "dist",
     "src",
     "README.md"
   ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.d.ts",
       "import": "./src/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build:wasm": "node ./scripts/build-wasm.mjs",
@@ -26,13 +29,13 @@
     "test:unit": "node --test ./test/runtime-lifecycle.test.mjs",
     "prepack": "pnpm run build:wasm"
   },
-  "engines": {
-    "node": ">=20.19"
+  "dependencies": {
+    "p-queue": "9.1.2"
   },
   "devDependencies": {
     "json-schema-to-typescript": "16.0.0"
   },
-  "publishConfig": {
-    "access": "public"
+  "engines": {
+    "node": ">=20.19"
   }
 }

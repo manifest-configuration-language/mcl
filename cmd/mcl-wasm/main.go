@@ -169,7 +169,13 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 			for index, item := range items {
 				completionItems[index] = wasmprotocol.CompletionItem{Label: item.Label, Kind: uint64(item.Kind)}
 				if item.InsertText != "" {
-					completionItems[index].InsertText = &item.InsertText
+					completionItems[index].InsertText = new(item.InsertText)
+				}
+				if item.Detail != "" {
+					completionItems[index].Detail = new(item.Detail)
+				}
+				if item.Documentation != "" {
+					completionItems[index].Documentation = new(item.Documentation)
 				}
 			}
 			result.Result = wasmprotocol.CompletionResult{IsIncomplete: false, Items: completionItems}

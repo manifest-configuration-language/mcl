@@ -12,9 +12,11 @@ import (
 
 // CompletionItem is a completion candidate returned by the reusable completion API.
 type CompletionItem struct {
-	Label      string `json:"label"`
-	Kind       int    `json:"kind"`
-	InsertText string `json:"insertText,omitzero"`
+	Label         string `json:"label"`
+	Kind          int    `json:"kind"`
+	InsertText    string `json:"insertText,omitzero"`
+	Detail        string `json:"detail,omitzero"`
+	Documentation string `json:"documentation,omitzero"`
 }
 
 // CompletionParams identifies a source position using zero-based UTF-16 coordinates.
@@ -38,19 +40,24 @@ func CompletionForSource(source string, line, character int, sourcePath string) 
 
 func complete(source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []CompletionItem {
 	items := []CompletionItem{
-		{Label: "let", Kind: 14},
-		{Label: "emit", Kind: 14},
-		{Label: "true", Kind: 14},
-		{Label: "false", Kind: 14},
-		{Label: "null", Kind: 14},
-		{Label: "len", Kind: 3},
-		{Label: "contains", Kind: 3},
-		{Label: "concat", Kind: 3},
-		{Label: "union", Kind: 3},
-		{Label: "keyOf", Kind: 3},
-		{Label: "replace", Kind: 3},
-		{Label: "replaceAt", Kind: 3},
-		{Label: "mergeByKey", Kind: 3},
+		{Label: "let", Kind: 14, Detail: "キーワード", Documentation: "現在のモジュールで値を宣言します。"},
+		{Label: "emit", Kind: 14, Detail: "キーワード", Documentation: "値をレンダリング結果へ追加します。"},
+		{Label: "true", Kind: 14, Detail: "真偽値"},
+		{Label: "false", Kind: 14, Detail: "真偽値"},
+		{Label: "null", Kind: 14, Detail: "null値"},
+		{Label: "len", Kind: 3, Detail: "標準関数", Documentation: "文字列、リスト、マップの長さを返します。"},
+		{Label: "clone", Kind: 3, Detail: "標準関数", Documentation: "値のディープコピーを返します。"},
+		{Label: "contains", Kind: 3, Detail: "標準関数", Documentation: "リスト内の値、または文字列内の部分文字列を検索します。"},
+		{Label: "concat", Kind: 3, Detail: "標準関数", Documentation: "2つのリストを連結します。"},
+		{Label: "map", Kind: 3, Detail: "標準関数", Documentation: "リストの各要素に関数を適用します。"},
+		{Label: "filter", Kind: 3, Detail: "標準関数", Documentation: "条件に一致する要素だけをリストに残します。"},
+		{Label: "exactlyOne", Kind: 3, Detail: "標準関数", Documentation: "条件に一致する要素が1つであることを確認して返します。"},
+		{Label: "fold", Kind: 3, Detail: "標準関数", Documentation: "初期値と関数を使ってリストの要素を1つの値にまとめます。"},
+		{Label: "union", Kind: 3, Detail: "標準関数", Documentation: "重複を除きながら2つのリストを結合します。"},
+		{Label: "keyOf", Kind: 3, Detail: "標準関数", Documentation: "マップに存在する指定キーを返します。"},
+		{Label: "replace", Kind: 3, Detail: "標準関数", Documentation: "マップのマージ時に値を置き換える指定をします。"},
+		{Label: "replaceAt", Kind: 3, Detail: "標準関数", Documentation: "リストの指定位置にある要素を置き換えます。"},
+		{Label: "mergeByKey", Kind: 3, Detail: "標準関数", Documentation: "指定したキーを使ってマップのリストをマージします。"},
 	}
 	lines := strings.Split(source, "\n")
 	if position.Line < 0 || position.Line >= len(lines) {
@@ -66,7 +73,7 @@ func complete(source string, position Position, projectRoot, entrypoint string, 
 	index, parseErr := AnalyzeSource(source)
 	if parseErr == nil {
 		for _, name := range index.VisibleDeclarationNames(position.Line + 1) {
-			items = append(items, CompletionItem{Label: name, Kind: 6})
+			items = append(items, CompletionItem{Label: name, Kind: 6, Detail: "モジュール宣言"})
 		}
 	} else {
 		for lineNumber, line := range lines {
@@ -74,7 +81,7 @@ func complete(source string, position Position, projectRoot, entrypoint string, 
 				break
 			}
 			if name, _, ok := DeclaredName(line); ok {
-				items = append(items, CompletionItem{Label: name, Kind: 6})
+				items = append(items, CompletionItem{Label: name, Kind: 6, Detail: "モジュール宣言"})
 			}
 		}
 	}
@@ -86,7 +93,7 @@ func complete(source string, position Position, projectRoot, entrypoint string, 
 			bindings = index.VisibleLocalBindings(offset)
 		}
 		for _, binding := range bindings {
-			items = append(items, CompletionItem{Label: binding.Name, Kind: 6})
+			items = append(items, CompletionItem{Label: binding.Name, Kind: 6, Detail: "ローカル変数"})
 		}
 	}
 	if fields := schemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
@@ -173,7 +180,7 @@ func appendFieldCompletions(items []CompletionItem, fields []string) []Completio
 		if _, ok := existing[field]; ok {
 			continue
 		}
-		item := CompletionItem{Label: field, Kind: 10}
+		item := CompletionItem{Label: field, Kind: 10, Detail: "スキーマフィールド"}
 		if !IsMCLIdentifier(field) {
 			item.InsertText = strconv.Quote(field)
 		}
