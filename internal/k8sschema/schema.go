@@ -357,21 +357,39 @@ func structuralSchema(schema *structuralschema.Structural, depth int) Type {
 
 func union(left, right Type) Type {
 	options := make([]Type, 0, 2)
-	if len(left.Options) > 0 {
-		options = append(options, left.Options...)
-	} else {
-		options = append(options, left)
+	for _, candidate := range []Type{left, right} {
+		if len(candidate.Options) > 0 {
+			options = append(options, candidate.Options...)
+		} else {
+			options = append(options, candidate)
+		}
 	}
-	if len(right.Options) > 0 {
-		options = append(options, right.Options...)
-	} else {
-		options = append(options, right)
+	filtered := options[:0]
+	for _, option := range options {
+		if hasNoValues(option) {
+			continue
+		}
+		if option.Kind == "Any" {
+			return Type{Kind: "Any"}
+		}
+		if option.Kind != "Never" {
+			filtered = append(filtered, option)
+		}
 	}
-
-	return Type{Options: options}
+	switch len(filtered) {
+	case 0:
+		return Type{Kind: "Never"}
+	case 1:
+		return filtered[0]
+	default:
+		return Type{Options: filtered}
+	}
 }
 
 func intersect(left, right Type) Type {
+	if hasNoValues(left) || hasNoValues(right) {
+		return Type{Kind: "Never"}
+	}
 	if left.Kind == "Any" {
 		return right
 	}
@@ -382,7 +400,7 @@ func intersect(left, right Type) Type {
 		options := make([]Type, 0, len(left.Options))
 		for _, option := range left.Options {
 			intersection := intersect(option, right)
-			if intersection.Kind != "Any" || len(intersection.Options) > 0 || len(intersection.Fields) > 0 {
+			if intersection.Kind != "Never" {
 				options = append(options, intersection)
 			}
 		}
@@ -393,13 +411,23 @@ func intersect(left, right Type) Type {
 			return Type{Options: options}
 		}
 
-		return Type{Kind: "Any"}
+		return Type{Kind: "Never"}
 	}
 	if len(right.Options) > 0 {
 		return intersect(right, left)
 	}
 	if left.Kind != right.Kind {
-		return Type{Kind: "Any"}
+		return Type{Kind: "Never"}
+	}
+	if left.Kind == "List" {
+		if left.Element == nil {
+			return right
+		}
+		if right.Element == nil {
+			return left
+		}
+		element := intersect(*left.Element, *right.Element)
+		return Type{Kind: "List", Element: &element}
 	}
 	if left.Kind != "" {
 		return left
@@ -412,6 +440,9 @@ func intersect(left, right Type) Type {
 		if existing, exists := fields[field.Name]; exists {
 			existing.Type = intersect(existing.Type, field.Type)
 			existing.Optional = existing.Optional && field.Optional
+			if existing.Type.Kind == "Never" && !existing.Optional {
+				return Type{Kind: "Never"}
+			}
 			fields[field.Name] = existing
 		} else {
 			fields[field.Name] = field
@@ -433,4 +464,20 @@ func intersect(left, right Type) Type {
 	}
 
 	return result
+}
+
+func hasNoValues(schema Type) bool {
+	if schema.Kind == "Never" {
+		return true
+	}
+	if schema.Kind != "" {
+		return false
+	}
+	for _, field := range schema.Fields {
+		if !field.Optional && hasNoValues(field.Type) {
+			return true
+		}
+	}
+
+	return false
 }

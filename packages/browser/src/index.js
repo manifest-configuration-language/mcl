@@ -1,6 +1,27 @@
-import { maxProjectBytes, maxProjectFileBytes, maxProjectFiles, maxSourceBytes } from "./limits.js";
+import {
+  maxProjectBytes,
+  maxProjectFileBytes,
+  maxProjectFiles,
+  maxProjectPathDepth,
+  maxProjectPathLength,
+  maxSourceBytes,
+} from "./limits.js";
 
-export { maxProjectBytes, maxProjectFileBytes, maxProjectFiles, maxSourceBytes };
+export { maxProjectBytes, maxProjectFileBytes, maxProjectFiles, maxProjectPathDepth, maxProjectPathLength, maxSourceBytes };
+
+export function isValidProjectPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.startsWith("/") ||
+    /^[a-z]:/i.test(value) || value.includes("\\") || value.includes("\0")) {
+    return false;
+  }
+  let pathLength = 0;
+  let pathDepth = 1;
+  for (const character of value) {
+    if (++pathLength > maxProjectPathLength) return false;
+    if (character === "/" && ++pathDepth > maxProjectPathDepth) return false;
+  }
+  return value.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
 
 const defaultInitializationTimeoutMs = 30_000;
 const defaultOperationTimeoutMs = 10_000;
@@ -111,16 +132,14 @@ export function createMclRuntime(options = {}) {
       const timeoutError = new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL operation timed out" });
       let timer;
       try {
-        if (timeoutMs <= 0) throw timeoutError;
-        timer = setTimeout(() => {
-          (stopCurrent ?? stopInitialization)?.(timeoutError);
-        }, timeoutMs);
         await waitUntilReady(requestOptions.signal);
         if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        if (timeoutMs <= 0) throw timeoutError;
         const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
         const requestId = ++sequence;
         const currentWorker = worker;
         const currentGeneration = workerGeneration;
+        timer = setTimeout(() => stopCurrent?.(timeoutError), timeoutMs);
         return await new Promise((resolve, reject) => {
           let settled = false;
           const cleanup = () => {
@@ -258,7 +277,7 @@ export function createMclRuntime(options = {}) {
   }
 
   function isSafeRelativePath(filePath) {
-    return typeof filePath === "string" && filePath.length > 0 && !/^[a-z]:/i.test(filePath) && !filePath.startsWith("/") && !filePath.includes("\\") && filePath.split("/").every((part) => part && part !== "." && part !== "..");
+    return isValidProjectPath(filePath);
   }
 
   function prepareFilesForTransfer(source, files, entrypoint) {

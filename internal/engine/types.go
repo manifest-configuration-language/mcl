@@ -253,6 +253,8 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 		switch typeExpr.Name {
 		case typeAny:
 			return nil
+		case typeNever:
+			return fmt.Errorf("no value inhabits Never")
 		case typeNull:
 			return requireRuntimeKind(value, Null, typeExpr.Name)
 		case typeBool:

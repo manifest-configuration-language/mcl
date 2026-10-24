@@ -6,10 +6,7 @@ export type Request = {
   revision?: number;
   operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion" | "definition" | "hover";
   position?: CompletionPosition;
-  /**
-   * Project-relative MCL source path. Defaults to main.mcl.
-   */
-  entrypoint?: string;
+  entrypoint?: ProjectPath;
   /**
    * UTF-8 entrypoint source, limited by the runtime.
    */
@@ -21,6 +18,10 @@ export type Request = {
     [k: string]: FileInput;
   };
 };
+/**
+ * Project-relative MCL source path. Defaults to main.mcl.
+ */
+export type ProjectPath = string;
 /**
  * Binary files omit content and are supplied in the optional second run argument under the same path.
  */

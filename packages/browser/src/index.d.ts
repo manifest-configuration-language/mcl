@@ -24,6 +24,9 @@ export declare const maxSourceBytes: number;
 export declare const maxProjectFiles: number;
 export declare const maxProjectFileBytes: number;
 export declare const maxProjectBytes: number;
+export declare const maxProjectPathLength: number;
+export declare const maxProjectPathDepth: number;
+export declare function isValidProjectPath(path: unknown): path is string;
 
 /** Root-relative project files passed to MCL's per-request filesystem. Uint8Array values are copied before transfer so callers can reuse them. */
 export type ProjectFile = string | Uint8Array;

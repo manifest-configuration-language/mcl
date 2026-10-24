@@ -19,6 +19,9 @@ func structuralSchemaType(schema *structuralschema.Structural, _ int) ResolvedTy
 }
 
 func mclSchemaType(schema k8sschema.Type) ResolvedType {
+	if schema.Kind == "Never" {
+		return ResolvedType{Name: typeNever}
+	}
 	if len(schema.Options) > 0 {
 		result := mclSchemaType(schema.Options[0])
 		for _, option := range schema.Options[1:] {

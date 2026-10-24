@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"syscall/js"
 	"time"
@@ -295,7 +294,7 @@ func projectEntrypoint(entrypoint string) (string, error) {
 	if entrypoint == "" {
 		return "main.mcl", nil
 	}
-	if !filepath.IsLocal(entrypoint) || path.Clean(entrypoint) != entrypoint || entrypoint == "." || strings.Contains(entrypoint, "\\") {
+	if !validProjectPath(entrypoint) {
 		return "", fmt.Errorf("invalid project entrypoint %q", entrypoint)
 	}
 

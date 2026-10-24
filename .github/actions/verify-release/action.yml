@@ -28,6 +28,10 @@ runs:
       shell: bash
       run: pnpm install --frozen-lockfile
 
+    - name: Generate reference package contents
+      shell: bash
+      run: mise run release:reference
+
     - name: Check language grammar parity
       shell: bash
       run: pnpm --filter @manifest-configuration-language/language run check:parity

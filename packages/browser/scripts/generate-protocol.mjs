@@ -9,8 +9,17 @@ const jsLimitsOutput = fileURLToPath(new URL("../src/limits.js", import.meta.url
 const schemaDocument = JSON.parse(await readFile(schema, "utf8"));
 const limits = schemaDocument["x-mcl-limits"];
 const requestFileLimit = schemaDocument.$defs.request.properties.files.maxProperties;
+const projectPathConstraints = schemaDocument.$defs.projectPath.allOf;
+const projectPathLengthConstraint = projectPathConstraints.find((constraint) => constraint.maxLength !== undefined);
+const projectPathDepthConstraint = projectPathConstraints.find((constraint) => constraint.pattern !== undefined);
 if (requestFileLimit !== limits.maxProjectFiles - 1) {
   throw new Error("The request file count must exclude the entrypoint from maxProjectFiles.");
+}
+if (projectPathLengthConstraint?.maxLength !== limits.maxProjectPathLength) {
+  throw new Error("The project path maxLength must match maxProjectPathLength.");
+}
+if (projectPathDepthConstraint?.pattern !== `^([^/]+/){0,${limits.maxProjectPathDepth - 1}}[^/]+$`) {
+  throw new Error("The project path depth pattern must match maxProjectPathDepth.");
 }
 
 for (const [name, value] of Object.entries(limits)) {
@@ -30,6 +39,8 @@ const goLimitNames = [
   ["MaxProjectBytes", limits.maxProjectBytes],
   ["MaxOutputBytes", limits.maxOutputBytes],
   ["EvaluationTimeoutMillis", limits.evaluationTimeoutMillis],
+  ["MaxProjectPathLength", limits.maxProjectPathLength],
+  ["MaxProjectPathDepth", limits.maxProjectPathDepth],
 ];
 const goLimitWidth = Math.max(...goLimitNames.map(([name]) => name.length));
 const goLimits = goLimitNames.map(([name, value]) => `\t${name.padEnd(goLimitWidth)} = ${value}`).join("\n");
@@ -41,5 +52,5 @@ await writeFile(
 );
 await writeFile(
   jsLimitsOutput,
-  `// Generated from cmd/mcl-wasm/protocol.schema.json. Do not edit.\nexport const maxSourceBytes = ${limits.maxSourceBytes};\nexport const maxProjectFiles = ${limits.maxProjectFiles};\nexport const maxProjectFileBytes = ${limits.maxProjectFileBytes};\nexport const maxProjectBytes = ${limits.maxProjectBytes};\nexport const maxOutputBytes = ${limits.maxOutputBytes};\nexport const evaluationTimeoutMillis = ${limits.evaluationTimeoutMillis};\n`,
+  `// Generated from cmd/mcl-wasm/protocol.schema.json. Do not edit.\nexport const maxSourceBytes = ${limits.maxSourceBytes};\nexport const maxProjectFiles = ${limits.maxProjectFiles};\nexport const maxProjectFileBytes = ${limits.maxProjectFileBytes};\nexport const maxProjectBytes = ${limits.maxProjectBytes};\nexport const maxOutputBytes = ${limits.maxOutputBytes};\nexport const evaluationTimeoutMillis = ${limits.evaluationTimeoutMillis};\nexport const maxProjectPathLength = ${limits.maxProjectPathLength};\nexport const maxProjectPathDepth = ${limits.maxProjectPathDepth};\n`,
 );

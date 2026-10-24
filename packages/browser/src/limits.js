@@ -5,3 +5,5 @@ export const maxProjectFileBytes = 16777216;
 export const maxProjectBytes = 67108864;
 export const maxOutputBytes = 1048576;
 export const evaluationTimeoutMillis = 4000;
+export const maxProjectPathLength = 512;
+export const maxProjectPathDepth = 64;

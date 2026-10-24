@@ -546,6 +546,9 @@ func staticMembershipContainer(typeExpr ResolvedType, types map[string]ResolvedT
 }
 
 func staticTypeName(typeExpr ResolvedType) string {
+	if typeExpr.Name == typeNever {
+		return "Never"
+	}
 	if typeExpr.Name != "" {
 		if typeExpr.Name == typeNode && len(typeExpr.Arguments) == 1 {
 			return "Node<" + staticTypeName(typeExpr.Arguments[0]) + ">"
@@ -567,6 +570,15 @@ func staticTypeName(typeExpr ResolvedType) string {
 }
 
 func joinStaticTypes(left, right ResolvedType) ResolvedType {
+	if left.Name == typeAny || right.Name == typeAny {
+		return ResolvedType{Name: typeAny}
+	}
+	if left.Name == typeNever {
+		return right
+	}
+	if right.Name == typeNever {
+		return left
+	}
 	if equalStaticTypes(left, right) {
 		return left
 	}
@@ -715,7 +727,7 @@ func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedTy
 
 		return ResolvedType{}, false, false, false
 	}
-	if typeExpr.Name == typeNull || typeExpr.Name == typeBool || typeExpr.Name == typeInt || typeExpr.Name == typeDecimal || typeExpr.Name == typeString {
+	if typeExpr.Name == typeNever || typeExpr.Name == typeNull || typeExpr.Name == typeBool || typeExpr.Name == typeInt || typeExpr.Name == typeDecimal || typeExpr.Name == typeString {
 		return ResolvedType{}, true, false, false
 	}
 	if typeExpr.Name != "" {
@@ -753,6 +765,12 @@ func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedTy
 }
 
 func staticTypeAssignable(inferred, expected ResolvedType, types map[string]ResolvedType) (bool, bool) {
+	if inferred.Name == typeNever {
+		return true, true
+	}
+	if expected.Name == typeNever {
+		return false, true
+	}
 	if isLambdaTypeVariable(inferred) || isLambdaTypeVariable(expected) {
 		return inferred.Name == expected.Name, inferred.Name == expected.Name
 	}
@@ -1253,7 +1271,7 @@ func resolveStaticAlias(typeExpr ResolvedType, types map[string]ResolvedType, re
 		return typeExpr, typeExpr.Fields != nil || typeExpr.OpenRecord || len(typeExpr.Options) > 0
 	}
 	switch typeExpr.Name {
-	case typeAny, typeNull, typeBool, typeInt, typeDecimal, typeString, typeMap, typeFunction, typeNode:
+	case typeAny, typeNever, typeNull, typeBool, typeInt, typeDecimal, typeString, typeMap, typeFunction, typeNode:
 		return typeExpr, true
 	case typeList:
 		return typeExpr, true

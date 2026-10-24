@@ -1,20 +1,15 @@
 package lsp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
-	"io"
 	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 
-	"github.com/creachadair/jrpc2"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
+	"go.lsp.dev/jsonrpc2"
 )
 
 const (
@@ -72,48 +67,6 @@ type formattingParams struct {
 	TextDocument struct {
 		URI string `json:"uri"`
 	} `json:"textDocument"`
-}
-
-func (s *server) readMessage() ([]byte, error) {
-	contentLength := -1
-	headerSize := 0
-	for {
-		line, err := s.reader.ReadSlice('\n')
-		if err != nil {
-			if errors.Is(err, bufio.ErrBufferFull) {
-				return nil, errors.New("header line exceeds maximum size")
-			}
-
-			return nil, err
-		}
-		headerSize += len(line)
-		if headerSize > maximumHeaderSize {
-			return nil, errors.New("headers exceed maximum size")
-		}
-		headerLine := strings.TrimRight(string(line), "\r\n")
-		if headerLine == "" {
-			break
-		}
-		name, value, ok := strings.Cut(headerLine, ":")
-		if ok && strings.EqualFold(name, "Content-Length") {
-			if contentLength >= 0 {
-				return nil, errors.New("duplicate Content-Length header")
-			}
-			contentLength, err = strconv.Atoi(strings.TrimSpace(value))
-			if err != nil || contentLength < 0 || contentLength > maximumMessageSize {
-				return nil, errors.New("invalid Content-Length header")
-			}
-		}
-	}
-	if contentLength < 0 {
-		return nil, errors.New("missing Content-Length header")
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(s.reader, body); err != nil {
-		return nil, err
-	}
-
-	return body, nil
 }
 
 func (s *server) handle(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
@@ -356,7 +309,7 @@ func (s *server) handleLocked(method string, rawParams jsontext.Value, notificat
 			return nil, nil
 		}
 
-		return nil, &jrpc2.Error{Code: jrpc2.MethodNotFound, Message: "Method not found"}
+		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "Method not found")
 	}
 }
 
@@ -377,8 +330,8 @@ func (s *server) registerMCLFileWatcher() {
 		}},
 	}}}
 	go func() {
-		response, err := s.callback("client/registerCapability", params)
-		success := err == nil && (response == nil || response.Error() == nil)
+		_, err := s.callback("client/registerCapability", params)
+		success := err == nil
 		result := watchRegistrationResult{generation: generation, success: success}
 		select {
 		case s.watchRegistrationResults <- result:
@@ -388,5 +341,5 @@ func (s *server) registerMCLFileWatcher() {
 }
 
 func invalidParamsError() error {
-	return &jrpc2.Error{Code: jrpc2.InvalidParams, Message: "Invalid params"}
+	return jsonrpc2.NewError(jsonrpc2.InvalidParams, "Invalid params")
 }

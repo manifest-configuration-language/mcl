@@ -11,6 +11,7 @@ const (
 	typeList     = "List"
 	typeMap      = "Map"
 	typeNode     = "Node"
+	typeNever    = "\x00Never"
 	typeNull     = "Null"
 	typeString   = "String"
 )

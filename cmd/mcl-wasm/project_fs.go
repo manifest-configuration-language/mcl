@@ -5,11 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing/fstest"
+	"unicode/utf8"
 
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
@@ -28,7 +27,7 @@ func (filesystem *projectFilesystem) Open(name string) (fs.File, error) {
 }
 
 func (filesystem *projectFilesystem) WriteFileAtomic(name string, data []byte) error {
-	if !fs.ValidPath(name) || name == "." || strings.Contains(name, `\`) {
+	if !validProjectPath(name) {
 		return fs.ErrInvalid
 	}
 	if len(data) > wasmprotocol.MaxProjectFileBytes {
@@ -68,7 +67,7 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 	project := &projectFilesystem{files: make(fstest.MapFS, len(files)), sourceBytes: len(source)}
 	binaryCount := 0
 	for relativePath, input := range files {
-		if !filepath.IsLocal(relativePath) || path.Clean(relativePath) != relativePath || relativePath == "." || relativePath == entrypoint || strings.Contains(relativePath, `\`) {
+		if !validProjectPath(relativePath) || relativePath == entrypoint {
 			return nil, fmt.Errorf("invalid project file path %q", relativePath)
 		}
 		var content []byte
@@ -105,4 +104,14 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 	}
 
 	return project, nil
+}
+
+func validProjectPath(value string) bool {
+	if !fs.ValidPath(value) || value == "." || utf8.RuneCountInString(value) > wasmprotocol.MaxProjectPathLength || strings.Contains(value, `\`) || strings.ContainsRune(value, '\x00') {
+		return false
+	}
+	if len(value) >= 2 && ((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) && value[1] == ':' {
+		return false
+	}
+	return len(strings.Split(value, "/")) <= wasmprotocol.MaxProjectPathDepth
 }

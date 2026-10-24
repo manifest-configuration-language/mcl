@@ -863,7 +863,7 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 		return edit
 	}
 	if match := index.localAt(name, offset); match.found {
-		return renameLocalBinding(state.Text, params.TextDocument.URI, params.NewName, name, match.binding, index.locals, module)
+		return renameLocalBinding(state.Text, params.TextDocument.URI, params.NewName, name, match.binding, index.locals, index.references)
 	}
 	if edit, handled := s.renameSchemaField(params, name, offset, module, state.Text); handled {
 		return edit
@@ -1501,7 +1501,7 @@ func collectLocalExprScopes(expression syntax.Expr, add func(string, syntax.Sour
 	})
 }
 
-func renameLocalBinding(source, uri, newName, oldName string, target scopedLocalBinding, bindings []scopedLocalBinding, module syntax.ModuleAST) *workspaceEdit {
+func renameLocalBinding(source, uri, newName, oldName string, target scopedLocalBinding, bindings []scopedLocalBinding, references []sourceReference) *workspaceEdit {
 	for _, binding := range bindings {
 		if binding.name != newName || binding.declaration == target.declaration {
 			continue
@@ -1511,7 +1511,7 @@ func renameLocalBinding(source, uri, newName, oldName string, target scopedLocal
 		}
 	}
 	spans := []syntax.SourceSpan{target.declaration}
-	for _, reference := range sourceReferences(module) {
+	for _, reference := range references {
 		if reference.name != oldName {
 			continue
 		}

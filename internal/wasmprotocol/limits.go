@@ -9,4 +9,6 @@ const (
 	MaxProjectBytes         = 67108864
 	MaxOutputBytes          = 1048576
 	EvaluationTimeoutMillis = 4000
+	MaxProjectPathLength    = 512
+	MaxProjectPathDepth     = 64
 )
