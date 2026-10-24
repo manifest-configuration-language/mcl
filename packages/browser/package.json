@@ -1,6 +1,6 @@
 {
   "name": "@manifest-configuration-language/browser",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Run MCL projects in a browser Web Worker using the Go WebAssembly runtime.",
   "license": "Apache-2.0",
   "repository": {
