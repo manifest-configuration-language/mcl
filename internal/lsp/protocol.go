@@ -52,10 +52,30 @@ type formattingParams struct {
 }
 
 func (s *server) handle(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
+	if isReadOnlyDocumentRequest(method) {
+		s.mu.Lock()
+		documents := make(map[string]documentState, len(s.documents))
+		for uri, state := range s.documents {
+			documents[uri] = state
+		}
+		s.mu.Unlock()
+
+		return (&server{documents: documents}).handleLocked(method, rawParams, notification, ctx)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.handleLocked(method, rawParams, notification, ctx)
+}
+
+func isReadOnlyDocumentRequest(method string) bool {
+	switch method {
+	case "textDocument/completion", "textDocument/formatting", "textDocument/definition":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *server) dispatch(ctx context.Context, method string, params any, notification bool, result any) error {
