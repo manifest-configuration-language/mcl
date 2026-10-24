@@ -48,6 +48,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Verify release
         uses: ./.github/actions/verify-release
+        with:
+          reference-version: ${{ steps.version.outputs.version }}
       - name: Build release candidate assets
         env:
           MCL_VERSION: ${{ steps.version.outputs.version }}

@@ -53,6 +53,8 @@ jobs:
         run: pnpm --filter @manifest-configuration-language/browser run test:unit
       - name: Check language grammar parity
         run: pnpm --filter @manifest-configuration-language/language run check:parity
+      - name: Generate package reference contents
+        run: MCL_VERSION="$(node -p "require('./packages/language/package.json').version")" mise run release:reference
       - name: Pack and verify npm packages
         run: scripts/verify-package-tarballs.sh --prebuilt-browser-wasm
       - name: Check generated protocol sources are current
