@@ -220,9 +220,7 @@ func CollectExprSourceReferences(expression syntax.Expr, references *[]SourceRef
 	switch expression := expression.(type) {
 	case *syntax.ReferenceExpr:
 		name := expression.Name
-		if index := strings.Index(name, "?."); index >= 0 {
-			name = name[:index]
-		} else if index := strings.IndexByte(name, '.'); index >= 0 {
+		if index := strings.IndexAny(name, ".?"); index >= 0 {
 			name = name[:index]
 		}
 		span := expression.ExprSpan()
@@ -231,9 +229,7 @@ func CollectExprSourceReferences(expression syntax.Expr, references *[]SourceRef
 		}
 	case *syntax.OptionalReferenceExpr:
 		name := expression.Path
-		if index := strings.Index(name, "?."); index >= 0 {
-			name = name[:index]
-		} else if index := strings.IndexByte(name, '.'); index >= 0 {
+		if index := strings.IndexAny(name, ".?"); index >= 0 {
 			name = name[:index]
 		}
 		span := expression.ExprSpan()
