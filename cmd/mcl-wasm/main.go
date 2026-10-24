@@ -77,7 +77,7 @@ func handle(raw string, binaryArgument js.Value) string {
 	}
 	entrypointInput := ""
 	if input.Entrypoint != nil {
-		entrypointInput = *input.Entrypoint
+		entrypointInput = string(*input.Entrypoint)
 	}
 	entrypoint, err := projectEntrypoint(entrypointInput)
 	if err != nil {
