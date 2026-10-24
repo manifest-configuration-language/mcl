@@ -257,8 +257,10 @@ func (s *server) initializeLocked(params *protocol.InitializeParams) *protocol.I
 	if params == nil {
 		params = &protocol.InitializeParams{}
 	}
-	if watchedFiles := params.Capabilities.Workspace.DidChangeWatchedFiles; watchedFiles != nil && watchedFiles.DynamicRegistration != nil {
-		s.canWatchMCLFiles = *watchedFiles.DynamicRegistration
+	if workspace := params.Capabilities.Workspace; workspace != nil {
+		if watchedFiles := workspace.DidChangeWatchedFiles; watchedFiles != nil && watchedFiles.DynamicRegistration != nil {
+			s.canWatchMCLFiles = *watchedFiles.DynamicRegistration
+		}
 	}
 	workspaceFolders, _ := params.WorkspaceFolders.Get()
 	s.workspaceRoots = workspaceFolderPaths(workspaceFolders)
