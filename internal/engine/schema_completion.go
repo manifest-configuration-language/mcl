@@ -17,9 +17,8 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/helmrender"
+	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"sigs.k8s.io/kustomize/kyaml/openapi"
-	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 func SchemaFieldCompletions(path, source, placeholder string) []string {
@@ -333,16 +332,16 @@ func kubernetesCompletionSchemaProperties(apiVersion, kind string, fieldPath []s
 
 		return properties, true
 	}
-	resourceSchema := openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind})
-	if resourceSchema == nil {
+	resourceSchema, exists, err := k8sschema.BuiltinOpenAPI(apiVersion, kind)
+	if err != nil || !exists {
 		return nil, false
 	}
-	resourceSchema = resourceSchema.Lookup(fieldPath...)
-	if resourceSchema == nil || resourceSchema.Schema == nil {
+	fieldSchema := resourceSchema.Lookup(fieldPath...)
+	if fieldSchema == nil {
 		return nil, false
 	}
-	properties := make(map[string]struct{}, len(resourceSchema.Schema.Properties))
-	for name := range resourceSchema.Schema.Properties {
+	properties := make(map[string]struct{}, len(fieldSchema.Properties))
+	for name := range fieldSchema.Properties {
 		properties[name] = struct{}{}
 	}
 
@@ -350,7 +349,7 @@ func kubernetesCompletionSchemaProperties(apiVersion, kind string, fieldPath []s
 }
 
 func completionTypeField(schema ResolvedType, field string) (ResolvedType, bool) {
-	if field == openapi.Elements {
+	if field == k8sschema.OpenAPIElements {
 		if schema.Element == nil {
 			return ResolvedType{}, false
 		}
@@ -500,7 +499,7 @@ func locateKubernetesCompletionMap(expression Expr, path []string, placeholder s
 		}
 	case *ListExpr:
 		for _, item := range node.Items {
-			if fieldPath, fields, found := locateKubernetesCompletionMap(item, append(slices.Clone(path), openapi.Elements), placeholder); found {
+			if fieldPath, fields, found := locateKubernetesCompletionMap(item, append(slices.Clone(path), k8sschema.OpenAPIElements), placeholder); found {
 				return fieldPath, fields, true
 			}
 		}

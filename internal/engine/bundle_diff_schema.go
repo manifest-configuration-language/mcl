@@ -8,12 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/kube-openapi/pkg/validation/spec"
-	"sigs.k8s.io/kustomize/kyaml/openapi"
-	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 type diffListTopology uint8
@@ -63,12 +62,14 @@ func bundleDiffSchemas(bundle Bundle) (map[string]*bundleDiffSchema, error) {
 		if _, exists := schemas[key]; exists {
 			continue
 		}
-		resourceSchema := openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind})
-		if resourceSchema == nil || resourceSchema.Schema == nil {
+		resourceSchema, exists, err := k8sschema.BuiltinOpenAPI(apiVersion, kind)
+		if err != nil {
+			return nil, fmt.Errorf("load built-in Kubernetes schema for %s %s: %w", apiVersion, kind, err)
+		}
+		if !exists {
 			continue
 		}
-		definitions := openapi.Schema().Definitions
-		schemas[key] = bundleDiffSchemaFromOpenAPI(resourceSchema.Schema, definitions, 0, make(map[string]bool))
+		schemas[key] = bundleDiffSchemaFromOpenAPI(resourceSchema.Schema, resourceSchema.Definitions, 0, make(map[string]bool))
 	}
 
 	return schemas, nil

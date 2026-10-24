@@ -12,8 +12,6 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/kube-openapi/pkg/validation/spec"
-	"sigs.k8s.io/kustomize/kyaml/openapi"
-	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 const (
@@ -34,14 +32,17 @@ type Type struct {
 
 // ValidateBuiltinは組み込みKubernetes Schemaでインスタンスを検証します。
 func ValidateBuiltin(apiVersion, kind string, value any) []error {
-	resource := openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind})
-	if resource == nil || resource.Schema == nil {
+	resource, exists, err := BuiltinOpenAPI(apiVersion, kind)
+	if err != nil {
+		return []error{err}
+	}
+	if !exists {
 		return nil
 	}
 	key := apiVersion + "/" + kind
 	compiled, exists := builtinValidators.Load(key)
 	if !exists {
-		created, err := compileBuiltinValidator(resource.Schema)
+		created, err := compileBuiltinValidator(resource.Schema, resource.Definitions)
 		if err != nil {
 			return []error{err}
 		}
@@ -58,20 +59,19 @@ func ValidateBuiltin(apiVersion, kind string, value any) []error {
 
 // HasBuiltinSchemaは組み込みSchemaが指定したGVKに登録されているかを返します。
 func HasBuiltinSchema(apiVersion, kind string) bool {
-	resource := openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind})
+	_, exists, err := BuiltinOpenAPI(apiVersion, kind)
 
-	return resource != nil && resource.Schema != nil
+	return exists || err != nil
 }
 
-func compileBuiltinValidator(resource *spec.Schema) (*jsonschema.Schema, error) {
-	root := openapi.Schema()
+func compileBuiltinValidator(resource *spec.Schema, definitions spec.Definitions) (*jsonschema.Schema, error) {
 	document, err := json.Marshal(struct {
 		Schema      string           `json:"$schema"`
 		Definitions spec.Definitions `json:"definitions"`
 		AllOf       []spec.Schema    `json:"allOf"`
 	}{
 		Schema:      "http://json-schema.org/draft-04/schema#",
-		Definitions: root.Definitions,
+		Definitions: definitions,
 		AllOf:       []spec.Schema{*resource},
 	})
 	if err != nil {
@@ -128,12 +128,12 @@ type Field struct {
 }
 
 func Builtin(apiVersion, kind string) (Type, bool) {
-	resource := openapi.SchemaForResourceType(yaml.TypeMeta{APIVersion: apiVersion, Kind: kind})
-	if resource == nil || resource.Schema == nil {
+	resource, exists, err := BuiltinOpenAPI(apiVersion, kind)
+	if err != nil || !exists {
 		return Type{}, false
 	}
 
-	return openAPISchema(resource, make(map[string]*Type), 0), true
+	return openAPISchema(resource.Schema, resource.Definitions, make(map[string]*Type), 0), true
 }
 
 func FromStructural(schema *structuralschema.Structural) Type {
@@ -189,22 +189,21 @@ func ElementType(schema Type) (Type, bool) {
 	return Type{}, false
 }
 
-func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, depth int) Type {
-	if resource == nil || resource.Schema == nil || depth > maxDepth {
+func openAPISchema(schema *spec.Schema, definitions spec.Definitions, refs map[string]*Type, depth int) Type {
+	if schema == nil || depth > maxDepth {
 		return Type{Kind: "Any"}
 	}
-	schema := resource.Schema
 	if ref := schema.Ref.String(); ref != "" {
 		if existing, exists := refs[ref]; exists {
 			return *existing
 		}
 		resolved := &Type{Kind: "Any"}
 		refs[ref] = resolved
-		definition, err := openapi.Resolve(&schema.Ref, openapi.Schema())
-		if err != nil {
+		definition := resolveOpenAPIReference(schema, definitions)
+		if definition == nil {
 			return *resolved
 		}
-		*resolved = openAPISchema(&openapi.ResourceSchema{Schema: definition}, refs, depth+1)
+		*resolved = openAPISchema(definition, definitions, refs, depth+1)
 
 		return *resolved
 	}
@@ -215,7 +214,7 @@ func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, dept
 	var inferred Type
 	set := false
 	for _, schemaKind := range types {
-		current := openAPISchemaKind(schemaKind, resource, refs, depth)
+		current := openAPISchemaKind(schemaKind, schema, definitions, refs, depth)
 		if !set {
 			inferred, set = current, true
 		} else {
@@ -229,7 +228,7 @@ func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, dept
 		inferred = union(inferred, Type{Kind: "Null"})
 	}
 	for index := range schema.AllOf {
-		branch := openAPISchema(&openapi.ResourceSchema{Schema: &schema.AllOf[index]}, refs, depth+1)
+		branch := openAPISchema(&schema.AllOf[index], definitions, refs, depth+1)
 		inferred = intersect(inferred, branch)
 	}
 	for _, branches := range [][]spec.Schema{schema.AnyOf, schema.OneOf} {
@@ -238,7 +237,7 @@ func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, dept
 		}
 		var alternatives Type
 		for index := range branches {
-			branch := openAPISchema(&openapi.ResourceSchema{Schema: &branches[index]}, refs, depth+1)
+			branch := openAPISchema(&branches[index], definitions, refs, depth+1)
 			if index == 0 {
 				alternatives = branch
 			} else {
@@ -251,8 +250,7 @@ func openAPISchema(resource *openapi.ResourceSchema, refs map[string]*Type, dept
 	return inferred
 }
 
-func openAPISchemaKind(kind string, resource *openapi.ResourceSchema, refs map[string]*Type, depth int) Type {
-	schema := resource.Schema
+func openAPISchemaKind(kind string, schema *spec.Schema, definitions spec.Definitions, refs map[string]*Type, depth int) Type {
 	switch kind {
 	case "null":
 		return Type{Kind: "Null"}
@@ -268,11 +266,11 @@ func openAPISchemaKind(kind string, resource *openapi.ResourceSchema, refs map[s
 		element := Type{Kind: "Any"}
 		if schema.Items != nil {
 			if schema.Items.Schema != nil {
-				element = openAPISchema(&openapi.ResourceSchema{Schema: schema.Items.Schema}, refs, depth+1)
+				element = openAPISchema(schema.Items.Schema, definitions, refs, depth+1)
 			} else if len(schema.Items.Schemas) > 0 {
 				options := make([]Type, len(schema.Items.Schemas))
 				for index := range schema.Items.Schemas {
-					options[index] = openAPISchema(&openapi.ResourceSchema{Schema: &schema.Items.Schemas[index]}, refs, depth+1)
+					options[index] = openAPISchema(&schema.Items.Schemas[index], definitions, refs, depth+1)
 				}
 				element = Type{Options: options}
 			}
@@ -287,14 +285,14 @@ func openAPISchemaKind(kind string, resource *openapi.ResourceSchema, refs map[s
 		fields := make([]Field, 0, len(schema.Properties))
 		for name := range schema.Properties {
 			property := schema.Properties[name]
-			fields = append(fields, Field{Name: name, Type: openAPISchema(&openapi.ResourceSchema{Schema: &property}, refs, depth+1), Optional: !required[name]})
+			fields = append(fields, Field{Name: name, Type: openAPISchema(&property, definitions, refs, depth+1), Optional: !required[name]})
 		}
 		slices.SortFunc(fields, func(left, right Field) int { return strings.Compare(left.Name, right.Name) })
 		open := schema.AdditionalProperties == nil || schema.AdditionalProperties.Allows || schema.AdditionalProperties.Schema != nil
 		var additional *Type
 		if schema.AdditionalProperties != nil {
 			if schema.AdditionalProperties.Schema != nil {
-				value := openAPISchema(&openapi.ResourceSchema{Schema: schema.AdditionalProperties.Schema}, refs, depth+1)
+				value := openAPISchema(schema.AdditionalProperties.Schema, definitions, refs, depth+1)
 				additional = &value
 			} else if !schema.AdditionalProperties.Allows {
 				open = false
