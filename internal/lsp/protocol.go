@@ -128,7 +128,7 @@ func (s *server) Initialized(ctx context.Context, params *protocol.InitializedPa
 }
 
 func (s *server) Shutdown(ctx context.Context) error {
-	return s.dispatch(ctx, "shutdown", nil, false, nil)
+	return nil
 }
 
 func (s *server) Exit(ctx context.Context) error {
