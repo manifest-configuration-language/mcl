@@ -329,6 +329,12 @@ func (s *server) publishDiagnosticResult(result diagnosticResult) error {
 		currentURIs[uri] = struct{}{}
 	}
 	notificationURIs := maps.Clone(currentURIs)
+	for _, uri := range result.pendingURIs {
+		if _, exists := currentDiagnostics[uri]; !exists {
+			currentDiagnostics[uri] = []diagnostic{}
+		}
+		notificationURIs[uri] = struct{}{}
+	}
 	previousURIs := s.diagnosticURIs
 	for uri := range previousURIs {
 		if _, exists := currentDiagnostics[uri]; !exists {
