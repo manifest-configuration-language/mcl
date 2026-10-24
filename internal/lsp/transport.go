@@ -10,7 +10,37 @@ import (
 	"sync"
 
 	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
 )
+
+type protocolCodec struct{}
+
+func (protocolCodec) Marshal(value any) ([]byte, error) {
+	switch message := value.(type) {
+	case jsonrpc2.RawMessage:
+		if message == nil {
+			return []byte("null"), nil
+		}
+		return message, nil
+	case *jsonrpc2.RawMessage:
+		if message == nil || *message == nil {
+			return []byte("null"), nil
+		}
+		return *message, nil
+	default:
+		return protocol.Marshal(value)
+	}
+}
+
+func (protocolCodec) Unmarshal(data []byte, value any) error {
+	if message, ok := value.(*jsonrpc2.RawMessage); ok {
+		*message = append((*message)[:0], data...)
+
+		return nil
+	}
+
+	return protocol.Unmarshal(data, value)
+}
 
 type boundedStream struct {
 	reader  *bufio.Reader

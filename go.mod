@@ -15,6 +15,7 @@ require (
 	github.com/shopspring/decimal v1.6.0
 	github.com/spf13/cobra v1.10.2
 	go.lsp.dev/jsonrpc2 v1.0.1
+	go.lsp.dev/protocol v1.0.1
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v4 v4.3.1
 	k8s.io/apiextensions-apiserver v0.37.1
@@ -48,7 +49,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
-	github.com/go-json-experiment/json v0.0.0-20260601182631-00ed12fed2a6 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
@@ -93,6 +94,7 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
+	go.lsp.dev/uri v1.0.1 // indirect
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect

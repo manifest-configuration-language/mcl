@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/languageservice"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
@@ -72,21 +72,21 @@ func (s *server) definition(params definitionParams) *definitionLocation {
 	}
 	if offset, err := offsetAtUTF16(state.Text, params.Position); err == nil {
 		if index, err := analyzeSource(state.Text); err == nil {
-			module := index.module
+			module := index.Module
 			if result, handled := s.importedDefinition(params.TextDocument.URI, module, offset, index); handled {
 				return result
 			}
-			for _, binding := range index.visibleLocalBindings(offset) {
-				if binding.name == name {
-					return sourceDefinitionLocation(params.TextDocument.URI, state.Text, binding.declaration)
+			for _, binding := range index.VisibleLocalBindings(offset) {
+				if binding.Name == name {
+					return sourceDefinitionLocation(params.TextDocument.URI, state.Text, binding.Declaration)
 				}
 			}
-			if declarationIndex := index.declarationAt(name, offset); declarationIndex >= 0 {
+			if declarationIndex := index.DeclarationAt(name, offset); declarationIndex >= 0 {
 				_, _, nameSpan, _ := astDeclarationInfo(module.Nodes[declarationIndex])
 
 				return sourceDefinitionLocation(params.TextDocument.URI, state.Text, nameSpan)
 			}
-			declarationIndex := index.resolveTopLevel(name, offset, false)
+			declarationIndex := index.ResolveTopLevel(name, offset, false)
 			if declarationIndex < 0 {
 				return nil
 			}
@@ -117,20 +117,20 @@ func (s *server) importedDefinition(uri string, current syntax.ModuleAST, offset
 	if currentPath == "" {
 		return nil, false
 	}
-	references := append(slices.Clone(index.qualified), index.qualifiedTyp...)
+	references := append(slices.Clone(index.Qualified), index.QualifiedType...)
 	for _, reference := range references {
-		if offset < reference.span.Start || offset > reference.span.End {
+		if offset < reference.Span.Start || offset > reference.Span.End {
 			continue
 		}
 		var targetPath string
 		foundImport := false
 		for _, node := range current.Nodes {
 			declaration, ok := node.(*syntax.ImportDeclaration)
-			if !ok || declaration.Name != reference.alias {
+			if !ok || declaration.Name != reference.Alias {
 				continue
 			}
 			foundImport = true
-			if index.localAt(reference.alias, reference.span.Start).found || strings.HasPrefix(declaration.ModulePath, "std:") {
+			if index.LocalAt(reference.Alias, reference.Span.Start).Found || strings.HasPrefix(declaration.ModulePath, "std:") {
 				return nil, true
 			}
 			resolved, err := engine.ResolveImportPath(currentPath, declaration.ModulePath)
@@ -169,7 +169,7 @@ func (s *server) importedDefinition(uri string, current syntax.ModuleAST, offset
 		var declarationSpan syntax.SourceSpan
 		for _, node := range module.Nodes {
 			name, _, span, ok := astDeclarationInfo(node)
-			if !ok || name != reference.member || !astDeclarationExported(node) {
+			if !ok || name != reference.Member || !astDeclarationExported(node) {
 				continue
 			}
 			if declarationSpan.End > declarationSpan.Start {
@@ -185,79 +185,6 @@ func (s *server) importedDefinition(uri string, current syntax.ModuleAST, offset
 	}
 
 	return nil, false
-}
-
-func qualifiedTypeReferences(module syntax.ModuleAST) []qualifiedReference {
-	var result []qualifiedReference
-	var visit func(syntax.TypeExpr)
-	visit = func(typeExpr syntax.TypeExpr) {
-		if alias, member, ok := strings.CutLast(typeExpr.Name, "."); ok && alias != "" && member != "" && typeExpr.Span.End-typeExpr.Span.Start >= len(typeExpr.Name) {
-			memberOffset := typeExpr.Span.Start + len(alias) + 1
-			result = append(result, qualifiedReference{
-				alias:  alias,
-				member: member,
-				span:   syntax.SourceSpan{Start: memberOffset, End: memberOffset + len(member)},
-			})
-		}
-		for _, child := range typeExpr.Arguments {
-			visit(child)
-		}
-		for _, child := range typeExpr.Options {
-			visit(child)
-		}
-		for _, field := range typeExpr.Fields {
-			visit(field.Type)
-		}
-		for _, parameter := range typeExpr.Parameters {
-			visit(parameter.Type)
-		}
-		if typeExpr.Element != nil {
-			visit(*typeExpr.Element)
-		}
-		if typeExpr.ReturnType != nil {
-			visit(*typeExpr.ReturnType)
-		}
-	}
-	visitPointer := func(typeExpr *syntax.TypeExpr) {
-		if typeExpr != nil {
-			visit(*typeExpr)
-		}
-	}
-	for _, node := range module.Nodes {
-		switch declaration := node.(type) {
-		case *syntax.TypeDeclaration:
-			if declaration.TypeSpec != nil {
-				visit(*declaration.TypeSpec)
-			}
-		case *syntax.LetDeclaration:
-			visitPointer(declaration.Annotation)
-		case *syntax.FunctionDeclaration:
-			if declaration.Function == nil {
-				continue
-			}
-			for _, parameter := range declaration.Function.Parameters {
-				visit(parameter.Type)
-			}
-			visitPointer(declaration.Function.ReturnType)
-		case *syntax.RuleDeclaration:
-			if declaration.Rule == nil {
-				continue
-			}
-			for _, parameter := range declaration.Rule.Parameters {
-				visit(parameter.Type)
-			}
-		case *syntax.ValidateStatement:
-			visitPointer(declaration.QueryType)
-		}
-	}
-
-	return result
-}
-
-type sourceReference struct {
-	name     string
-	span     syntax.SourceSpan
-	typeName bool
 }
 
 type schemaFieldOccurrence struct {
@@ -596,7 +523,7 @@ func schemaFieldsAtOccurrence(path, source string, occurrence *schemaFieldOccurr
 func schemaFieldReferenceOccurrences(module syntax.ModuleAST, source string, annotationByBinding map[string]string, pathByBinding map[string][]string) []schemaFieldOccurrence {
 	index := analyzeModule(module)
 	var occurrences []schemaFieldOccurrence
-	visitModuleExpressions(module, func(expression syntax.Expr) {
+	languageservice.VisitModuleExpressions(module, func(expression syntax.Expr) {
 		var text string
 		var span syntax.SourceSpan
 		switch expression := expression.(type) {
@@ -608,7 +535,7 @@ func schemaFieldReferenceOccurrences(module syntax.ModuleAST, source string, ann
 			return
 		}
 		parts, offsets := splitSchemaReference(text)
-		if len(parts) < 2 || annotationByBinding[parts[0]] == "" || index.localAt(parts[0], span.Start).found {
+		if len(parts) < 2 || annotationByBinding[parts[0]] == "" || index.LocalAt(parts[0], span.Start).Found {
 			return
 		}
 		for partIndex := 1; partIndex < len(parts); partIndex++ {
@@ -858,24 +785,24 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 	if err != nil {
 		return nil
 	}
-	module := index.module
+	module := index.Module
 	if edit, handled := s.renameImportedExport(params, name, offset, module, index); handled {
 		return edit
 	}
-	if match := index.localAt(name, offset); match.found {
-		return renameLocalBinding(state.Text, params.TextDocument.URI, params.NewName, name, match.binding, index.locals, index.references)
+	if match := index.LocalAt(name, offset); match.Found {
+		return renameLocalBinding(state.Text, params.TextDocument.URI, params.NewName, name, match.Binding, index.Locals, index.References)
 	}
 	if edit, handled := s.renameSchemaField(params, name, offset, module, state.Text); handled {
 		return edit
 	}
-	references := index.references
-	target := index.declarationAt(name, offset)
+	references := index.References
+	target := index.DeclarationAt(name, offset)
 	if target < 0 {
 		for _, reference := range references {
-			if reference.name != name || offset < reference.span.Start || offset > reference.span.Start+len(name) {
+			if reference.Name != name || offset < reference.Span.Start || offset > reference.Span.Start+len(name) {
 				continue
 			}
-			resolved := index.resolveTopLevel(name, reference.span.Start, reference.typeName)
+			resolved := index.ResolveTopLevel(name, reference.Span.Start, reference.TypeName)
 			if resolved < 0 || target >= 0 && target != resolved {
 				return nil
 			}
@@ -898,7 +825,7 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 		}
 	}
 	for _, reference := range references {
-		if reference.typeName == isTypeDeclaration(module.Nodes[target]) && reference.name == params.NewName {
+		if reference.TypeName == isTypeDeclaration(module.Nodes[target]) && reference.Name == params.NewName {
 			return nil
 		}
 	}
@@ -907,17 +834,17 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 	spans := []syntax.SourceSpan{declarationSpan}
 	seen := map[syntax.SourceSpan]struct{}{declarationSpan: {}}
 	for _, reference := range references {
-		if reference.name != name || reference.typeName != isTypeDeclaration(module.Nodes[target]) || !reference.typeName && index.localAt(name, reference.span.Start).found {
+		if reference.Name != name || reference.TypeName != isTypeDeclaration(module.Nodes[target]) || !reference.TypeName && index.LocalAt(name, reference.Span.Start).Found {
 			continue
 		}
-		resolved := index.resolveTopLevel(name, reference.span.Start, reference.typeName)
+		resolved := index.ResolveTopLevel(name, reference.Span.Start, reference.TypeName)
 		if resolved != target {
 			continue
 		}
-		if index.localAt(params.NewName, reference.span.Start).found {
+		if index.LocalAt(params.NewName, reference.Span.Start).Found {
 			return nil
 		}
-		span := syntax.SourceSpan{Start: reference.span.Start, End: reference.span.Start + len(name)}
+		span := syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(name)}
 		if span.Start < 0 || span.End > len(state.Text) || state.Text[span.Start:span.End] != name {
 			return nil
 		}
@@ -981,25 +908,25 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 			if err != nil {
 				continue
 			}
-			for _, reference := range index.qualified {
-				if reference.span.Start > offset || offset > reference.span.End {
+			for _, reference := range index.Qualified {
+				if reference.Span.Start > offset || offset > reference.Span.End {
 					continue
 				}
-				if reference.alias == declaration.Name && reference.member == name && !index.localAt(reference.alias, reference.span.Start).found {
+				if reference.Alias == declaration.Name && reference.Member == name && !index.LocalAt(reference.Alias, reference.Span.Start).Found {
 					targetPath = resolved
-					targetName = reference.member
+					targetName = reference.Member
 
 					break
 				}
 			}
 			if targetPath == "" {
-				for _, reference := range index.qualifiedTyp {
-					if reference.alias != declaration.Name || reference.member != name {
+				for _, reference := range index.QualifiedType {
+					if reference.Alias != declaration.Name || reference.Member != name {
 						continue
 					}
-					if reference.span.Start <= offset && offset <= reference.span.End && !index.localAt(reference.alias, reference.span.Start).found {
+					if reference.Span.Start <= offset && offset <= reference.Span.End && !index.LocalAt(reference.Alias, reference.Span.Start).Found {
 						targetPath = resolved
-						targetName = reference.member
+						targetName = reference.Member
 
 						break
 					}
@@ -1130,15 +1057,15 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	for uri, parsed := range parsedDocuments {
 		if paths[uri] == targetPath {
 			index := semanticDocuments[uri]
-			for _, reference := range index.references {
-				if reference.name != targetName || reference.typeName != isTypeDeclaration(declaration) || !reference.typeName && index.localAt(targetName, reference.span.Start).found {
+			for _, reference := range index.References {
+				if reference.Name != targetName || reference.TypeName != isTypeDeclaration(declaration) || !reference.TypeName && index.LocalAt(targetName, reference.Span.Start).Found {
 					continue
 				}
-				resolved := index.resolveTopLevel(targetName, reference.span.Start, reference.typeName)
+				resolved := index.ResolveTopLevel(targetName, reference.Span.Start, reference.TypeName)
 				if resolved != declarationIndex {
 					continue
 				}
-				span := syntax.SourceSpan{Start: reference.span.Start, End: reference.span.Start + len(targetName)}
+				span := syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(targetName)}
 				if !addEdit(uri, texts[uri], span) {
 					return nil, true
 				}
@@ -1161,20 +1088,20 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 			continue
 		}
 		index := semanticDocuments[uri]
-		for _, reference := range index.qualified {
-			if !aliases[reference.alias] || reference.member != targetName || index.localAt(reference.alias, reference.span.Start).found {
+		for _, reference := range index.Qualified {
+			if !aliases[reference.Alias] || reference.Member != targetName || index.LocalAt(reference.Alias, reference.Span.Start).Found {
 				continue
 			}
-			if !addEdit(uri, texts[uri], reference.span) {
+			if !addEdit(uri, texts[uri], reference.Span) {
 				return nil, true
 			}
 		}
 		if isTypeDeclaration(declaration) {
-			for _, reference := range index.qualifiedTyp {
-				if !aliases[reference.alias] || reference.member != targetName || index.localAt(reference.alias, reference.span.Start).found {
+			for _, reference := range index.QualifiedType {
+				if !aliases[reference.Alias] || reference.Member != targetName || index.LocalAt(reference.Alias, reference.Span.Start).Found {
 					continue
 				}
-				if !addEdit(uri, texts[uri], reference.span) {
+				if !addEdit(uri, texts[uri], reference.Span) {
 					return nil, true
 				}
 			}
@@ -1193,214 +1120,6 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	return &workspaceEdit{Changes: changes}, true
 }
 
-type qualifiedReference struct {
-	alias  string
-	member string
-	span   syntax.SourceSpan
-}
-
-func qualifiedSourceReferences(module syntax.ModuleAST) []qualifiedReference {
-	var result []qualifiedReference
-	visitModuleExpressions(module, func(expression syntax.Expr) {
-		var text string
-		var span syntax.SourceSpan
-		switch expression := expression.(type) {
-		case *syntax.ReferenceExpr:
-			text, span = expression.Name, expression.ExprSpan()
-		case *syntax.OptionalReferenceExpr:
-			text, span = expression.Path, expression.ExprSpan()
-		default:
-			return
-		}
-		parts := strings.FieldsFunc(text, func(r rune) bool { return r == '.' || r == '?' })
-		if len(parts) < 2 || span.End-span.Start < len(text) {
-			return
-		}
-		separator := strings.Index(text, "?.")
-		separatorSize := 2
-		if separator < 0 {
-			separator = strings.IndexByte(text, '.')
-			separatorSize = 1
-		}
-		memberOffset := separator + separatorSize
-		if separator >= 0 && strings.HasPrefix(text[memberOffset:], parts[1]) {
-			result = append(result, qualifiedReference{alias: parts[0], member: parts[1], span: syntax.SourceSpan{Start: span.Start + memberOffset, End: span.Start + memberOffset + len(parts[1])}})
-		}
-	})
-
-	return result
-}
-
-func sourceReferences(module syntax.ModuleAST) []sourceReference {
-	var references []sourceReference
-	visitModuleExpressions(module, func(expression syntax.Expr) {
-		collectExprSourceReferences(expression, &references)
-	})
-	var collectType func(syntax.TypeExpr)
-	collectType = func(typeExpr syntax.TypeExpr) {
-		if isQualifiedMCLIdentifier(typeExpr.Name) && typeExpr.Span.End-typeExpr.Span.Start >= len(typeExpr.Name) {
-			references = append(references, sourceReference{name: typeExpr.Name, span: syntax.SourceSpan{Start: typeExpr.Span.Start, End: typeExpr.Span.Start + len(typeExpr.Name)}, typeName: true})
-		}
-		for _, argument := range typeExpr.Arguments {
-			collectType(argument)
-		}
-		for _, option := range typeExpr.Options {
-			collectType(option)
-		}
-		for _, field := range typeExpr.Fields {
-			collectType(field.Type)
-		}
-		if typeExpr.Element != nil {
-			collectType(*typeExpr.Element)
-		}
-		for _, parameter := range typeExpr.Parameters {
-			collectType(parameter.Type)
-		}
-		if typeExpr.ReturnType != nil {
-			collectType(*typeExpr.ReturnType)
-		}
-	}
-	for _, node := range module.Nodes {
-		switch declaration := node.(type) {
-		case *syntax.TypeDeclaration:
-			if declaration.TypeSpec != nil {
-				collectType(*declaration.TypeSpec)
-			}
-		case *syntax.LetDeclaration:
-			if declaration.Annotation != nil {
-				collectType(*declaration.Annotation)
-			}
-		case *syntax.FunctionDeclaration:
-			if declaration.Function != nil {
-				for _, parameter := range declaration.Function.Parameters {
-					collectType(parameter.Type)
-				}
-				if declaration.Function.ReturnType != nil {
-					collectType(*declaration.Function.ReturnType)
-				}
-			}
-		case *syntax.RuleDeclaration:
-			if declaration.Rule != nil {
-				for _, parameter := range declaration.Rule.Parameters {
-					collectType(parameter.Type)
-				}
-			}
-		case *syntax.ValidateStatement:
-			if declaration.QueryType != nil {
-				collectType(*declaration.QueryType)
-			}
-			if declaration.QuerySchema != nil {
-				collectType(*declaration.QuerySchema)
-			}
-		}
-	}
-
-	return references
-}
-
-func visitModuleExpressions(module syntax.ModuleAST, visit func(syntax.Expr)) {
-	visitRoot := func(expression syntax.Expr) {
-		if expression != nil {
-			syntax.WalkExpr(expression, visit)
-		}
-	}
-	for _, node := range module.Nodes {
-		switch node := node.(type) {
-		case *syntax.LetDeclaration:
-			visitRoot(node.Expression)
-		case *syntax.FunctionDeclaration:
-			if node.Function != nil {
-				visitRoot(node.Function.Expression)
-			}
-		case *syntax.RuleDeclaration:
-			if node.Rule != nil {
-				for _, requirement := range node.Rule.Requirements {
-					visitRoot(requirement.Expression)
-				}
-			}
-		case *syntax.EmitStatement:
-			visitRoot(node.Expression)
-		case *syntax.ValidateStatement:
-			visitRoot(node.Expression)
-			visitRoot(node.RuleExpr)
-			visitRoot(node.QueryWhere)
-		}
-	}
-}
-
-func collectExprSourceReferences(expression syntax.Expr, references *[]sourceReference) {
-	switch expression := expression.(type) {
-	case *syntax.ReferenceExpr:
-		name := expression.Name
-		if index := strings.Index(name, "?."); index >= 0 {
-			name = name[:index]
-		} else if index := strings.IndexByte(name, '.'); index >= 0 {
-			name = name[:index]
-		}
-		span := expression.ExprSpan()
-		if isMCLIdentifier(name) && span.End-span.Start >= len(name) {
-			*references = append(*references, sourceReference{name: name, span: span})
-		}
-	case *syntax.OptionalReferenceExpr:
-		name := expression.Path
-		if index := strings.Index(name, "?."); index >= 0 {
-			name = name[:index]
-		} else if index := strings.IndexByte(name, '.'); index >= 0 {
-			name = name[:index]
-		}
-		span := expression.ExprSpan()
-		if isMCLIdentifier(name) && span.End-span.Start >= len(name) {
-			*references = append(*references, sourceReference{name: name, span: span})
-		}
-	}
-}
-
-func topLevelTypeDefinition(module syntax.ModuleAST, name string) int {
-	definition := -1
-	for index, node := range module.Nodes {
-		declaration, ok := node.(*syntax.TypeDeclaration)
-		if !ok || declaration.Name != name {
-			continue
-		}
-		if definition >= 0 {
-			return -1
-		}
-		definition = index
-	}
-
-	return definition
-}
-
-func isTypeDeclaration(node syntax.ASTNode) bool {
-	_, ok := node.(*syntax.TypeDeclaration)
-
-	return ok
-}
-
-func isRenameableASTDeclaration(node syntax.ASTNode) bool {
-	switch node.(type) {
-	case *syntax.LetDeclaration, *syntax.FunctionDeclaration, *syntax.RuleDeclaration, *syntax.TypeDeclaration:
-		return true
-	default:
-		return false
-	}
-}
-
-func astDeclarationExported(node syntax.ASTNode) bool {
-	switch declaration := node.(type) {
-	case *syntax.LetDeclaration:
-		return declaration.Exported
-	case *syntax.FunctionDeclaration:
-		return declaration.Exported
-	case *syntax.RuleDeclaration:
-		return declaration.Exported
-	case *syntax.TypeDeclaration:
-		return declaration.Exported
-	default:
-		return false
-	}
-}
-
 func isRenameConflictASTDeclaration(node syntax.ASTNode) bool {
 	switch node.(type) {
 	case *syntax.LetDeclaration, *syntax.FunctionDeclaration, *syntax.RuleDeclaration, *syntax.ImportDeclaration:
@@ -1410,119 +1129,28 @@ func isRenameConflictASTDeclaration(node syntax.ASTNode) bool {
 	}
 }
 
-type scopedLocalBinding struct {
-	name        string
-	declaration syntax.SourceSpan
-	scope       syntax.SourceSpan
-}
-
-type localBindingMatch struct {
-	binding scopedLocalBinding
-	found   bool
-}
-
-func scopedLocalBindings(module syntax.ModuleAST) []scopedLocalBinding {
-	var bindings []scopedLocalBinding
-	add := func(name string, declaration, scope syntax.SourceSpan) {
-		if name == "" || declaration.End <= declaration.Start || scope.End <= scope.Start {
-			return
-		}
-		bindings = append(bindings, scopedLocalBinding{name: name, declaration: declaration, scope: scope})
-	}
-	for _, node := range module.Nodes {
-		switch node := node.(type) {
-		case *syntax.FunctionDeclaration:
-			if node.Function != nil {
-				for _, parameter := range node.Function.Parameters {
-					add(parameter.Name, parameter.Span, node.Function.BodySpan())
-				}
-				collectLocalExprScopes(node.Function.Expression, add)
-			}
-		case *syntax.LetDeclaration:
-			if node.Expression != nil {
-				collectLocalExprScopes(node.Expression, add)
-			}
-		case *syntax.EmitStatement:
-			if node.Expression != nil {
-				collectLocalExprScopes(node.Expression, add)
-			}
-		case *syntax.ValidateStatement:
-			if node.Expression != nil {
-				collectLocalExprScopes(node.Expression, add)
-			}
-			collectLocalExprScopes(node.RuleExpr, add)
-			if node.QueryWhere != nil {
-				collectLocalExprScopes(node.QueryWhere, add)
-			}
-		case *syntax.RuleDeclaration:
-			if node.Rule == nil {
-				continue
-			}
-			for _, requirement := range node.Rule.Requirements {
-				for _, parameter := range node.Rule.Parameters {
-					add(parameter.Name, parameter.Span, requirement.Span)
-				}
-				collectLocalExprScopes(requirement.Expression, add)
-			}
-		}
-	}
-
-	return bindings
-}
-
-func localBindingAt(bindings []scopedLocalBinding, name string, offset int) localBindingMatch {
-	var match localBindingMatch
+func renameLocalBinding(source, uri, newName, oldName string, target languageservice.ScopedLocalBinding, bindings []languageservice.ScopedLocalBinding, references []languageservice.SourceReference) *workspaceEdit {
 	for _, binding := range bindings {
-		inDeclaration := offset >= binding.declaration.Start && offset <= binding.declaration.End
-		inScope := offset >= binding.scope.Start && offset <= binding.scope.End
-		if binding.name != name || !inDeclaration && !inScope {
+		if binding.Name != newName || binding.Declaration == target.Declaration {
 			continue
 		}
-		if !match.found || binding.scope.End-binding.scope.Start < match.binding.scope.End-match.binding.scope.Start {
-			match = localBindingMatch{binding: binding, found: true}
-		}
-	}
-
-	return match
-}
-
-func collectLocalExprScopes(expression syntax.Expr, add func(string, syntax.SourceSpan, syntax.SourceSpan)) {
-	syntax.WalkExpr(expression, func(expression syntax.Expr) {
-		switch expression := expression.(type) {
-		case *syntax.ForExpr:
-			add(expression.Variable, expression.VariableSpan, expression.Body.ExprSpan())
-		case *syntax.LambdaExpr:
-			for index, parameter := range expression.Parameters {
-				if index < len(expression.ParameterSpans) {
-					add(parameter, expression.ParameterSpans[index], expression.Body.ExprSpan())
-				}
-			}
-		}
-	})
-}
-
-func renameLocalBinding(source, uri, newName, oldName string, target scopedLocalBinding, bindings []scopedLocalBinding, references []sourceReference) *workspaceEdit {
-	for _, binding := range bindings {
-		if binding.name != newName || binding.declaration == target.declaration {
-			continue
-		}
-		if binding.scope.Start <= target.scope.End && target.scope.Start <= binding.scope.End {
+		if binding.Scope.Start <= target.Scope.End && target.Scope.Start <= binding.Scope.End {
 			return nil
 		}
 	}
-	spans := []syntax.SourceSpan{target.declaration}
+	spans := []syntax.SourceSpan{target.Declaration}
 	for _, reference := range references {
-		if reference.name != oldName {
+		if reference.Name != oldName {
 			continue
 		}
-		resolved := localBindingAt(bindings, oldName, reference.span.Start)
-		if !resolved.found || resolved.binding.declaration != target.declaration {
+		resolved := localBindingAt(bindings, oldName, reference.Span.Start)
+		if !resolved.Found || resolved.Binding.Declaration != target.Declaration {
 			continue
 		}
-		if localBindingAt(bindings, newName, reference.span.Start).found {
+		if localBindingAt(bindings, newName, reference.Span.Start).Found {
 			return nil
 		}
-		spans = append(spans, syntax.SourceSpan{Start: reference.span.Start, End: reference.span.Start + len(oldName)})
+		spans = append(spans, syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(oldName)})
 	}
 	seen := make(map[syntax.SourceSpan]struct{}, len(spans))
 	unique := spans[:0]
@@ -1566,139 +1194,6 @@ func renameLocalBinding(source, uri, newName, oldName string, target scopedLocal
 	return &workspaceEdit{Changes: map[string][]textEdit{uri: edits}}
 }
 
-type localBinding struct {
-	name        string
-	declaration syntax.SourceSpan
-}
-
-func astDeclarationInfo(node syntax.ASTNode) (string, int, syntax.SourceSpan, bool) {
-	switch declaration := node.(type) {
-	case *syntax.ImportDeclaration:
-		return declaration.Name, declaration.Line, declaration.NameSpan, true
-	case *syntax.TypeDeclaration:
-		return declaration.Name, declaration.Line, declaration.NameSpan, true
-	case *syntax.RuleDeclaration:
-		return declaration.Name, declaration.Line, declaration.NameSpan, true
-	case *syntax.FunctionDeclaration:
-		return declaration.Name, declaration.Line, declaration.NameSpan, true
-	case *syntax.LetDeclaration:
-		return declaration.Name, declaration.Line, declaration.NameSpan, true
-	default:
-		return "", 0, syntax.SourceSpan{}, false
-	}
-}
-
-func partialLocalBindings(source string, cursorOffset int) []localBinding {
-	if cursorOffset < 0 || cursorOffset > len(source) {
-		return nil
-	}
-	prefix := source[:cursorOffset]
-	if index, err := analyzeSource(prefix); err == nil {
-		return index.visibleLocalBindings(cursorOffset)
-	}
-	tokens, err := syntax.Lex(prefix)
-	if err != nil {
-		return nil
-	}
-	if bindings := partialLambdaLocalBindings(prefix, tokens); len(bindings) != 0 {
-		return bindings
-	}
-	closers, ok := missingDelimiterClosers(prefix, tokens)
-	if !ok {
-		return nil
-	}
-	separator := " "
-	if prefix == "" || strings.HasSuffix(prefix, "\n") || strings.HasSuffix(prefix, "\r") || strings.HasSuffix(prefix, "\t") || strings.HasSuffix(prefix, " ") {
-		separator = ""
-	}
-	for _, ending := range []string{separator + "null", "\nnull"} {
-		candidate := prefix + ending + closers
-		if index, parseErr := analyzeSource(candidate); parseErr == nil {
-			return index.visibleLocalBindings(cursorOffset)
-		}
-	}
-
-	return nil
-}
-
-func partialLambdaLocalBindings(prefix string, tokens []syntax.Token) []localBinding {
-	for _, token := range tokens {
-		if token.Kind != syntax.TokenLexeme || prefix[token.Lexeme.Start:token.Lexeme.End] != fnKeyword {
-			continue
-		}
-		lambdaStart := token.Lexeme.Start
-		fragment := prefix[lambdaStart:]
-		fragmentTokens, err := syntax.Lex(fragment)
-		if err != nil {
-			continue
-		}
-		closers, ok := missingDelimiterClosers(fragment, fragmentTokens)
-		if !ok {
-			continue
-		}
-		separator := " "
-		if strings.HasSuffix(fragment, "\n") || strings.HasSuffix(fragment, "\r") || strings.HasSuffix(fragment, "\t") || strings.HasSuffix(fragment, " ") {
-			separator = ""
-		}
-		for _, ending := range []string{"", separator + "null", "\nnull"} {
-			declaration := "let __mcl_partial = "
-			candidate := declaration + fragment + ending + closers
-			module, parseErr := syntax.ParseAST(candidate)
-			if parseErr != nil {
-				continue
-			}
-			index := analyzeModule(module)
-			syntheticCursor := len(declaration) + len(fragment)
-			bindings := index.visibleLocalBindings(syntheticCursor)
-			for bindingIndex := range bindings {
-				bindings[bindingIndex].declaration.Start += lambdaStart - len(declaration)
-				bindings[bindingIndex].declaration.End += lambdaStart - len(declaration)
-			}
-			if len(bindings) != 0 {
-				return bindings
-			}
-		}
-	}
-
-	return nil
-}
-
-func missingDelimiterClosers(source string, tokens []syntax.Token) (string, bool) {
-	openers := make([]string, 0)
-	for _, token := range tokens {
-		if token.Kind != syntax.TokenLexeme {
-			continue
-		}
-		lexeme := source[token.Lexeme.Start:token.Lexeme.End]
-		switch lexeme {
-		case "(", "[", "{":
-			openers = append(openers, lexeme)
-		case ")", "]", "}":
-			if len(openers) == 0 {
-				return "", false
-			}
-			match := openers[len(openers)-1] == "(" && lexeme == ")" || openers[len(openers)-1] == "[" && lexeme == "]" || openers[len(openers)-1] == "{" && lexeme == "}"
-			if !match {
-				return "", false
-			}
-			openers = openers[:len(openers)-1]
-		}
-	}
-	closers := make([]byte, 0, len(openers))
-	for _, opener := range slices.Backward(openers) {
-		switch opener {
-		case "(":
-			closers = append(closers, ')')
-		case "[":
-			closers = append(closers, ']')
-		case "{":
-			closers = append(closers, '}')
-		}
-	}
-
-	return string(closers), true
-}
-
 func sourceDefinitionLocation(uri, source string, span syntax.SourceSpan) *definitionLocation {
 	result := &definitionLocation{URI: uri}
 	index := sourceindex.New(source)
@@ -1706,56 +1201,6 @@ func sourceDefinitionLocation(uri, source string, span syntax.SourceSpan) *defin
 	result.Range.End = sourcePositionAt(index, span.End)
 
 	return result
-}
-
-func declaredName(line string) (string, int, bool) {
-	tokens, err := syntax.Lex(line)
-	if err != nil {
-		return "", 0, false
-	}
-	lexemes := make([]syntax.Token, 0, len(tokens))
-	for _, token := range tokens {
-		if token.Kind == syntax.TokenLexeme {
-			lexemes = append(lexemes, token)
-		}
-	}
-	text := func(index int) string {
-		return line[lexemes[index].Lexeme.Start:lexemes[index].Lexeme.End]
-	}
-	if len(lexemes) == 0 {
-		return "", 0, false
-	}
-	keywordIndex := 0
-	if text(0) == "export" {
-		keywordIndex++
-	}
-	if keywordIndex >= len(lexemes) {
-		return "", 0, false
-	}
-	keyword := text(keywordIndex)
-	nameIndex := keywordIndex + 1
-	if keyword == "import" {
-		nameIndex = -1
-		for index := keywordIndex + 1; index+1 < len(lexemes); index++ {
-			if text(index) == "as" {
-				nameIndex = index + 1
-
-				break
-			}
-		}
-	} else if keyword != "let" && keyword != "type" && keyword != "rule" && keyword != "fn" {
-		return "", 0, false
-	}
-	if nameIndex < 0 || nameIndex >= len(lexemes) {
-		return "", 0, false
-	}
-	name := text(nameIndex)
-	if !isMCLIdentifier(name) {
-		return "", 0, false
-	}
-	start := lexemes[nameIndex].Lexeme.Start
-
-	return name, utf16Length([]rune(line[:start])), true
 }
 
 func wordAtUTF16(line string, character int) (string, bool) {
@@ -1776,13 +1221,4 @@ func wordAtUTF16(line string, character int) (string, bool) {
 	}
 
 	return string(runes[start:end]), true
-}
-
-func utf16Length(runes []rune) int {
-	length := 0
-	for _, char := range runes {
-		length += utf16.RuneLen(char)
-	}
-
-	return length
 }

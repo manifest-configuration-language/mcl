@@ -49,6 +49,22 @@ async function probeNetworkAccess(url) {
   return { fetchBlocked, availableAPIs, blockedAPIs };
 }
 
+function waitForWasmReady() {
+  return new Promise((resolve) => {
+    Object.defineProperty(globalThis, "mclWasmReady", {
+      configurable: true,
+      set(value) {
+        Object.defineProperty(globalThis, "mclWasmReady", {
+          configurable: true,
+          writable: true,
+          value,
+        });
+        if (value === true) resolve();
+      },
+    });
+  });
+}
+
 async function initialize() {
   if (initialized) return initialized;
   initialized = (async () => {
@@ -65,8 +81,13 @@ async function initialize() {
     } catch {
       ({ instance } = await WebAssembly.instantiate(await response.arrayBuffer(), go.importObject));
     }
-    void go.run(instance);
-    while (!globalThis.mclWasmReady) await new Promise((resolve) => setTimeout(resolve, 0));
+    const wasmReady = waitForWasmReady();
+    await Promise.race([
+      wasmReady,
+      go.run(instance).then(() => {
+        throw new Error("MCL WebAssembly exited before initialization completed");
+      }),
+    ]);
     postMessage({ type: "ready" });
   })().catch((error) => {
     postMessage({ type: "fatal", message: error instanceof Error ? error.message : String(error) });

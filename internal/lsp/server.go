@@ -3,18 +3,21 @@ package lsp
 import (
 	"bufio"
 	"context"
-	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"sync"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
 )
 
 type server struct {
+	protocol.UnimplementedServer
 	reader                   *bufio.Reader
 	mu                       sync.Mutex
+	dispatchMu               sync.Mutex
+	dispatchTail             chan struct{}
 	documents                map[string]documentState
 	workspaceRoots           []string
 	renameIndex              *engine.DependentMCLSourceIndex
@@ -51,10 +54,12 @@ func Run(input io.Reader, output io.Writer) error {
 	}
 	diagnostics := make(chan diagnosticResult)
 	s.diagnosticResults = diagnostics
+	s.dispatchTail = make(chan struct{})
+	close(s.dispatchTail)
 	rpcContext, rpcCancel := context.WithCancel(context.Background())
 	s.rpcDone = rpcContext.Done()
 	stream := newBoundedStream(input, output)
-	s.rpc = jsonrpc2.NewConn(stream)
+	s.rpc = jsonrpc2.NewConn(stream, jsonrpc2.WithCodec(protocolCodec{}))
 	s.notify = func(method string, params any) error {
 		return s.rpc.Notify(rpcContext, method, params)
 	}
@@ -63,8 +68,24 @@ func Run(input io.Reader, output io.Writer) error {
 
 		return err
 	}
+	serverHandler := protocol.ServerHandler(s, jsonrpc2.MethodNotFoundHandler)
+	orderedHandler := func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
+		// Keep document updates in wire order while the outer cancellation middleware can read later messages.
+		s.dispatchMu.Lock()
+		previous := s.dispatchTail
+		next := make(chan struct{})
+		s.dispatchTail = next
+		s.dispatchMu.Unlock()
+
+		jsonrpc2.Async(ctx)
+		<-previous
+		defer close(next)
+
+		return serverHandler(ctx, req)
+	}
+	handler := protocol.CancelHandler(orderedHandler)
 	s.rpc.Go(rpcContext, func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
-		result, err := s.handle(req.Method(), jsontext.Value(req.Params()), !req.IsCall(), ctx)
+		result, err := handler(ctx, req)
 		if err != nil {
 			if _, ok := errors.AsType[*jsonrpc2.Error](err); !ok {
 				select {

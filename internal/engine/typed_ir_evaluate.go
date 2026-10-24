@@ -8,6 +8,66 @@ import (
 	"strings"
 )
 
+func evaluateRuntimeOptionalReference(text string, context typedEvaluationContext) (RuntimeValue, error) {
+	root := referenceRoot(text)
+	value, exists := context.runtimeEnv[root]
+	if !exists {
+		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, SourceSpan{}, fmt.Errorf("%w %q", errUndefinedName, root))
+	}
+	if context.stack == nil {
+		context.stack = make(map[string]bool)
+	}
+	if context.stack[root] {
+		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, SourceSpan{}, fmt.Errorf("cyclic definition involving %q", root))
+	}
+	context.stack[root] = true
+	defer delete(context.stack, root)
+	_, rest, _ := strings.Cut(text, root)
+	chain := false
+	for rest != "" {
+		optional := strings.HasPrefix(rest, "?.")
+		if optional {
+			rest = rest[2:]
+			chain = true
+		} else if strings.HasPrefix(rest, ".") {
+			rest = rest[1:]
+		} else {
+			return RuntimeValue{}, fmt.Errorf("invalid optional field path %q", text)
+		}
+		fieldEnd := len(rest)
+		if next := strings.Index(rest, "?."); next >= 0 && next < fieldEnd {
+			fieldEnd = next
+		}
+		if next := strings.IndexByte(rest, '.'); next >= 0 && next < fieldEnd {
+			fieldEnd = next
+		}
+		field := rest[:fieldEnd]
+		rest = rest[fieldEnd:]
+		value = runtimeNodeContents(value)
+		if value.Kind() == Null {
+			if chain {
+				return value, nil
+			}
+
+			return RuntimeValue{}, fmt.Errorf("cannot select field %q from Null", field)
+		}
+		if value.Kind() != Map {
+			return RuntimeValue{}, fmt.Errorf("cannot select field %q from a non-map value", field)
+		}
+		selected, found := value.MapLookup(field)
+		if !found {
+			if chain {
+				return RuntimeValue{Value: runtimeValueData{Kind: Null, SourcePath: context.sourcePath}}, nil
+			}
+
+			return RuntimeValue{}, fmt.Errorf("field %q does not exist", field)
+		}
+		value = selected
+	}
+
+	return value, nil
+}
+
 func runtimeValueWithExpressionSources(value RuntimeValue, sourcePath string, sourceSpan SourceSpan, dependencies ...RuntimeValue) RuntimeValue {
 	result := value
 	locations := slices.Clone(result.Value.SourceLocations)

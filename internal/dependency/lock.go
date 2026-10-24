@@ -27,7 +27,12 @@ const maxRemoteGitTreeSize = 32 << 20
 
 const schemeHTTPS = "https"
 
-const maxKustomizeSourceBytes = 16 << 20
+const (
+	// MaxKustomizeSourceBytes limits the combined size of files in a Kustomize source.
+	MaxKustomizeSourceBytes = 16 << 20
+	// MaxKustomizeSourceFiles limits the number of files in a Kustomize source.
+	MaxKustomizeSourceFiles = 10000
+)
 
 // ErrRemoteDependencyUnavailable marks a remote dependency that cannot be loaded from the local lock cache.
 var ErrRemoteDependencyUnavailable = errors.New("remote dependency is unavailable offline")

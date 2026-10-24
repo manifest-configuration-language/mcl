@@ -149,6 +149,41 @@ type typedIndexContinuation struct {
 	Span       SourceSpan
 }
 
+func removeRuntimePath(value RuntimeValue, parts []string) (RuntimeValue, error) {
+	if len(parts) == 0 {
+		return RuntimeValue{}, errors.New("empty removal path")
+	}
+	if value.Kind() == Node && value.Base != nil {
+		base, err := removeRuntimePath(*value.Base, parts)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+		value.Base = &base
+
+		return value, nil
+	}
+	if value.Kind() != Map {
+		return RuntimeValue{}, errors.New("cannot remove a field from a non-map value")
+	}
+	value.Map = slices.Clone(value.Map)
+	index := slices.IndexFunc(value.Map, func(entry RuntimeEntry) bool { return entry.Key == parts[0] })
+	if index < 0 {
+		return RuntimeValue{}, fmt.Errorf("field %q does not exist", parts[0])
+	}
+	if len(parts) == 1 {
+		value.Map = slices.Delete(value.Map, index, index+1)
+
+		return value, nil
+	}
+	child, err := removeRuntimePath(value.Map[index].Value, parts[1:])
+	if err != nil {
+		return RuntimeValue{}, err
+	}
+	value.Map[index].Value = child
+
+	return value, nil
+}
+
 type typedForContinuation struct {
 	Source     RuntimeValue
 	Body       typedExpression

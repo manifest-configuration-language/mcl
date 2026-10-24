@@ -16,7 +16,7 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
-	"github.com/manifest-configuration-language/mcl/internal/lsp"
+	"github.com/manifest-configuration-language/mcl/internal/languageservice"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
 )
 
@@ -111,13 +111,13 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: filesErr.Error()}
 			return marshal(result)
 		}
-		params := lsp.BrowserNavigationParams{
+		params := languageservice.NavigationParams{
 			Entrypoint: entrypoint, Source: input.Source,
 			Line: int(input.Position.Line), Character: int(input.Position.Character),
 		}
 		switch input.Operation {
 		case wasmprotocol.RequestOperationCompletion:
-			items := lsp.CompletionsForProjectFS(lsp.CompletionParams{
+			items := languageservice.CompletionsForProjectFS(languageservice.CompletionParams{
 				ProjectRoot: browserProjectRoot(), Entrypoint: entrypoint, Source: input.Source,
 				Line: params.Line, Character: params.Character,
 			}, projectFiles)
@@ -131,7 +131,7 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Result = wasmprotocol.CompletionResult{IsIncomplete: false, Items: completionItems}
 		case wasmprotocol.RequestOperationDefinition:
 			var location *wasmprotocol.DefinitionResultLocation
-			if definition := lsp.DefinitionForProjectFS(params, projectFiles); definition != nil {
+			if definition := languageservice.DefinitionForProjectFS(params, projectFiles); definition != nil {
 				location = &wasmprotocol.DefinitionResultLocation{
 					Path: definition.Path,
 					Range: wasmprotocol.SourceRange{
@@ -143,7 +143,7 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Result = wasmprotocol.DefinitionResult{Location: location}
 		case wasmprotocol.RequestOperationHover:
 			var hover *wasmprotocol.HoverResultHover
-			if info := lsp.HoverForProjectFS(params, projectFiles); info != nil {
+			if info := languageservice.HoverForProjectFS(params, projectFiles); info != nil {
 				hover = &wasmprotocol.HoverResultHover{
 					Contents: info.Contents,
 					Range: wasmprotocol.SourceRange{

@@ -64,7 +64,7 @@ type textRange struct {
 func workspaceFolderPaths(folders []workspaceFolder) []string {
 	paths := make([]string, 0, len(folders))
 	for _, folder := range folders {
-		if path := documentPath(folder.URI); path != "" {
+		if path := documentPath(folder.URI.String()); path != "" {
 			paths = append(paths, path)
 		}
 	}

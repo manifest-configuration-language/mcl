@@ -15,10 +15,6 @@ run = "jactionlint .github/workflows/*.yml"
 description = "Run the MCL test suite"
 run = "go test ./..."
 
-[tasks.check]
-description = "Run Go static checks"
-run = "go vet ./..."
-
 [tasks.lint]
 run = "golangci-lint run ./..."
 
@@ -34,7 +30,7 @@ fi
 
 [tasks."quality:check"]
 description = "Run core Go and WebAssembly quality checks"
-depends = ["test", "check", "lint", "go:format:check", "wasm:check"]
+depends = ["test", "lint", "go:format:check", "wasm:check"]
 
 [tasks."wasm:check"]
 description = "Build and verify the browser WebAssembly runtime"
@@ -59,20 +55,13 @@ gzip -dc .build/release-assets/mcl.wasm.gz | cmp - packages/browser/dist/mcl.was
 description = "Package CLI and WebAssembly release assets with checksums"
 run = '''
 set -eu
-rm -rf dist
 mise run release:reference
 if [ "${MCL_RELEASE_ASSETS_STAGED:-false}" != true ]; then
   mise run wasm:build
   mise run release:wasm
 fi
-case "${MCL_RELEASE_MODE:-snapshot}" in
-  snapshot)
-    : "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
-    goreleaser release --snapshot --clean
-    ;;
-  release) goreleaser release --clean ;;
-  *) printf 'Unsupported MCL_RELEASE_MODE: %s\n' "$MCL_RELEASE_MODE" >&2; exit 1 ;;
-esac
+: "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
+goreleaser release --snapshot --clean
 (cd dist && sha256sum --check SHA256SUMS)
 '''
 

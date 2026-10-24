@@ -93,7 +93,6 @@ jobs:
           MCL_VERSION: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
-          rm -rf dist
           goreleaser release --skip=publish --clean
           (cd dist && sha256sum --check SHA256SUMS)
 

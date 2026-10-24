@@ -10,6 +10,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
 )
 
 const (
@@ -30,29 +31,10 @@ const (
 	watchRegistrationID         = "mcl-didChangeWatchedFiles"
 )
 
-type initializeParams struct {
-	RootURI          string            `json:"rootUri"`
-	RootPath         string            `json:"rootPath"`
-	WorkspaceFolders []workspaceFolder `json:"workspaceFolders"`
-	Capabilities     struct {
-		Workspace struct {
-			DidChangeWatchedFiles struct {
-				DynamicRegistration bool `json:"dynamicRegistration"`
-			} `json:"didChangeWatchedFiles"`
-		} `json:"workspace"`
-	} `json:"capabilities"`
-}
+type initializeParams = protocol.InitializeParams
 
-type workspaceFolder struct {
-	URI string `json:"uri"`
-}
-
-type workspaceFolderChange struct {
-	Event struct {
-		Added   []workspaceFolder `json:"added"`
-		Removed []workspaceFolder `json:"removed"`
-	} `json:"event"`
-}
+type workspaceFolder = protocol.WorkspaceFolder
+type workspaceFolderChange = protocol.DidChangeWorkspaceFoldersParams
 
 type watchedFileChange struct {
 	URI  string `json:"uri"`
@@ -76,6 +58,98 @@ func (s *server) handle(method string, rawParams jsontext.Value, notification bo
 	return s.handleLocked(method, rawParams, notification, ctx)
 }
 
+func (s *server) dispatch(ctx context.Context, method string, params any, notification bool, result any) error {
+	rawParams, err := protocol.Marshal(params)
+	if err != nil {
+		return err
+	}
+	value, err := s.handle(method, jsontext.Value(rawParams), notification, ctx)
+	if err != nil || result == nil {
+		return err
+	}
+	rawResult, err := protocol.Marshal(value)
+	if err != nil {
+		return err
+	}
+
+	return protocol.Unmarshal(rawResult, result)
+}
+
+func (s *server) Initialize(ctx context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	var result protocol.InitializeResult
+	err := s.dispatch(ctx, "initialize", params, false, &result)
+
+	return &result, err
+}
+
+func (s *server) Initialized(ctx context.Context, params *protocol.InitializedParams) error {
+	return s.dispatch(ctx, "initialized", params, true, nil)
+}
+
+func (s *server) Shutdown(ctx context.Context) error {
+	return s.dispatch(ctx, "shutdown", nil, false, nil)
+}
+
+func (s *server) Exit(ctx context.Context) error {
+	return s.dispatch(ctx, "exit", nil, true, nil)
+}
+
+func (s *server) Completion(ctx context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
+	var result protocol.CompletionResult
+	err := s.dispatch(ctx, "textDocument/completion", params, false, &result)
+
+	return result, err
+}
+
+func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
+	var result []protocol.TextEdit
+	err := s.dispatch(ctx, "textDocument/formatting", params, false, &result)
+
+	return result, err
+}
+
+func (s *server) Definition(ctx context.Context, params *protocol.DefinitionParams) (protocol.DefinitionResult, error) {
+	var result protocol.DefinitionResult
+	err := s.dispatch(ctx, "textDocument/definition", params, false, &result)
+
+	return result, err
+}
+
+func (s *server) Rename(ctx context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
+	var result protocol.WorkspaceEdit
+	err := s.dispatch(ctx, "textDocument/rename", params, false, &result)
+
+	return &result, err
+}
+
+func (s *server) DidChangeWorkspaceFolders(ctx context.Context, params *protocol.DidChangeWorkspaceFoldersParams) error {
+	return s.dispatch(ctx, "workspace/didChangeWorkspaceFolders", params, true, nil)
+}
+
+func (s *server) DidChangeWatchedFiles(ctx context.Context, params *protocol.DidChangeWatchedFilesParams) error {
+	return s.dispatch(ctx, "workspace/didChangeWatchedFiles", params, true, nil)
+}
+
+func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocumentParams) error {
+	return s.dispatch(ctx, "textDocument/didOpen", params, true, nil)
+}
+
+func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDocumentParams) error {
+	return s.dispatch(ctx, "textDocument/didChange", params, true, nil)
+}
+
+func (s *server) DidSave(ctx context.Context, params *protocol.DidSaveTextDocumentParams) error {
+	return s.dispatch(ctx, "textDocument/didSave", params, true, nil)
+}
+
+func (s *server) DidClose(ctx context.Context, params *protocol.DidCloseTextDocumentParams) error {
+	return s.dispatch(ctx, "textDocument/didClose", params, true, nil)
+}
+
+func (s *server) Request(_ context.Context, method string, _ any) (any, error) {
+	return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "Method not found: "+method)
+}
+
 func (s *server) handleLocked(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
 	diagnostics := s.diagnosticResults
 	switch method {
@@ -84,13 +158,20 @@ func (s *server) handleLocked(method string, rawParams jsontext.Value, notificat
 		if err := json.Unmarshal(rawParams, &params); err != nil {
 			return nil, invalidParamsError()
 		}
-		s.canWatchMCLFiles = params.Capabilities.Workspace.DidChangeWatchedFiles.DynamicRegistration
-		s.workspaceRoots = workspaceFolderPaths(params.WorkspaceFolders)
+		if watchedFiles := params.Capabilities.Workspace.DidChangeWatchedFiles; watchedFiles != nil && watchedFiles.DynamicRegistration != nil {
+			s.canWatchMCLFiles = *watchedFiles.DynamicRegistration
+		}
+		workspaceFolders, _ := params.WorkspaceFolders.Get()
+		s.workspaceRoots = workspaceFolderPaths(workspaceFolders)
 		if len(s.workspaceRoots) == 0 {
-			if root := documentPath(params.RootURI); root != "" {
+			rootURI := ""
+			if params.RootURI != nil {
+				rootURI = params.RootURI.String()
+			}
+			if root := documentPath(rootURI); root != "" {
 				s.workspaceRoots = []string{root}
-			} else if params.RootPath != "" {
-				if root, err := filepath.Abs(params.RootPath); err == nil {
+			} else if rootPath, ok := params.RootPath.Get(); ok && rootPath != "" {
+				if root, err := filepath.Abs(rootPath); err == nil {
 					s.workspaceRoots = []string{root}
 				}
 			}
@@ -163,7 +244,7 @@ func (s *server) handleLocked(method string, rawParams jsontext.Value, notificat
 		}
 		removed := make(map[string]struct{}, len(params.Event.Removed))
 		for _, folder := range params.Event.Removed {
-			if path := documentPath(folder.URI); path != "" {
+			if path := documentPath(folder.URI.String()); path != "" {
 				removed[filepath.Clean(path)] = struct{}{}
 			}
 		}

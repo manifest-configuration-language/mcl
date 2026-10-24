@@ -1,0 +1,189 @@
+package languageservice
+
+import (
+	"io/fs"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
+)
+
+// CompletionItem is a completion candidate returned by the reusable completion API.
+type CompletionItem struct {
+	Label      string `json:"label"`
+	Kind       int    `json:"kind"`
+	InsertText string `json:"insertText,omitzero"`
+}
+
+// CompletionParams identifies a source position using zero-based UTF-16 coordinates.
+type CompletionParams struct {
+	ProjectRoot string
+	Entrypoint  string
+	Source      string
+	Line        int
+	Character   int
+}
+
+// CompletionsForProjectFS returns MCL completion candidates using files from projectFiles.
+func CompletionsForProjectFS(params CompletionParams, projectFiles fs.FS) []CompletionItem {
+	return complete(params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "")
+}
+
+// CompletionForSource returns completion candidates for a document backed by the host filesystem.
+func CompletionForSource(source string, line, character int, sourcePath string) []CompletionItem {
+	return complete(source, Position{Line: line, Character: character}, "", "", nil, sourcePath)
+}
+
+func complete(source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []CompletionItem {
+	items := []CompletionItem{
+		{Label: "let", Kind: 14},
+		{Label: "emit", Kind: 14},
+		{Label: "true", Kind: 14},
+		{Label: "false", Kind: 14},
+		{Label: "null", Kind: 14},
+		{Label: "len", Kind: 3},
+		{Label: "contains", Kind: 3},
+		{Label: "concat", Kind: 3},
+		{Label: "union", Kind: 3},
+		{Label: "keyOf", Kind: 3},
+		{Label: "replace", Kind: 3},
+		{Label: "replaceAt", Kind: 3},
+		{Label: "mergeByKey", Kind: 3},
+	}
+	lines := strings.Split(source, "\n")
+	if position.Line < 0 || position.Line >= len(lines) {
+		return items
+	}
+	runes := []rune(lines[position.Line])
+	end := RuneIndexAtUTF16(runes, position.Character)
+	start := end
+	for start > 0 && IsIdentifierRune(runes[start-1]) {
+		start--
+	}
+	prefix := string(runes[start:end])
+	index, parseErr := AnalyzeSource(source)
+	if parseErr == nil {
+		for _, name := range index.VisibleDeclarationNames(position.Line + 1) {
+			items = append(items, CompletionItem{Label: name, Kind: 6})
+		}
+	} else {
+		for lineNumber, line := range lines {
+			if lineNumber >= position.Line {
+				break
+			}
+			if name, _, ok := DeclaredName(line); ok {
+				items = append(items, CompletionItem{Label: name, Kind: 6})
+			}
+		}
+	}
+	if offset, err := offsetAtUTF16(source, position); err == nil {
+		var bindings []LocalBinding
+		if parseErr != nil {
+			bindings = PartialLocalBindings(source, offset)
+		} else {
+			bindings = index.VisibleLocalBindings(offset)
+		}
+		for _, binding := range bindings {
+			items = append(items, CompletionItem{Label: binding.Name, Kind: 6})
+		}
+	}
+	if fields := schemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
+		items = appendFieldCompletions(items, fields)
+	}
+	if fields := helmSchemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
+		items = appendFieldCompletions(items, fields)
+	}
+	if fields := kubernetesSchemaFieldCompletions(position, lines, runes, end); len(fields) != 0 {
+		items = appendFieldCompletions(items, fields)
+	}
+	filtered := make([]CompletionItem, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		if strings.HasPrefix(item.Label, prefix) && !seen[item.Label] {
+			filtered = append(filtered, item)
+			seen[item.Label] = true
+		}
+	}
+
+	return filtered
+}
+
+func schemaFieldCompletions(position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
+	line := lines[position.Line]
+	indent := len(line) - len(strings.TrimLeft(line, " "))
+	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
+		return nil
+	}
+	const placeholder = "__mcl_completion__"
+	candidateLines := slices.Clone(lines[:position.Line+1])
+	candidateLines[len(candidateLines)-1] = strings.Repeat(" ", indent) + placeholder + ": null"
+	if projectFiles != nil {
+		fields, _ := engine.SchemaFieldCompletionsWithErrorForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+
+		return fields
+	}
+	if sourcePath != "" {
+		return engine.SchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+	}
+
+	return nil
+}
+
+func helmSchemaFieldCompletions(position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
+	line := lines[position.Line]
+	indent := len(line) - len(strings.TrimLeft(line, " "))
+	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
+		return nil
+	}
+	const placeholder = "__mcl_helm_completion__"
+	candidateLines := slices.Clone(lines)
+	candidateLines[position.Line] = strings.Repeat(" ", indent) + placeholder + ": null"
+
+	if projectFiles != nil {
+		return engine.HelmSchemaFieldCompletionsForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+	}
+	if sourcePath != "" {
+		return engine.HelmSchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+	}
+
+	return nil
+}
+
+func kubernetesSchemaFieldCompletions(position Position, lines []string, runes []rune, cursor int) []string {
+	line := lines[position.Line]
+	indent := len(line) - len(strings.TrimLeft(line, " "))
+	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
+		return nil
+	}
+	const placeholder = "__mcl_kubernetes_completion__"
+	candidateLines := slices.Clone(lines[:position.Line+1])
+	candidateLines[len(candidateLines)-1] = strings.Repeat(" ", indent) + placeholder + ": null"
+
+	return engine.KubernetesSchemaFieldCompletions(strings.Join(candidateLines, "\n"), placeholder)
+}
+
+func appendFieldCompletions(items []CompletionItem, fields []string) []CompletionItem {
+	existing := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		existing[item.Label] = struct{}{}
+	}
+	for _, field := range fields {
+		if _, ok := existing[field]; ok {
+			continue
+		}
+		item := CompletionItem{Label: field, Kind: 10}
+		if !IsMCLIdentifier(field) {
+			item.InsertText = strconv.Quote(field)
+		}
+		items = append(items, item)
+		existing[field] = struct{}{}
+	}
+
+	return items
+}
+
+func offsetAtUTF16(source string, position Position) (int, error) {
+	return sourceindex.New(source).OffsetAt(sourceindex.Position{Line: position.Line, Character: position.Character})
+}

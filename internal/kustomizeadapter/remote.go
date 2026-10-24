@@ -29,7 +29,6 @@ const maxRemoteDepth = 16
 
 const (
 	maxRemoteBytes = 64 << 20
-	maxSourceFiles = 10000
 )
 
 type overlayFileSystem struct {

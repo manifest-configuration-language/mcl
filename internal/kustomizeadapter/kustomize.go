@@ -19,7 +19,8 @@ import (
 const yamlStringTag = "!!str"
 
 const (
-	maxSourceBytes = 16 << 20
+	maxSourceBytes = dependency.MaxKustomizeSourceBytes
+	maxSourceFiles = dependency.MaxKustomizeSourceFiles
 )
 
 // RequestはKustomize sourceの解決とbuildに必要な入力を保持します。

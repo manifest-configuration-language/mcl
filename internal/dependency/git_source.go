@@ -30,7 +30,6 @@ import (
 )
 
 const (
-	maxKustomizeGitFiles     = 10000
 	maxGitFetchDuration      = 90 * time.Second
 	maxGitFetchResponseBytes = int64(128 << 20)
 	maxGitObjectStoreBytes   = int64(256 << 20)
@@ -222,8 +221,8 @@ func archiveGitDirectory(tree *object.Tree, directory string) ([]byte, error) {
 			return fmt.Errorf("kustomize Git source contains unsupported file mode for %q", file.Name)
 		}
 		fileCount++
-		if fileCount > maxKustomizeGitFiles {
-			return fmt.Errorf("kustomize Git source contains more than %d files", maxKustomizeGitFiles)
+		if fileCount > MaxKustomizeSourceFiles {
+			return fmt.Errorf("kustomize Git source contains more than %d files", MaxKustomizeSourceFiles)
 		}
 		name := path.Clean(file.Name)
 		if name == "." || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
@@ -234,8 +233,8 @@ func archiveGitDirectory(tree *object.Tree, directory string) ([]byte, error) {
 			header.Mode = 0o755
 		}
 		totalBytes += file.Size
-		if totalBytes > maxKustomizeSourceBytes {
-			return fmt.Errorf("kustomize Git source exceeds the %d-byte limit", maxKustomizeSourceBytes)
+		if totalBytes > MaxKustomizeSourceBytes {
+			return fmt.Errorf("kustomize Git source exceeds the %d-byte limit", MaxKustomizeSourceBytes)
 		}
 		if err := writer.WriteHeader(header); err != nil {
 			return err
