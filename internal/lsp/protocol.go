@@ -313,6 +313,7 @@ func (s *server) initializeLocked(params *protocol.InitializeParams) *protocol.I
 			CompletionProvider:         &protocol.CompletionOptions{TriggerCharacters: []string{"."}},
 			DocumentFormattingProvider: protocol.Boolean(true),
 			DefinitionProvider:         protocol.Boolean(true),
+			ReferencesProvider:         protocol.Boolean(true),
 			RenameProvider:             protocol.Boolean(true),
 			Workspace: &protocol.WorkspaceOptions{WorkspaceFolders: &protocol.WorkspaceFoldersServerCapabilities{
 				Supported:           new(true),
