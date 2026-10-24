@@ -132,14 +132,17 @@ export function createMclRuntime(options = {}) {
       const timeoutError = new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL operation timed out" });
       let timer;
       try {
+        if (timeoutMs <= 0) throw timeoutError;
+        timer = setTimeout(() => {
+          if (stopCurrent) stopCurrent(timeoutError);
+          else stopInitialization?.(timeoutError);
+        }, timeoutMs);
         await waitUntilReady(requestOptions.signal);
         if (requestOptions.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-        if (timeoutMs <= 0) throw timeoutError;
         const preparedFiles = prepareFilesForTransfer(source, files, entrypoint);
         const requestId = ++sequence;
         const currentWorker = worker;
         const currentGeneration = workerGeneration;
-        timer = setTimeout(() => stopCurrent?.(timeoutError), timeoutMs);
         return await new Promise((resolve, reject) => {
           let settled = false;
           const cleanup = () => {
