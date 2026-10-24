@@ -833,14 +833,7 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 	_, _, declarationSpan, _ := astDeclarationInfo(module.Nodes[target])
 	spans := []syntax.SourceSpan{declarationSpan}
 	seen := map[syntax.SourceSpan]struct{}{declarationSpan: {}}
-	for _, reference := range references {
-		if reference.Name != name || reference.TypeName != isTypeDeclaration(module.Nodes[target]) || !reference.TypeName && index.LocalAt(name, reference.Span.Start).Found {
-			continue
-		}
-		resolved := index.ResolveTopLevel(name, reference.Span.Start, reference.TypeName)
-		if resolved != target {
-			continue
-		}
+	for _, reference := range index.TopLevelReferences(name, target, isTypeDeclaration(module.Nodes[target])) {
 		if index.LocalAt(params.NewName, reference.Span.Start).Found {
 			return nil
 		}
@@ -1057,14 +1050,7 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	for uri, parsed := range parsedDocuments {
 		if paths[uri] == targetPath {
 			index := semanticDocuments[uri]
-			for _, reference := range index.References {
-				if reference.Name != targetName || reference.TypeName != isTypeDeclaration(declaration) || !reference.TypeName && index.LocalAt(targetName, reference.Span.Start).Found {
-					continue
-				}
-				resolved := index.ResolveTopLevel(targetName, reference.Span.Start, reference.TypeName)
-				if resolved != declarationIndex {
-					continue
-				}
+			for _, reference := range index.TopLevelReferences(targetName, declarationIndex, isTypeDeclaration(declaration)) {
 				span := syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(targetName)}
 				if !addEdit(uri, texts[uri], span) {
 					return nil, true

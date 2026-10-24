@@ -73,6 +73,24 @@ func (index *SemanticIndex) ResolveTopLevel(name string, offset int, typeName bo
 	return definition
 }
 
+// TopLevelReferences returns references that resolve to one declaration in this module.
+func (index *SemanticIndex) TopLevelReferences(name string, declarationIndex int, typeName bool) []SourceReference {
+	var references []SourceReference
+	for _, reference := range index.References {
+		if reference.Name != name || reference.TypeName != typeName {
+			continue
+		}
+		if !typeName && index.LocalAt(name, reference.Span.Start).Found {
+			continue
+		}
+		if index.ResolveTopLevel(name, reference.Span.Start, typeName) == declarationIndex {
+			references = append(references, reference)
+		}
+	}
+
+	return references
+}
+
 func (index *SemanticIndex) LocalAt(name string, offset int) LocalBindingMatch {
 	return LocalBindingAt(index.Locals, name, offset)
 }
