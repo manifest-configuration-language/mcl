@@ -39,7 +39,7 @@ jobs:
             printf 'Invalid release tag: %s\n' "$release_tag" >&2
             exit 1
           fi
-          for package in browser language reference; do
+          for package in browser language; do
             package_version="$(node -p "require('./packages/${package}/package.json').version")"
             if [ "v$package_version" != "$release_tag" ]; then
               printf 'Release tag %s does not match %s package version %s\n' "$release_tag" "$package" "$package_version" >&2
@@ -94,7 +94,6 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf dist
-          mise run release:reference
           goreleaser release --skip=publish --clean
           (cd dist && sha256sum --check SHA256SUMS)
 
@@ -225,7 +224,7 @@ jobs:
         run: |
           set -euo pipefail
           attempt=1
-          while ! npm view --prefer-online "@manifest-configuration-language/browser@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view --prefer-online "@manifest-configuration-language/language@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view --prefer-online "@manifest-configuration-language/reference@$MCL_VERSION" version >/dev/null 2>&1; do
+          while ! npm view --prefer-online "@manifest-configuration-language/browser@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view --prefer-online "@manifest-configuration-language/language@$MCL_VERSION" version >/dev/null 2>&1; do
             if [ "$attempt" -ge 30 ]; then
               printf 'npm registry did not expose all MCL %s packages within fifteen minutes.\n' "$MCL_VERSION" >&2
               exit 1
@@ -242,7 +241,7 @@ jobs:
           smoke_directory="$(mktemp -d)"
           trap 'rm -rf "$smoke_directory"' EXIT
           cat > "$smoke_directory/package.json" <<EOF
-          {"private":true,"dependencies":{"@manifest-configuration-language/browser":"$MCL_VERSION","@manifest-configuration-language/language":"$MCL_VERSION","@manifest-configuration-language/reference":"$MCL_VERSION"}}
+          {"private":true,"dependencies":{"@manifest-configuration-language/browser":"$MCL_VERSION","@manifest-configuration-language/language":"$MCL_VERSION"}}
           EOF
           npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
           (cd "$smoke_directory" && npm audit signatures)

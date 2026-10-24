@@ -9,7 +9,7 @@ if (!packageDirectoryArgument || !version) {
 }
 
 const packageDirectory = resolve(packageDirectoryArgument);
-const packages = ["browser", "language", "reference"];
+const packages = ["browser", "language"];
 const tarballNames = packages.map((name) => `manifest-configuration-language-${name}-${version}.tgz`);
 const expectedFiles = [...tarballNames, "SHA512SUMS"].sort();
 const actualFiles = (await readdir(packageDirectory)).sort();

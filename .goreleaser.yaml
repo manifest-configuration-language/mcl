@@ -45,19 +45,6 @@ archives:
         dst: mcl.wasm.gz
       - src: ./.build/release-assets/wasm_exec.js
         dst: wasm_exec.js
-  - id: reference
-    meta: true
-    formats:
-      - tar.gz
-    name_template: "{{ .ProjectName }}_reference_{{ .Version }}"
-    files:
-      - src: ./.build/reference/reference/*.md
-        dst: reference
-        strip_parent: true
-      - src: ./.build/reference/reference/**/*
-        dst: reference
-        strip_parent: true
-
 sboms:
   - artifacts: archive
 

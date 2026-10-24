@@ -9,7 +9,7 @@
   },
   "type": "module",
   "license": "Apache-2.0",
-  "files": ["src", "README.md"],
+  "files": ["src", "reference", "README.md"],
   "exports": {
     ".": { "types": "./src/index.d.ts", "import": "./src/index.js" },
     "./textmate": "./src/mcl.tmLanguage.json"

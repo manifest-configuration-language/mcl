@@ -2,6 +2,8 @@
 
 `@manifest-configuration-language/language` contains the MCL TextMate grammar and a Lezer-backed CodeMirror `LanguageSupport` export with standard bracket completion.
 
+The matching MCL release's CLI and standard-library reference Markdown is included under `reference/`.
+
 ```js
 import { mclLanguageSupport } from "@manifest-configuration-language/language";
 import mclTextMateGrammar from "@manifest-configuration-language/language/textmate" with { type: "json" };
