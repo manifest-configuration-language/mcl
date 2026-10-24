@@ -2,12 +2,12 @@ package lsp
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/languageservice"
+	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -77,7 +77,7 @@ func (s *server) References(_ context.Context, params *protocol.ReferenceParams)
 			dependent, err = s.renameIndex.Sources(target.Path, s.workspaceRoots, overlays)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("collect project sources for references: %w", err)
+			return nil, jsonrpc2.NewError(jsonrpc2.InternalError, "Unable to collect complete workspace sources for references")
 		}
 		sources = dependent
 	}
