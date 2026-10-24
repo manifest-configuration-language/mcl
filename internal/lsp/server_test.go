@@ -113,13 +113,13 @@ func TestDocumentDiagnosticsSkipEvaluationUntilRequested(t *testing.T) {
 	t.Parallel()
 	uri := filePathToURI(filepath.Join(t.TempDir(), "main.mcl"))
 	s := &server{}
-	_, staticDiagnostics, _ := s.diagnosticsForDocument(t.Context(), uri, "emit missing\n", false)
+	staticDiagnostics := s.diagnosticsForDocument(t.Context(), uri, "emit missing\n", false)
 	for _, diagnostic := range staticDiagnostics {
 		if strings.Contains(diagnostic.Message, "undefined name") {
 			t.Fatalf("static diagnostics unexpectedly evaluated the source: %#v", staticDiagnostics)
 		}
 	}
-	_, evaluatedDiagnostics, _ := s.diagnosticsForDocument(t.Context(), uri, "emit missing\n", true)
+	evaluatedDiagnostics := s.diagnosticsForDocument(t.Context(), uri, "emit missing\n", true)
 	foundUndefinedName := slices.ContainsFunc(evaluatedDiagnostics, func(diagnostic diagnostic) bool {
 		return strings.Contains(diagnostic.Message, "undefined name")
 	})

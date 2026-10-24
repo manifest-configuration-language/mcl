@@ -47,8 +47,8 @@ type diagnostic struct {
 	RelatedInformation []diagnosticRelatedInformation `json:"relatedInformation,omitempty"`
 }
 
-func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string, includeEvaluation bool) (string, []diagnostic, []string) {
-	byURI, dependencies := s.diagnosticsByURIForDocument(ctx, uri, source, includeEvaluation)
+func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string, includeEvaluation bool) []diagnostic {
+	byURI, _ := s.diagnosticsByURIForDocument(ctx, uri, source, includeEvaluation)
 	diagnosticURIs := make([]string, 0, len(byURI))
 	for diagnosticURI := range byURI {
 		diagnosticURIs = append(diagnosticURIs, diagnosticURI)
@@ -59,7 +59,7 @@ func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string,
 		diagnostics = append(diagnostics, byURI[diagnosticURI]...)
 	}
 
-	return uri, diagnostics, dependencies
+	return diagnostics
 }
 
 func (s *server) diagnosticsByURIForDocument(ctx context.Context, uri, source string, includeEvaluation bool) (map[string][]diagnostic, []string) {

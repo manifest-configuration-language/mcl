@@ -268,7 +268,10 @@ func (fs *overlayFileSystem) materializeSourceTree(overlayPath string) error {
 		return fmt.Errorf("kustomize path escapes the overlay: %q", overlayPath)
 	}
 	relative, err := filepath.Rel(fs.sourceRoot, sourcePath)
-	if err != nil || isManagedDirectory(relative) || !fs.sourceFileSystem.Exists(sourcePath) {
+	if err != nil {
+		return err
+	}
+	if isManagedDirectory(relative) || !fs.sourceFileSystem.Exists(sourcePath) {
 		return nil
 	}
 	if !fs.sourceFileSystem.IsDir(sourcePath) {
@@ -276,6 +279,7 @@ func (fs *overlayFileSystem) materializeSourceTree(overlayPath string) error {
 			return nil
 		}
 		_, err := fs.readSourceFile(sourcePath, relative)
+
 		return err
 	}
 
@@ -284,13 +288,17 @@ func (fs *overlayFileSystem) materializeSourceTree(overlayPath string) error {
 			return walkErr
 		}
 		relative, err := filepath.Rel(fs.sourceRoot, sourcePath)
-		if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		if err != nil {
+			return err
+		}
+		if relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("kustomize walk escapes the source: %q", sourcePath)
 		}
 		if isManagedDirectory(relative) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
 		target := filepath.Join(fs.overlayRoot, relative)
@@ -302,6 +310,7 @@ func (fs *overlayFileSystem) materializeSourceTree(overlayPath string) error {
 		}
 
 		_, err = fs.readSourceFile(sourcePath, relative)
+
 		return err
 	})
 }
