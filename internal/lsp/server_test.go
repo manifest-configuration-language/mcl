@@ -456,22 +456,18 @@ func (connection *testLSPConnection) close(t *testing.T) {
 
 func TestRunCompletesCurrentDocumentDefinitions(t *testing.T) {
 	t.Parallel()
-	var input strings.Builder
-	for _, body := range []string{
-		initializeRequest,
-		`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///main.mcl","text":"let app = \"sample\"\nlet output = ap\n"}}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///main.mcl"},"position":{"line":1,"character":15}}}`,
-		exitRequest,
-	} {
-		fmt.Fprintf(&input, "Content-Length: %d\r\n\r\n%s", len(body), body)
+	session := newTestLSPConnection()
+	defer session.close(t)
+	session.send(t, initializeRequest)
+	session.receive(t)
+	session.send(t, `{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///main.mcl","text":"let app = \"sample\"\nlet output = ap\n"}}}`)
+	session.receive(t)
+	session.send(t, `{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///main.mcl"},"position":{"line":1,"character":15}}}`)
+	completion := session.receive(t)
+	if !strings.Contains(completion, `"label":"app"`) {
+		t.Fatalf("completion response omitted the document definition: %s", completion)
 	}
-	var output bytes.Buffer
-	if err := Run(strings.NewReader(input.String()), &output); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), `"label":"app"`) {
-		t.Fatalf("completion response omitted the document definition:\n%s", output.String())
-	}
+	session.shutdown(t)
 }
 
 func TestRuneIndexAtUTF16CountsSupplementaryCharactersAsTwoUnits(t *testing.T) {
