@@ -8,6 +8,8 @@ const (
 	MaxProjectFileBytes     = 16777216
 	MaxProjectBytes         = 67108864
 	MaxOutputBytes          = 1048576
+	MaxSourceMapBytes       = 1048576
+	MaxRenameNameLength     = 256
 	EvaluationTimeoutMillis = 4000
 	MaxProjectPathLength    = 512
 	MaxProjectPathDepth     = 64

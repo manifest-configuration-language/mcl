@@ -78,7 +78,7 @@ func TestRunCompletesDynamicWatcherRegistrationCallback(t *testing.T) {
 	defer session.close(t)
 	session.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"workspace":{"didChangeWatchedFiles":{"dynamicRegistration":true}}}}}`)
 	session.receive(t)
-	session.send(t, `{"jsonrpc":"2.0","method":"initialized"}`)
+	session.send(t, `{"jsonrpc":"2.0","method":"initialized","params":{}}`)
 	registration := session.receive(t)
 	var callback struct {
 		ID jsontext.Value `json:"id"`

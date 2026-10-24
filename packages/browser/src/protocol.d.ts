@@ -4,8 +4,10 @@ export type MCLWebAssemblyRequestAndResponseProtocol = Request | Response;
 export type Request = {
   requestId?: number;
   revision?: number;
-  operation: "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion" | "definition" | "hover";
+  operation:
+    "parse" | "lint" | "format" | "check" | "evaluate" | "render" | "completion" | "definition" | "hover" | "rename";
   position?: CompletionPosition;
+  newName?: string;
   entrypoint?: ProjectPath;
   /**
    * UTF-8 entrypoint source, limited by the runtime.
@@ -30,6 +32,8 @@ export type FileInput = {
   content?: string;
 };
 export type LintResult = LintDiagnostic[];
+export type ProjectPath1 = ProjectPath2;
+export type ProjectPath2 = string;
 
 export interface CompletionPosition {
   line: number;
@@ -48,7 +52,8 @@ export interface Response {
     | RenderResult
     | CompletionResult
     | DefinitionResult
-    | HoverResult;
+    | HoverResult
+    | RenameResult;
   error?: Error;
 }
 export interface ParseResult {
@@ -78,6 +83,35 @@ export interface EvaluateResult {
 export interface RenderResult {
   yaml: string;
   artifacts: number;
+  sourceMap: SourceMap;
+}
+/**
+ * Source map entries are limited by maxSourceMapBytes. Ranges use zero-based UTF-16 line and character positions with an exclusive end.
+ */
+export interface SourceMap {
+  complete: boolean;
+  entries: SourceMapEntry[];
+}
+export interface SourceMapEntry {
+  document: number;
+  /**
+   * JSON Pointer into the rendered YAML document.
+   */
+  path: string;
+  kind: "key" | "value";
+  output: SourceRange;
+  sources: SourceMapOrigin[];
+}
+export interface SourceRange {
+  start: CompletionPosition;
+  end: CompletionPosition;
+}
+export interface SourceMapOrigin {
+  path: ProjectPath1;
+  range: SourceRange;
+  kind: "mcl" | "mcl-overlay-base" | "mcl-overlay-patch";
+  multiplicity: "unique" | "repeated" | "ambiguous";
+  occurrences: number;
 }
 export interface CompletionResult {
   isIncomplete: boolean;
@@ -95,16 +129,20 @@ export interface DefinitionLocation {
   path: string;
   range: SourceRange;
 }
-export interface SourceRange {
-  start: CompletionPosition;
-  end: CompletionPosition;
-}
 export interface HoverResult {
   hover: HoverInfo | null;
 }
 export interface HoverInfo {
   contents: string;
   range: SourceRange;
+}
+export interface RenameResult {
+  edits: RenameEdit[];
+}
+export interface RenameEdit {
+  path: ProjectPath1;
+  range: SourceRange;
+  newText: string;
 }
 export interface Error {
   code: string;

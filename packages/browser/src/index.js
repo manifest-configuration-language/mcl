@@ -4,7 +4,9 @@ import {
   maxProjectFiles,
   maxProjectPathDepth,
   maxProjectPathLength,
+  maxRenameNameLength,
   maxSourceBytes,
+  maxSourceMapBytes,
 } from "./limits.js";
 
 export {
@@ -13,7 +15,9 @@ export {
   maxProjectFiles,
   maxProjectPathDepth,
   maxProjectPathLength,
+  maxRenameNameLength,
   maxSourceBytes,
+  maxSourceMapBytes,
 };
 
 export function isValidProjectPath(value) {
@@ -330,7 +334,15 @@ export function createMclRuntime(options = {}) {
           requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
           stopCurrent = stop;
           try {
-            const message = { type: "run", requestId, operation, source, entrypoint, position };
+            const message = {
+              type: "run",
+              requestId,
+              operation,
+              source,
+              entrypoint,
+              position,
+              newName: requestOptions.newName,
+            };
             if (project) message.projectId = project.id;
             else message.files = preparedFiles.files;
             currentWorker.postMessage(message, preparedFiles?.transferables ?? []);
@@ -495,6 +507,7 @@ export function createMclRuntime(options = {}) {
       complete: (requestOptions) => runProjectOperation("completion", requestOptions),
       definition: (requestOptions) => runProjectOperation("definition", requestOptions),
       hover: (requestOptions) => runProjectOperation("hover", requestOptions),
+      rename: (requestOptions) => runProjectOperation("rename", requestOptions),
       format: (requestOptions) => runProjectOperation("format", requestOptions),
       check: (requestOptions) => runProjectOperation("check", requestOptions),
       evaluate: (requestOptions) => runProjectOperation("evaluate", requestOptions),
@@ -574,6 +587,8 @@ export function createMclRuntime(options = {}) {
       runSourceNavigation("definition", source, filesOrOptions, requestOptions),
     hover: (source, filesOrOptions, requestOptions) =>
       runSourceNavigation("hover", source, filesOrOptions, requestOptions),
+    rename: (source, filesOrOptions, requestOptions) =>
+      runSourceNavigation("rename", source, filesOrOptions, requestOptions),
     dispose() {
       if (disposed) return;
       disposed = true;
