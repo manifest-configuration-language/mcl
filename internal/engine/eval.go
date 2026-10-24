@@ -991,11 +991,11 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 		state.Module.Analysis.registerScope(value.ScopeID, types)
 		signature.Type.ReturnType = &value
 	} else {
-		matches, compatible := staticTypeAssignable(inferred, *returnType, types)
-		if compatible && !matches {
+		compatibility := staticTypeCompatibility(inferred, *returnType, types)
+		if compatibility.isDefinitelyIncompatible() {
 			return TypeAnalysis{}, typeDiagnostic(fmt.Errorf("body returns %s, declared %s", staticTypeName(inferred), staticTypeName(*returnType)))
 		}
-		if !compatible {
+		if compatibility == typeCompatibilityUnknown {
 			return TypeAnalysis{}, typeDiagnostic(fmt.Errorf("body return type cannot be checked against %s", staticTypeName(*returnType)))
 		}
 		updated := preserveBundleProvenance(inferredAnalysis, *returnType, types)

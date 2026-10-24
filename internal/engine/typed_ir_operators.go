@@ -127,18 +127,15 @@ func validTypedBinaryTypes(operator typedOperator, inferred, left, right Resolve
 func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right ResolvedType, types map[string]ResolvedType) bool {
 	if isLogicalOperator(operator) {
 		for _, operand := range []ResolvedType{left, right} {
-			matches, compatible := staticTypeAssignable(operand, ResolvedType{Name: typeBool}, types)
-			if !compatible || !matches {
+			if !staticTypeCompatibility(operand, ResolvedType{Name: typeBool}, types).isAssignable() {
 				return false
 			}
 		}
-		matches, compatible := staticTypeAssignable(ResolvedType{Name: typeBool}, inferred, types)
 
-		return compatible && matches
+		return staticTypeCompatibility(ResolvedType{Name: typeBool}, inferred, types).isAssignable()
 	}
 	if operator == typedOperatorIn {
-		boolMatches, compatible := staticTypeAssignable(ResolvedType{Name: typeBool}, inferred, types)
-		if !compatible || !boolMatches {
+		if !staticTypeCompatibility(ResolvedType{Name: typeBool}, inferred, types).isAssignable() {
 			return false
 		}
 		if _, isList := staticListElement(right, types); isList {
@@ -147,9 +144,7 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 		if !isStaticMapType(right, types) {
 			return false
 		}
-		matches, compatible := staticTypeAssignable(left, ResolvedType{Name: typeString}, types)
-
-		return compatible && matches
+		return staticTypeCompatibility(left, ResolvedType{Name: typeString}, types).isAssignable()
 	}
 	if operator == typedOperatorCoalesce {
 		left, hasNull := removeNullStaticType(left)
@@ -157,8 +152,7 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 			if hasNull && operand.Name == typeNull {
 				continue
 			}
-			matches, compatible := staticTypeAssignable(operand, inferred, types)
-			if !compatible || !matches {
+			if !staticTypeCompatibility(operand, inferred, types).isAssignable() {
 				return false
 			}
 		}
@@ -173,14 +167,10 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 	if isOrderedComparisonOperator(operator) {
 		leftScalar, leftIsScalar := typedScalarTypeFromTypeExpr(leftResolved)
 		rightScalar, rightIsScalar := typedScalarTypeFromTypeExpr(rightResolved)
-		boolMatches, compatible := staticTypeAssignable(ResolvedType{Name: typeBool}, inferred, types)
-
-		return compatible && boolMatches && leftIsScalar && rightIsScalar && leftScalar.kind == rightScalar.kind && isOrderedPrimitiveType(leftScalar.kind)
+		return staticTypeCompatibility(ResolvedType{Name: typeBool}, inferred, types).isAssignable() && leftIsScalar && rightIsScalar && leftScalar.kind == rightScalar.kind && isOrderedPrimitiveType(leftScalar.kind)
 	}
 	if operator == typedOperatorEqual || operator == typedOperatorNotEqual {
-		matches, compatible := staticTypeAssignable(ResolvedType{Name: typeBool}, inferred, types)
-
-		return compatible && matches
+		return staticTypeCompatibility(ResolvedType{Name: typeBool}, inferred, types).isAssignable()
 	}
 	if operator == typedOperatorAdd && leftResolved.Name == typeString && rightResolved.Name == typeString {
 		return true

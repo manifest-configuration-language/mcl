@@ -17,6 +17,37 @@ type TypeAnalysis struct {
 	Facts TypeAnalysisFacts
 }
 
+// typeCompatibility distinguishes a proven assignability result from an
+// unknown result so callers can choose strict or permissive handling without
+// interpreting a pair of booleans independently.
+type typeCompatibility uint8
+
+const (
+	typeCompatibilityUnknown typeCompatibility = iota
+	typeCompatibilityIncompatible
+	typeCompatibilityAssignable
+)
+
+func staticTypeCompatibility(actual, expected ResolvedType, types map[string]ResolvedType) typeCompatibility {
+	assignable, known := staticTypeAssignable(actual, expected, types)
+	if !known {
+		return typeCompatibilityUnknown
+	}
+	if !assignable {
+		return typeCompatibilityIncompatible
+	}
+
+	return typeCompatibilityAssignable
+}
+
+func (compatibility typeCompatibility) isAssignable() bool {
+	return compatibility == typeCompatibilityAssignable
+}
+
+func (compatibility typeCompatibility) isDefinitelyIncompatible() bool {
+	return compatibility == typeCompatibilityIncompatible
+}
+
 type TypeAnalysisFacts struct {
 	Replacement                *ResolvedType
 	Fields                     map[string]TypeAnalysisFacts

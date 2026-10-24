@@ -733,10 +733,25 @@ func inferStaticConditionalCallArgument(expression Expr, expected ResolvedType, 
 }
 
 func staticExprFunctionCallArguments(parameters []FunctionTypeParameter, arguments []Expr, names []string) ([]Expr, bool) {
-	if len(arguments) != len(parameters) || len(names) != len(arguments) {
+	parameterIndices, ok := functionArgumentParameterIndices(parameters, len(arguments), names)
+	if !ok {
 		return nil, false
 	}
 	ordered := make([]Expr, len(parameters))
+	for argumentIndex, parameterIndex := range parameterIndices {
+		ordered[parameterIndex] = arguments[argumentIndex]
+	}
+
+	return ordered, true
+}
+
+// functionArgumentParameterIndices maps each supplied argument to its parameter
+// while validating positional and named argument assignment.
+func functionArgumentParameterIndices(parameters []FunctionTypeParameter, argumentCount int, names []string) ([]int, bool) {
+	if argumentCount != len(parameters) || len(names) != argumentCount {
+		return nil, false
+	}
+	indices := make([]int, argumentCount)
 	assigned := make([]bool, len(parameters))
 	position := 0
 	for index, name := range names {
@@ -744,10 +759,10 @@ func staticExprFunctionCallArguments(parameters []FunctionTypeParameter, argumen
 			for position < len(assigned) && assigned[position] {
 				position++
 			}
-			if position >= len(ordered) {
+			if position >= len(parameters) {
 				return nil, false
 			}
-			ordered[position], assigned[position] = arguments[index], true
+			indices[index], assigned[position] = position, true
 			position++
 
 			continue
@@ -763,10 +778,10 @@ func staticExprFunctionCallArguments(parameters []FunctionTypeParameter, argumen
 		if parameter < 0 || assigned[parameter] {
 			return nil, false
 		}
-		ordered[parameter], assigned[parameter] = arguments[index], true
+		indices[index], assigned[parameter] = parameter, true
 	}
 
-	return ordered, !slices.Contains(assigned, false)
+	return indices, !slices.Contains(assigned, false)
 }
 
 func staticExprCallArguments(function string, arguments []Expr, names []string) ([]Expr, bool) {

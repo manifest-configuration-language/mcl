@@ -919,8 +919,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	}
 	if definition.Typing != nil && definition.Typing.ReturnType != nil {
 		returnType := substituteTypeParameters(*definition.Typing.ReturnType, substitutions)
-		matches, compatible := staticTypeAssignable(body.resolvedType, returnType, types)
-		if compatible && !matches {
+		if staticTypeCompatibility(body.resolvedType, returnType, types).isDefinitelyIncompatible() {
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, fmt.Errorf("lambda returns %s, expected %s", staticTypeName(body.resolvedType), staticTypeName(returnType)))
 		}
 	}

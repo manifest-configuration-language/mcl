@@ -24,8 +24,7 @@ func typePrimitiveListExpression(expression Expr, inferred ResolvedType, context
 		if err != nil || !known {
 			return typedExpression{}, false
 		}
-		matches, compatible := staticTypeAssignable(itemType, elementType, context.types)
-		if !compatible || !matches {
+		if !staticTypeCompatibility(itemType, elementType, context.types).isAssignable() {
 			return typedExpression{}, false
 		}
 		typedItem, ok := typeExpression(item, itemType, context)
@@ -88,8 +87,7 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 				dynamicValueType = new(valueType)
 			}
 		}
-		matches, compatible := staticTypeAssignable(valueType, fieldType, context.types)
-		if !compatible || !matches {
+		if !staticTypeCompatibility(valueType, fieldType, context.types).isAssignable() {
 			return typedExpression{}, false
 		}
 		value, ok := typeExpression(entry.Value, valueType, context)
@@ -172,8 +170,7 @@ func typeRuntimeIndexAccess(expression Expr, inferred ResolvedType, context type
 	if err != nil || !indexKnown {
 		return typedExpression{}, false
 	}
-	matches, compatible := staticTypeAssignable(indexType, inferred, context.types)
-	if !compatible || !matches {
+	if !staticTypeCompatibility(indexType, inferred, context.types).isAssignable() {
 		return typedExpression{}, false
 	}
 	base, ok := typeExpression(node.Base, baseType, context)
@@ -206,8 +203,7 @@ func typeBooleanSubexpression(expression Expr, contexts ...typedEvaluationContex
 	if err != nil || !known {
 		return typedExpression{}, false
 	}
-	matches, compatible := staticTypeAssignable(inferred, ResolvedType{Name: typeBool}, context.types)
-	if !compatible || !matches {
+	if !staticTypeCompatibility(inferred, ResolvedType{Name: typeBool}, context.types).isAssignable() {
 		return typedExpression{}, false
 	}
 

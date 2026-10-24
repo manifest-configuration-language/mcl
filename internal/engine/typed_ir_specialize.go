@@ -263,9 +263,7 @@ func specializedReferenceType(reference string, base ResolvedType, types map[str
 }
 
 func isStaticallyAssignable(expression typedExpression, expected ResolvedType, types map[string]ResolvedType) bool {
-	matches, known := staticTypeAssignable(expression.resolvedType, expected, types)
-
-	return known && matches
+	return staticTypeCompatibility(expression.resolvedType, expected, types).isAssignable()
 }
 
 func specializedBinaryResultType(operator typedOperator, left, right ResolvedType, types map[string]ResolvedType) (ResolvedType, bool) {

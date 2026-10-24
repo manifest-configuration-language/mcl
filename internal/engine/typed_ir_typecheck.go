@@ -192,8 +192,7 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 		if err != nil || !known {
 			return typedExpression{}, false
 		}
-		matches, compatible := staticTypeAssignable(operandType, ResolvedType{Name: typeBool}, context.types)
-		if !compatible || !matches {
+		if !staticTypeCompatibility(operandType, ResolvedType{Name: typeBool}, context.types).isAssignable() {
 			return typedExpression{}, false
 		}
 		operand, ok := typeExpression(node.Operand, operandType, context)
@@ -275,8 +274,7 @@ func typeLambdaExpression(expression Expr, inferred ResolvedType, context typedE
 	}
 	returnType := bodyType
 	if inferred.ReturnType != nil && !containsLambdaTypeVariableType(bodyType) {
-		matches, compatible := staticTypeAssignable(bodyType, *inferred.ReturnType, context.types)
-		if compatible && !matches {
+		if staticTypeCompatibility(bodyType, *inferred.ReturnType, context.types).isDefinitelyIncompatible() {
 			return typedExpression{}, false
 		}
 		returnType = *inferred.ReturnType
@@ -468,8 +466,9 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 	if len(names) == 0 {
 		names = make([]string, len(node.Arguments))
 	}
-	for _, option := range resolvedOptions {
-		_, ok = staticExprFunctionCallArguments(option.Parameters, node.Arguments, names)
+	argumentParameters := make([][]int, len(resolvedOptions))
+	for optionIndex, option := range resolvedOptions {
+		argumentParameters[optionIndex], ok = functionArgumentParameterIndices(option.Parameters, len(node.Arguments), names)
 		if !ok {
 			return typedExpression{}, false
 		}
@@ -489,14 +488,11 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 
 			return ok
 		}() {
-			firstParameterIndex := callParameterIndex(functionType.Parameters, names, index)
-			if firstParameterIndex < 0 {
-				return typedExpression{}, false
-			}
+			firstParameterIndex := argumentParameters[0][index]
 			firstParameter := functionType.Parameters[firstParameterIndex].Type
-			for _, option := range resolvedOptions[1:] {
-				parameterIndex := callParameterIndex(option.Parameters, names, index)
-				if parameterIndex < 0 || !equalStaticTypes(firstParameter, option.Parameters[parameterIndex].Type) {
+			for optionIndex, option := range resolvedOptions[1:] {
+				parameterIndex := argumentParameters[optionIndex+1][index]
+				if !equalStaticTypes(firstParameter, option.Parameters[parameterIndex].Type) {
 					return typedExpression{}, false
 				}
 			}
@@ -506,13 +502,9 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 			}
 		}
 		for optionIndex, option := range resolvedOptions {
-			parameterIndex := callParameterIndex(option.Parameters, names, index)
-			if parameterIndex < 0 {
-				return typedExpression{}, false
-			}
+			parameterIndex := argumentParameters[optionIndex][index]
 			parameterType := option.Parameters[parameterIndex].Type
-			matches, compatible := staticTypeAssignable(argumentType, parameterType, context.types)
-			if compatible && !matches {
+			if staticTypeCompatibility(argumentType, parameterType, context.types).isDefinitelyIncompatible() {
 				return typedExpression{}, false
 			}
 			if isLambdaTypeVariable(parameterType) {
@@ -529,8 +521,7 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 			continue
 		}
 		returnType := substituteTypeParameters(*option.ReturnType, typeSubstitutions[index])
-		assignable, known := staticTypeAssignable(returnType, inferred, context.types)
-		if !known || !assignable {
+		if !staticTypeCompatibility(returnType, inferred, context.types).isAssignable() {
 			return typedExpression{}, false
 		}
 	}
@@ -539,32 +530,6 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 		kind: typedExpressionCall, span: expression.ExprSpan(), callee: &callee, args: arguments,
 		argNames: slices.Clone(node.ArgumentNames),
 	}, true
-}
-
-func callParameterIndex(parameters []FunctionTypeParameter, names []string, argumentIndex int) int {
-	assigned := make([]bool, len(parameters))
-	position := 0
-	for index := 0; index <= argumentIndex; index++ {
-		var parameterIndex int
-		if names[index] != "" {
-			parameterIndex = slices.IndexFunc(parameters, func(parameter FunctionTypeParameter) bool { return parameter.Name == names[index] })
-		} else {
-			for position < len(assigned) && assigned[position] {
-				position++
-			}
-			parameterIndex = position
-			position++
-		}
-		if parameterIndex < 0 || parameterIndex >= len(assigned) || assigned[parameterIndex] {
-			return -1
-		}
-		assigned[parameterIndex] = true
-		if index == argumentIndex {
-			return parameterIndex
-		}
-	}
-
-	return -1
 }
 
 func typeBuiltinCallExpression(expression Expr, inferred ResolvedType, item builtin, context typedEvaluationContext) (typedExpression, bool) {
@@ -721,8 +686,7 @@ func typePrimitiveConditionalExpression(expression Expr, inferred ResolvedType, 
 		}
 	}
 	for _, branchType := range branchTypes {
-		matches, compatible := staticTypeAssignable(branchType, inferred, context.types)
-		if !compatible || !matches {
+		if !staticTypeCompatibility(branchType, inferred, context.types).isAssignable() {
 			return typedExpression{}, false
 		}
 	}
