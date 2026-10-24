@@ -15,6 +15,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/netpolicy"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	orascontent "oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
@@ -111,15 +112,9 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 	if err != nil {
 		return nil, empty, fmt.Errorf("fetch OCI Helm Chart manifest: %w", err)
 	}
-	manifestData, err := readOCIContent(manifestReader, 1<<20, "OCI manifest")
+	manifestData, err := readOCIContent(manifestReader, manifestDescriptor, "OCI manifest")
 	if err != nil {
 		return nil, empty, err
-	}
-	if int64(len(manifestData)) != manifestDescriptor.Size {
-		return nil, empty, errors.New("OCI Helm Chart manifest size does not match the registry descriptor")
-	}
-	if "sha256:"+content.SHA256(manifestData) != string(manifestDescriptor.Digest) {
-		return nil, empty, errors.New("OCI Helm Chart manifest digest does not match the registry descriptor")
 	}
 	var manifest v1.Manifest
 	if err := json.Unmarshal(manifestData, &manifest, json.RejectUnknownMembers(false)); err != nil {
@@ -151,15 +146,9 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 	if err != nil {
 		return nil, empty, fmt.Errorf("fetch OCI Helm Chart content layer: %w", err)
 	}
-	archive, err := readOCIContent(layerReader, maxRemoteChartArchiveSize, "OCI Helm Chart layer")
+	archive, err := readOCIContent(layerReader, *layer, "OCI Helm Chart layer")
 	if err != nil {
 		return nil, empty, err
-	}
-	if int64(len(archive)) != layer.Size {
-		return nil, empty, errors.New("OCI Helm Chart layer size does not match its descriptor")
-	}
-	if "sha256:"+content.SHA256(archive) != string(layer.Digest) {
-		return nil, empty, errors.New("OCI Helm Chart layer digest does not match its descriptor")
 	}
 
 	return archive, ociChartLock{
@@ -171,14 +160,11 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 	}, nil
 }
 
-func readOCIContent(reader io.ReadCloser, maximum int64, label string) ([]byte, error) {
+func readOCIContent(reader io.ReadCloser, descriptor v1.Descriptor, label string) ([]byte, error) {
 	defer reader.Close()
-	data, exceeded, err := content.ReadAllLimited(reader, maximum)
+	data, err := orascontent.ReadAll(reader, descriptor)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", label, err)
-	}
-	if exceeded {
-		return nil, fmt.Errorf("%s exceeds %d bytes", label, maximum)
 	}
 
 	return data, nil
