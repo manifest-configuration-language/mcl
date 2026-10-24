@@ -21,7 +21,8 @@ const originalNetworkAPIs = new Map(
 );
 
 function denyNetworkAccess() {
-  globalThis.fetch = () => Promise.reject(new TypeError("Network access is disabled in the MCL runtime"));
+  globalThis.fetch = () =>
+    Promise.reject(new TypeError("Network access is disabled in the MCL runtime"));
   for (const [name] of originalNetworkAPIs) {
     Object.defineProperty(globalThis, name, {
       configurable: true,
@@ -43,8 +44,10 @@ async function probeNetworkAccess(url) {
   }
 
   const availableAPIs = ["fetch", ...originalNetworkAPIs.keys()];
-  const blockedAPIs = availableAPIs.filter(
-    (name) => name === "fetch" ? globalThis.fetch !== originalFetch : globalThis[name] !== originalNetworkAPIs.get(name),
+  const blockedAPIs = availableAPIs.filter((name) =>
+    name === "fetch"
+      ? globalThis.fetch !== originalFetch
+      : globalThis[name] !== originalNetworkAPIs.get(name),
   );
   return { fetchBlocked, availableAPIs, blockedAPIs };
 }
@@ -68,7 +71,8 @@ function waitForWasmReady() {
 async function initialize() {
   if (initialized) return initialized;
   initialized = (async () => {
-    if (!runtimeAssets?.wasmURL || !runtimeAssets?.wasmExecURL) throw new Error("MCL runtime assets were not configured");
+    if (!runtimeAssets?.wasmURL || !runtimeAssets?.wasmExecURL)
+      throw new Error("MCL runtime assets were not configured");
     await import(runtimeAssets.wasmExecURL);
     const go = new Go();
     const response = await runtimeFetch(runtimeAssets.wasmURL);
@@ -126,6 +130,29 @@ self.addEventListener("message", async (event) => {
     initialize().catch(() => {});
     return;
   }
+  if (message?.type === "project-update") {
+    try {
+      await initialize();
+      const binaryFiles = message.binaryFiles ?? Object.create(null);
+      const result = JSON.parse(
+        globalThis.mclWasm.updateProject(message.projectId, message.update, binaryFiles),
+      );
+      postMessage({ type: "project-updated", requestId: message.requestId, value: result });
+    } catch (error) {
+      postMessage({
+        type: "project-updated",
+        requestId: message.requestId,
+        value: {
+          ok: false,
+          error: {
+            code: "MCL-WASM-PROJECT",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        },
+      });
+    }
+    return;
+  }
   if (message?.type !== "run") return;
   try {
     await initialize();
@@ -139,7 +166,15 @@ self.addEventListener("message", async (event) => {
       source: message.source,
       files: encodedFiles.files,
     };
-    const value = JSON.parse(globalThis.mclWasm.run(JSON.stringify(request), encodedFiles.binaryFiles));
+    const value = JSON.parse(
+      message.projectId === undefined
+        ? globalThis.mclWasm.run(JSON.stringify(request), encodedFiles.binaryFiles)
+        : globalThis.mclWasm.run(
+            JSON.stringify(request),
+            encodedFiles.binaryFiles,
+            message.projectId,
+          ),
+    );
     postMessage({
       type: "response",
       requestId: message.requestId,
@@ -151,7 +186,10 @@ self.addEventListener("message", async (event) => {
       requestId: message.requestId,
       value: {
         ok: false,
-        error: { code: "MCL-WASM-INPUT", message: error instanceof Error ? error.message : String(error) },
+        error: {
+          code: "MCL-WASM-INPUT",
+          message: error instanceof Error ? error.message : String(error),
+        },
       },
     });
   }

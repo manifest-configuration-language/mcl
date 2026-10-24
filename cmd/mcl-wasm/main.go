@@ -11,7 +11,9 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"syscall/js"
+	"testing/fstest"
 	"time"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
@@ -30,27 +32,55 @@ type response = wasmprotocol.Response
 type fileInput = wasmprotocol.FileInput
 type responseError = wasmprotocol.Error
 
+type projectUpdate struct {
+	Reset   bool                 `json:"reset"`
+	Files   map[string]fileInput `json:"files"`
+	Deleted []string             `json:"deleted"`
+}
+
+var projectSessionMu sync.Mutex
+var activeProjectID string
+var activeProject *projectFilesystem
+var updateProject js.Func
+
 func main() {
 	api := js.Global().Get("Object").New()
 	run := js.FuncOf(func(_ js.Value, args []js.Value) any {
-		if (len(args) != 1 && len(args) != 2) || args[0].Type() != js.TypeString {
-			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "run expects a JSON string and an optional binary file map"}})
+		if (len(args) < 1 || len(args) > 3) || args[0].Type() != js.TypeString {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "run expects a JSON string, an optional binary file map, and an optional project ID"}})
 		}
 
 		binaryFiles := js.Undefined()
 		if len(args) == 2 {
 			binaryFiles = args[1]
 		}
+		if len(args) == 3 {
+			binaryFiles = args[1]
+		}
+		projectID := ""
+		if len(args) == 3 {
+			if args[2].Type() != js.TypeString {
+				return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "project ID must be a string"}})
+			}
+			projectID = args[2].String()
+		}
 
-		return handle(args[0].String(), binaryFiles)
+		return handle(args[0].String(), binaryFiles, projectID)
+	})
+	updateProject = js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) != 3 || args[0].Type() != js.TypeString || args[1].Type() != js.TypeString {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-PROJECT", Message: "updateProject expects a project ID, JSON update, and binary file map"}})
+		}
+		return applyProjectUpdate(args[0].String(), args[1].String(), args[2])
 	})
 	api.Set("run", run)
+	api.Set("updateProject", updateProject)
 	js.Global().Set("mclWasm", api)
 	js.Global().Set("mclWasmReady", true)
 	select {}
 }
 
-func handle(raw string, binaryArgument js.Value) string {
+func handle(raw string, binaryArgument js.Value, projectID string) string {
 	var input request
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
@@ -84,6 +114,14 @@ func handle(raw string, binaryArgument js.Value) string {
 		result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: err.Error()}
 		return marshal(result)
 	}
+	var sessionFiles *projectFilesystem
+	if projectID != "" {
+		sessionFiles, err = projectFilesForSession(projectID, entrypoint, input.Source)
+		if err != nil {
+			result.Error = &responseError{Code: "MCL-WASM-PROJECT", Message: err.Error()}
+			return marshal(result)
+		}
+	}
 	if input.Operation == "format" {
 		formatted, err := engine.FormatSource(input.Source)
 		if err != nil {
@@ -101,15 +139,20 @@ func handle(raw string, binaryArgument js.Value) string {
 			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "operation requires a valid non-negative position"}
 			return marshal(result)
 		}
-		binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
-		if binaryErr != nil {
-			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: binaryErr.Error()}
-			return marshal(result)
-		}
-		projectFiles, filesErr := newProjectFiles(input.Source, input.Files, binaryFiles, entrypoint)
-		if filesErr != nil {
-			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: filesErr.Error()}
-			return marshal(result)
+		var projectFiles fs.FS
+		if sessionFiles != nil {
+			projectFiles = projectFilesystemView{filesystem: sessionFiles, excluded: entrypoint}
+		} else {
+			binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
+			if binaryErr != nil {
+				result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: binaryErr.Error()}
+				return marshal(result)
+			}
+			projectFiles, err = newProjectFiles(input.Source, input.Files, binaryFiles, entrypoint)
+			if err != nil {
+				result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: err.Error()}
+				return marshal(result)
+			}
 		}
 		params := languageservice.NavigationParams{
 			Entrypoint: entrypoint, Source: input.Source,
@@ -171,15 +214,20 @@ func handle(raw string, binaryArgument js.Value) string {
 		result.Ok = true
 		result.Result = diagnostics(module, input.Source, entrypoint)
 	case "check", "evaluate", "render":
-		binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
-		if binaryErr != nil {
-			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: binaryErr.Error()}
-			return marshal(result)
-		}
-		projectFiles, filesErr := newProjectFiles(input.Source, input.Files, binaryFiles, entrypoint)
-		if filesErr != nil {
-			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: filesErr.Error()}
-			return marshal(result)
+		var projectFiles fs.FS
+		if sessionFiles != nil {
+			projectFiles = projectFilesystemView{filesystem: sessionFiles, excluded: entrypoint}
+		} else {
+			binaryFiles, binaryErr := copyBinaryFiles(binaryArgument, input.Source, input.Files)
+			if binaryErr != nil {
+				result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: binaryErr.Error()}
+				return marshal(result)
+			}
+			projectFiles, err = newProjectFiles(input.Source, input.Files, binaryFiles, entrypoint)
+			if err != nil {
+				result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: err.Error()}
+				return marshal(result)
+			}
 		}
 		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint)
 		if evalErr != nil {
@@ -219,6 +267,54 @@ func handle(raw string, binaryArgument js.Value) string {
 	return marshal(result)
 }
 
+func applyProjectUpdate(projectID, raw string, binaryArgument js.Value) string {
+	var update projectUpdate
+	if err := json.Unmarshal([]byte(raw), &update); err != nil {
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-PROJECT", Message: "project update must be valid JSON"}})
+	}
+	if projectID == "" {
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-PROJECT", Message: "project ID must not be empty"}})
+	}
+	if update.Files == nil {
+		update.Files = map[string]fileInput{}
+	}
+	binaryFiles, err := copyBinaryFiles(binaryArgument, "", update.Files)
+	if err != nil {
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-PROJECT", Message: err.Error()}})
+	}
+
+	projectSessionMu.Lock()
+	defer projectSessionMu.Unlock()
+	project := activeProject
+	if update.Reset {
+		project = &projectFilesystem{files: make(fstest.MapFS)}
+	} else if activeProjectID != projectID || project == nil {
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-PROJECT", Message: "project session must be reset before applying changes"}})
+	}
+	if err := project.applyDelta(update.Files, binaryFiles, update.Deleted, update.Reset); err != nil {
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-PROJECT", Message: err.Error()}})
+	}
+	activeProjectID = projectID
+	activeProject = project
+	return marshal(response{Ok: true})
+}
+
+func projectFilesForSession(projectID, entrypoint, source string) (*projectFilesystem, error) {
+	projectSessionMu.Lock()
+	defer projectSessionMu.Unlock()
+	if activeProjectID != projectID || activeProject == nil {
+		return nil, errors.New("project session is unavailable; synchronize the project again")
+	}
+	content, err := fs.ReadFile(activeProject, entrypoint)
+	if err != nil {
+		return nil, fmt.Errorf("project entrypoint %q is unavailable", entrypoint)
+	}
+	if string(content) != source {
+		return nil, errors.New("project entrypoint source does not match the synchronized project")
+	}
+	return activeProject, nil
+}
+
 func evaluate(source string, files fs.FS, entrypoint string) (engine.Bundle, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
 	defer cancel()
@@ -247,7 +343,7 @@ func copyBinaryFiles(value js.Value, source string, files map[string]fileInput) 
 	if keys.Length() != binaryCount {
 		return nil, errors.New("binary file map does not match binary file metadata")
 	}
-	if keys.Length() > wasmprotocol.MaxProjectFiles-1 {
+	if keys.Length() > wasmprotocol.MaxProjectFiles {
 		return nil, fmt.Errorf("project has more than %d files", wasmprotocol.MaxProjectFiles)
 	}
 	uint8Array := js.Global().Get("Uint8Array")

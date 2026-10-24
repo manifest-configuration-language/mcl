@@ -27,8 +27,9 @@ export declare const maxProjectBytes: number;
 export declare const maxProjectPathLength: number;
 export declare const maxProjectPathDepth: number;
 export declare function isValidProjectPath(path: unknown): path is string;
+export declare function isValidProjectFileSet(paths: readonly string[]): boolean;
 
-/** Root-relative project files passed to MCL's per-request filesystem. Uint8Array values are copied before transfer so callers can reuse them. */
+/** Root-relative project files passed to MCL's in-memory session filesystem. Uint8Array values are copied before transfer so callers can reuse them. */
 export type ProjectFile = string | Uint8Array;
 export type ProjectFiles = Readonly<Record<string, ProjectFile>>;
 
@@ -67,17 +68,45 @@ export interface MclRuntime {
   parse(source: string, options?: RequestOptions): Promise<MclResult & { operation: "parse" }>;
   lint(source: string, options?: RequestOptions): Promise<MclResult & { operation: "lint" }>;
   format(source: string, options?: RequestOptions): Promise<MclResult & { operation: "format" }>;
-  check(source: string, files?: ProjectFiles, options?: RequestOptions): Promise<MclResult & { operation: "check" }>;
-  evaluate(source: string, files?: ProjectFiles, options?: RequestOptions): Promise<MclResult & { operation: "evaluate" }>;
-  render(source: string, files?: ProjectFiles, options?: RequestOptions): Promise<MclResult & { operation: "render" }>;
-  definition(source: string, options: PositionRequestOptions): Promise<MclResult & { operation: "definition" }>;
-  definition(source: string, files: ProjectFiles | undefined, options: PositionRequestOptions): Promise<MclResult & { operation: "definition" }>;
-  hover(source: string, options: PositionRequestOptions): Promise<MclResult & { operation: "hover" }>;
-  hover(source: string, files: ProjectFiles | undefined, options: PositionRequestOptions): Promise<MclResult & { operation: "hover" }>;
+  check(
+    source: string,
+    files?: ProjectFiles,
+    options?: RequestOptions,
+  ): Promise<MclResult & { operation: "check" }>;
+  evaluate(
+    source: string,
+    files?: ProjectFiles,
+    options?: RequestOptions,
+  ): Promise<MclResult & { operation: "evaluate" }>;
+  render(
+    source: string,
+    files?: ProjectFiles,
+    options?: RequestOptions,
+  ): Promise<MclResult & { operation: "render" }>;
+  definition(
+    source: string,
+    options: PositionRequestOptions,
+  ): Promise<MclResult & { operation: "definition" }>;
+  definition(
+    source: string,
+    files: ProjectFiles | undefined,
+    options: PositionRequestOptions,
+  ): Promise<MclResult & { operation: "definition" }>;
+  hover(
+    source: string,
+    options: PositionRequestOptions,
+  ): Promise<MclResult & { operation: "hover" }>;
+  hover(
+    source: string,
+    files: ProjectFiles | undefined,
+    options: PositionRequestOptions,
+  ): Promise<MclResult & { operation: "hover" }>;
   dispose(): void;
 }
 
 export interface MclProject {
+  /** Returns a new complete snapshot handle for this Worker session. Only changed files are sent on the next operation. */
+  update(files: ProjectFiles): MclProject;
   parse(options?: ProjectOperationOptions): Promise<MclResult & { operation: "parse" }>;
   lint(options?: ProjectOperationOptions): Promise<MclResult & { operation: "lint" }>;
   complete(options: ProjectCompletionOptions): Promise<MclResult & { operation: "completion" }>;
