@@ -111,6 +111,7 @@ func standardLibraryHover(params NavigationParams, projectFiles fs.FS) *Hover {
 		if !found {
 			continue
 		}
+
 		return &Hover{
 			Contents: standardLibrarySignature(function.Name, function) + "\n" + function.Documentation,
 			Range:    SourceRangeAt(params.Source, reference.Span),
