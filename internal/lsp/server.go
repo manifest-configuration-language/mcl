@@ -8,7 +8,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/creachadair/jrpc2"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"go.lsp.dev/jsonrpc2"
 )
@@ -34,7 +33,7 @@ type server struct {
 	exitRequested            chan struct{}
 	diagnosticResults        chan<- diagnosticResult
 	notify                   func(string, any) error
-	callback                 func(string, any) (*jrpc2.Response, error)
+	callback                 func(string, any) error
 }
 
 type watchRegistrationResult struct {
@@ -59,10 +58,10 @@ func Run(input io.Reader, output io.Writer) error {
 	s.notify = func(method string, params any) error {
 		return s.rpc.Notify(rpcContext, method, params)
 	}
-	s.callback = func(method string, params any) (*jrpc2.Response, error) {
+	s.callback = func(method string, params any) error {
 		_, err := s.rpc.Call(rpcContext, method, params, nil)
 
-		return nil, err
+		return err
 	}
 	s.rpc.Go(rpcContext, func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
 		result, err := s.handle(req.Method(), jsontext.Value(req.Params()), !req.IsCall(), ctx)

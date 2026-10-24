@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/creachadair/jrpc2"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
@@ -545,13 +544,13 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := server{renameIndex: index, canWatchMCLFiles: true, watchRegistrationResults: make(chan watchRegistrationResult, 1)}
-	s.callback = func(method string, params any) (*jrpc2.Response, error) {
+	s.callback = func(method string, params any) error {
 		if method != "client/registerCapability" {
 			t.Fatalf("callback method = %q", method)
 		}
 		encoded, err := json.Marshal(params)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for _, expected := range []string{`"method":"workspace/didChangeWatchedFiles"`, `"globPattern":"**/*.mcl"`, `"globPattern":"**/mcl.toml"`} {
 			if !bytes.Contains(encoded, []byte(expected)) {
@@ -559,7 +558,7 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 			}
 		}
 
-		return nil, nil
+		return nil
 	}
 	if err := handleForTest(&s, "initialized", jsontext.Value(""), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)

@@ -330,7 +330,7 @@ func (s *server) registerMCLFileWatcher() {
 		}},
 	}}}
 	go func() {
-		_, err := s.callback("client/registerCapability", params)
+		err := s.callback("client/registerCapability", params)
 		success := err == nil
 		result := watchRegistrationResult{generation: generation, success: success}
 		select {
