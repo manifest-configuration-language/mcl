@@ -144,8 +144,15 @@ export function createMclRuntime(options = {}) {
       if (group.size === 0) latestPending.delete(groupKey);
     };
 
-    if (["render", "evaluate", "check"].includes(operation))
+    if (["render", "evaluate", "check"].includes(operation)) {
       supersedePending("lint", priority, "An explicit run replaced this pending lint");
+    } else if (priority > requestPriorities.background && operation !== "lint") {
+      supersedePending(
+        "lint",
+        requestPriorities.background,
+        "An interactive operation replaced this pending background lint",
+      );
+    }
 
     const queueController = new AbortController();
     const pending = { controller: queueController, started: false };
