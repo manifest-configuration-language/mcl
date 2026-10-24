@@ -54,23 +54,6 @@ jobs:
           install: true
           cache: false
 
-      - name: Get Go cache paths
-        id: go-cache-paths
-        run: |
-          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Go build and module data
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          lookup-only: true
-          path: |
-            ${{ steps.go-cache-paths.outputs.build }}
-            ${{ steps.go-cache-paths.outputs.modules }}
-          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
-          restore-keys: |
-            go-${{ runner.os }}-${{ runner.arch }}-
-
       - name: Set up pnpm
         run: corepack enable && pnpm --version
 
