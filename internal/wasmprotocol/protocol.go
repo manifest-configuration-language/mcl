@@ -4,12 +4,9 @@ package wasmprotocol
 
 type HoverResultHover_0 = HoverInfo
 
-type HoverResultHover struct {
-	// Contents corresponds to the JSON schema field "contents".
-	Contents string `json:"contents" yaml:"contents" mapstructure:"contents"`
-
-	// Range corresponds to the JSON schema field "range".
-	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+type FormatResult struct {
+	// Source corresponds to the JSON schema field "source".
+	Source string `json:"source" yaml:"source" mapstructure:"source"`
 }
 
 type CompletionPosition struct {
@@ -59,9 +56,15 @@ type DefinitionResult struct {
 	Location *DefinitionResultLocation `json:"location" yaml:"location" mapstructure:"location"`
 }
 
-type HoverResult struct {
-	// Hover corresponds to the JSON schema field "hover".
-	Hover *HoverResultHover `json:"hover" yaml:"hover" mapstructure:"hover"`
+type CompletionItem struct {
+	// InsertText corresponds to the JSON schema field "insertText".
+	InsertText *string `json:"insertText,omitempty,omitzero" yaml:"insertText,omitempty" mapstructure:"insertText,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind uint64 `json:"kind" yaml:"kind" mapstructure:"kind"`
+
+	// Label corresponds to the JSON schema field "label".
+	Label string `json:"label" yaml:"label" mapstructure:"label"`
 }
 
 type Error struct {
@@ -113,11 +116,6 @@ type FileInput struct {
 	Encoding FileInputEncoding `json:"encoding" yaml:"encoding" mapstructure:"encoding"`
 }
 
-type FormatResult struct {
-	// Source corresponds to the JSON schema field "source".
-	Source string `json:"source" yaml:"source" mapstructure:"source"`
-}
-
 type HoverInfo struct {
 	// Contents corresponds to the JSON schema field "contents".
 	Contents string `json:"contents" yaml:"contents" mapstructure:"contents"`
@@ -126,15 +124,17 @@ type HoverInfo struct {
 	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
 }
 
-type CompletionItem struct {
-	// InsertText corresponds to the JSON schema field "insertText".
-	InsertText *string `json:"insertText,omitempty,omitzero" yaml:"insertText,omitempty" mapstructure:"insertText,omitempty"`
+type HoverResult struct {
+	// Hover corresponds to the JSON schema field "hover".
+	Hover *HoverResultHover `json:"hover" yaml:"hover" mapstructure:"hover"`
+}
 
-	// Kind corresponds to the JSON schema field "kind".
-	Kind uint64 `json:"kind" yaml:"kind" mapstructure:"kind"`
+type HoverResultHover struct {
+	// Contents corresponds to the JSON schema field "contents".
+	Contents string `json:"contents" yaml:"contents" mapstructure:"contents"`
 
-	// Label corresponds to the JSON schema field "label".
-	Label string `json:"label" yaml:"label" mapstructure:"label"`
+	// Range corresponds to the JSON schema field "range".
+	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
 }
 
 type LintDiagnostic struct {
@@ -170,6 +170,8 @@ type ParseResult struct {
 	Declarations uint64 `json:"declarations" yaml:"declarations" mapstructure:"declarations"`
 }
 
+type ProjectPath string
+
 type RelatedLocation struct {
 	// Column corresponds to the JSON schema field "column".
 	Column uint64 `json:"column" yaml:"column" mapstructure:"column"`
@@ -200,7 +202,7 @@ type RenderResult struct {
 
 type Request struct {
 	// Project-relative MCL source path. Defaults to main.mcl.
-	Entrypoint *string `json:"entrypoint,omitempty,omitzero" yaml:"entrypoint,omitempty" mapstructure:"entrypoint,omitempty"`
+	Entrypoint *ProjectPath `json:"entrypoint,omitempty,omitzero" yaml:"entrypoint,omitempty" mapstructure:"entrypoint,omitempty"`
 
 	// Project files are limited by the runtime; this count excludes the entrypoint.
 	Files RequestFiles `json:"files,omitempty,omitzero" yaml:"files,omitempty" mapstructure:"files,omitempty"`
