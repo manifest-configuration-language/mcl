@@ -54,7 +54,7 @@ func RenameForSource(path, source string, position Position, newName string) *Re
 		}
 	}
 
-	if !candidateParses(source, spans, name, newName) {
+	if !candidateParses(source, spans, newName) {
 		return nil
 	}
 	edits := make([]RenameEdit, len(spans))
@@ -65,6 +65,7 @@ func RenameForSource(path, source string, position Position, newName string) *Re
 		if left.Range.Start.Line != right.Range.Start.Line {
 			return left.Range.Start.Line - right.Range.Start.Line
 		}
+
 		return left.Range.Start.Character - right.Range.Start.Character
 	})
 
@@ -80,6 +81,7 @@ func declarationAt(index *SemanticIndex, name string, offset int, selected synta
 		if declaration < 0 {
 			continue
 		}
+
 		return declaration, reference.TypeName, true
 	}
 	declaration := index.DeclarationAt(name, offset)
@@ -117,6 +119,7 @@ func topLevelRenameSpans(source string, index *SemanticIndex, target int, oldNam
 		}
 		spans = append(spans, syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(oldName)})
 	}
+
 	return uniqueValidSpans(source, oldName, spans)
 }
 
@@ -161,7 +164,7 @@ func uniqueValidSpans(source, name string, spans []syntax.SourceSpan) []syntax.S
 	return unique
 }
 
-func candidateParses(source string, spans []syntax.SourceSpan, oldName, newName string) bool {
+func candidateParses(source string, spans []syntax.SourceSpan, newName string) bool {
 	ordered := slices.Clone(spans)
 	slices.SortFunc(ordered, func(left, right syntax.SourceSpan) int { return right.Start - left.Start })
 	candidate := source
@@ -169,6 +172,7 @@ func candidateParses(source string, spans []syntax.SourceSpan, oldName, newName 
 		candidate = candidate[:span.Start] + newName + candidate[span.End:]
 	}
 	_, err := syntax.ParseAST(candidate)
+
 	return err == nil
 }
 

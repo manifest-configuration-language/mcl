@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -196,7 +197,7 @@ type schemaFieldOccurrence struct {
 	siblings   []string
 }
 
-func (s *server) renameSchemaField(params renameParams, name string, offset int, module syntax.ModuleAST, source string) (*workspaceEdit, bool) {
+func (s *server) renameSchemaField(ctx context.Context, params renameParams, name string, offset int, module syntax.ModuleAST, source string) (*workspaceEdit, bool) {
 	path := documentPath(params.TextDocument.URI)
 	if path == "" {
 		return nil, false
@@ -237,7 +238,7 @@ func (s *server) renameSchemaField(params renameParams, name string, offset int,
 		if !ok || occurrence.name != name || offset < fieldStart || offset > fieldEnd {
 			continue
 		}
-		fields, ok := schemaFieldsAtOccurrence(path, source, occurrence, index)
+		fields, ok := schemaFieldsAtOccurrence(ctx, path, source, occurrence, index)
 		if !ok || !slices.Contains(fields, occurrence.name) {
 			continue
 		}
@@ -251,7 +252,7 @@ func (s *server) renameSchemaField(params renameParams, name string, offset int,
 			if reference.entry.Start > offset || offset > reference.entry.End || reference.name != name {
 				continue
 			}
-			fields, fieldErr := engine.SchemaTypeFields(path, source, reference.annotation, reference.parentPath)
+			fields, fieldErr := engine.SchemaTypeFieldsWithContext(ctx, path, source, reference.annotation, reference.parentPath)
 			if fieldErr != nil || !slices.Contains(fields, reference.name) {
 				continue
 			}
@@ -263,7 +264,7 @@ func (s *server) renameSchemaField(params renameParams, name string, offset int,
 				if occurrence.name != reference.name || occurrence.annotation != reference.annotation || !slices.Equal(occurrence.parentPath, reference.parentPath) {
 					continue
 				}
-				fields, ok := schemaFieldsAtOccurrence(path, source, occurrence, index)
+				fields, ok := schemaFieldsAtOccurrence(ctx, path, source, occurrence, index)
 				if ok && slices.Contains(fields, occurrence.name) {
 					target = occurrence
 
@@ -357,7 +358,7 @@ func (s *server) renameSchemaField(params renameParams, name string, offset int,
 			if slices.Contains(occurrence.siblings, params.NewName) {
 				return nil, true
 			}
-			fields, valid := schemaFieldsAtOccurrence(documentPath, documentSource, occurrence, index)
+			fields, valid := schemaFieldsAtOccurrence(ctx, documentPath, documentSource, occurrence, index)
 			if !valid || !slices.Contains(fields, occurrence.name) {
 				return nil, true
 			}
@@ -374,7 +375,7 @@ func (s *server) renameSchemaField(params renameParams, name string, offset int,
 			if reference.name != target.name || schemaAnnotationIdentityWithSources(documentPath, documentModule, reference.annotation, overlays, make(map[string]bool)) != identity || !slices.Equal(reference.parentPath, target.parentPath) {
 				continue
 			}
-			fields, fieldErr := engine.SchemaTypeFields(documentPath, documentSource, reference.annotation, reference.parentPath)
+			fields, fieldErr := engine.SchemaTypeFieldsWithContext(ctx, documentPath, documentSource, reference.annotation, reference.parentPath)
 			if fieldErr != nil {
 				return nil, true
 			}
@@ -501,7 +502,7 @@ func schemaFieldSourceRange(source string, occurrence *schemaFieldOccurrence) (i
 	return span.Start, span.End, true
 }
 
-func schemaFieldsAtOccurrence(path, source string, occurrence *schemaFieldOccurrence, index int) ([]string, bool) {
+func schemaFieldsAtOccurrence(ctx context.Context, path, source string, occurrence *schemaFieldOccurrence, index int) ([]string, bool) {
 	start, end, ok := schemaFieldSourceRange(source, occurrence)
 	if !ok {
 		return nil, false
@@ -512,7 +513,7 @@ func schemaFieldsAtOccurrence(path, source string, occurrence *schemaFieldOccurr
 	}
 	span := occurrence.entry
 	probe := source[:span.Start] + marker + source[span.End:]
-	fields, err := engine.SchemaFieldCompletionsWithError(path, probe, marker)
+	fields, err := engine.SchemaFieldCompletionsWithContext(ctx, path, probe, marker)
 	if err != nil || start < span.Start || end > span.End {
 		return nil, false
 	}
@@ -765,6 +766,10 @@ func (s *server) renameOverlays() (map[string]string, map[string]string) {
 }
 
 func (s *server) rename(params renameParams) *workspaceEdit {
+	return s.renameWithContext(context.Background(), params)
+}
+
+func (s *server) renameWithContext(ctx context.Context, params renameParams) *workspaceEdit {
 	state, exists := s.documents[params.TextDocument.URI]
 	if !exists || !isMCLIdentifier(params.NewName) {
 		return nil
@@ -792,7 +797,7 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 	if match := index.LocalAt(name, offset); match.Found {
 		return renameLocalBinding(state.Text, params.TextDocument.URI, params.NewName, name, match.Binding, index.Locals, index.References)
 	}
-	if edit, handled := s.renameSchemaField(params, name, offset, module, state.Text); handled {
+	if edit, handled := s.renameSchemaField(ctx, params, name, offset, module, state.Text); handled {
 		return edit
 	}
 	references := index.References

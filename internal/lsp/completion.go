@@ -19,5 +19,6 @@ func (s *server) completions(params completionParams) []languageservice.Completi
 	if !exists {
 		return languageservice.CompletionForSource("", params.Position.Line, params.Position.Character, "")
 	}
+
 	return languageservice.CompletionForSource(state.Text, params.Position.Line, params.Position.Character, documentPath(params.TextDocument.URI))
 }

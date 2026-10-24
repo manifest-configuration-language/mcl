@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"slices"
 
@@ -50,9 +51,7 @@ type formattingParams struct {
 func (s *server) dispatchReadOnly(result any, handler func(*server) (any, error)) error {
 	s.mu.Lock()
 	documents := make(map[string]documentState, len(s.documents))
-	for uri, document := range s.documents {
-		documents[uri] = document
-	}
+	maps.Copy(documents, s.documents)
 	s.mu.Unlock()
 	state := &server{documents: documents}
 
@@ -71,13 +70,16 @@ func (s *server) dispatchReadOnly(result any, handler func(*server) (any, error)
 func (s *server) Initialize(ctx context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.initializeLocked(params), nil
 }
 
 func (s *server) Initialized(ctx context.Context, params *protocol.InitializedParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.registerMCLFileWatcher()
+
 	return nil
 }
 
@@ -88,7 +90,9 @@ func (s *server) Shutdown(ctx context.Context) error {
 func (s *server) Exit(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.requestExit()
+
 	return nil
 }
 
@@ -147,29 +151,35 @@ func (s *server) Definition(ctx context.Context, params *protocol.DefinitionPara
 func (s *server) Rename(ctx context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	var request renameParams
 	if params != nil {
 		request.TextDocument.URI = params.TextDocument.URI.String()
 		request.Position = location{Line: int(params.Position.Line), Character: int(params.Position.Character)}
 		request.NewName = params.NewName
 	}
-	edit := s.rename(request)
+
+	edit := s.renameWithContext(ctx, request)
 	if state, exists := s.documents[request.TextDocument.URI]; exists && state.SyncLost {
 		edit = nil
 	}
+
 	return protocolWorkspaceEdit(edit), nil
 }
 
 func (s *server) DidChangeWorkspaceFolders(ctx context.Context, params *protocol.DidChangeWorkspaceFoldersParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.didChangeWorkspaceFoldersLocked(params)
+
 	return nil
 }
 
 func (s *server) DidChangeWatchedFiles(ctx context.Context, params *protocol.DidChangeWatchedFilesParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	var request watchedFilesParams
 	if params != nil {
 		request.Changes = make([]watchedFileChange, 0, len(params.Changes))
@@ -177,12 +187,14 @@ func (s *server) DidChangeWatchedFiles(ctx context.Context, params *protocol.Did
 			request.Changes = append(request.Changes, watchedFileChange{URI: change.URI.String(), Type: int(change.Type)})
 		}
 	}
+
 	return s.didChangeWatchedFilesLocked(ctx, request)
 }
 
 func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocumentParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	var request documentParams
 	if params != nil {
 		request.TextDocument.URI = params.TextDocument.URI.String()
@@ -190,12 +202,14 @@ func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocume
 		request.TextDocument.Version = int(params.TextDocument.Version)
 	}
 	s.didOpenLocked(ctx, request)
+
 	return nil
 }
 
 func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDocumentParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	var request documentParams
 	if params != nil {
 		changes := make([]contentChange, 0, len(params.ContentChanges))
@@ -224,28 +238,33 @@ func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDo
 		request.ContentChanges = changes
 	}
 	s.didChangeLocked(ctx, request)
+
 	return nil
 }
 
 func (s *server) DidSave(ctx context.Context, params *protocol.DidSaveTextDocumentParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	uri := ""
 	if params != nil {
 		uri = params.TextDocument.URI.String()
 	}
 	s.didSaveLocked(ctx, uri)
+
 	return nil
 }
 
 func (s *server) DidClose(ctx context.Context, params *protocol.DidCloseTextDocumentParams) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	uri := ""
 	if params != nil {
 		uri = params.TextDocument.URI.String()
 	}
 	s.didCloseLocked(ctx, uri)
+
 	return nil
 }
 
@@ -266,22 +285,28 @@ func (s *server) initializeLocked(params *protocol.InitializeParams) *protocol.I
 	s.workspaceRoots = workspaceFolderPaths(workspaceFolders)
 	if len(s.workspaceRoots) == 0 {
 		rootURI := ""
+		//nolint:staticcheck // RootURI remains a compatibility fallback for clients without workspaceFolders.
 		if params.RootURI != nil {
+			//nolint:staticcheck // RootURI remains a compatibility fallback for clients without workspaceFolders.
 			rootURI = params.RootURI.String()
 		}
 		if root := documentPath(rootURI); root != "" {
 			s.workspaceRoots = []string{root}
-		} else if rootPath, ok := params.RootPath.Get(); ok && rootPath != "" {
-			if root, err := filepath.Abs(rootPath); err == nil {
-				s.workspaceRoots = []string{root}
+		} else {
+			//nolint:staticcheck // RootPath remains a compatibility fallback for clients without workspaceFolders or rootUri.
+			if rootPath, ok := params.RootPath.Get(); ok && rootPath != "" {
+				if root, err := filepath.Abs(rootPath); err == nil {
+					s.workspaceRoots = []string{root}
+				}
 			}
 		}
 	}
 	changeKind := protocol.TextDocumentSyncKindFull
+
 	return &protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
 			TextDocumentSync: &protocol.TextDocumentSyncOptions{
-				OpenClose: boolPointer(true),
+				OpenClose: new(true),
 				Change:    &changeKind,
 				Save:      protocol.Boolean(true),
 			},
@@ -290,15 +315,13 @@ func (s *server) initializeLocked(params *protocol.InitializeParams) *protocol.I
 			DefinitionProvider:         protocol.Boolean(true),
 			RenameProvider:             protocol.Boolean(true),
 			Workspace: &protocol.WorkspaceOptions{WorkspaceFolders: &protocol.WorkspaceFoldersServerCapabilities{
-				Supported:           boolPointer(true),
+				Supported:           new(true),
 				ChangeNotifications: protocol.Boolean(true),
 			}},
 		},
 		ServerInfo: protocol.ServerInfo{Name: "mcl", Version: protocol.NewOptional(mcl.ToolchainVersion)},
 	}
 }
-
-func boolPointer(value bool) *bool { return &value }
 
 func protocolWorkspaceEdit(edit *workspaceEdit) *protocol.WorkspaceEdit {
 	result := &protocol.WorkspaceEdit{}
@@ -311,15 +334,27 @@ func protocolWorkspaceEdit(edit *workspaceEdit) *protocol.WorkspaceEdit {
 		for index, edit := range edits {
 			converted[index] = protocol.TextEdit{
 				Range: protocol.Range{
-					Start: protocol.Position{Line: uint32(edit.Range.Start.Line), Character: uint32(edit.Range.Start.Character)},
-					End:   protocol.Position{Line: uint32(edit.Range.End.Line), Character: uint32(edit.Range.End.Character)},
+					Start: protocol.Position{Line: protocolPosition(edit.Range.Start.Line), Character: protocolPosition(edit.Range.Start.Character)},
+					End:   protocol.Position{Line: protocolPosition(edit.Range.End.Line), Character: protocolPosition(edit.Range.End.Character)},
 				},
 				NewText: edit.NewText,
 			}
 		}
 		result.Changes[uri.URI(documentURI)] = converted
 	}
+
 	return result
+}
+
+func protocolPosition(value int) uint32 {
+	if value < 0 {
+		return 0
+	}
+	if uint64(value) > uint64(^uint32(0)) {
+		return ^uint32(0)
+	}
+
+	return uint32(value)
 }
 
 func (s *server) didChangeWorkspaceFoldersLocked(params *protocol.DidChangeWorkspaceFoldersParams) {
@@ -362,6 +397,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params watched
 		changedURIs = append(changedURIs, uri)
 		if filepath.Base(path) == "mcl.toml" {
 			invalidateRenameIndex = true
+
 			continue
 		}
 		if filepath.Ext(path) != ".mcl" {
@@ -379,6 +415,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params watched
 	if len(changedURIs) > 0 {
 		s.scheduleDiagnosticsForChanges(context.WithoutCancel(ctx), changedURIs, s.diagnosticResults)
 	}
+
 	return nil
 }
 
@@ -409,6 +446,7 @@ func (s *server) didChangeLocked(ctx context.Context, params documentParams) {
 			s.documents[uri] = state
 		}
 		s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
+
 		return
 	}
 	updated, ok := applyContentChanges(state.Text, params.ContentChanges)
@@ -417,6 +455,7 @@ func (s *server) didChangeLocked(ctx context.Context, params documentParams) {
 		state.Diagnostics = nil
 		s.documents[uri] = state
 		s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
+
 		return
 	}
 	s.documents[uri] = documentState{Text: updated, Version: params.TextDocument.Version, Dependencies: state.Dependencies, Diagnostics: state.Diagnostics}

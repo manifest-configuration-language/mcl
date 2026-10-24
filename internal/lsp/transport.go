@@ -21,11 +21,13 @@ func (protocolCodec) Marshal(value any) ([]byte, error) {
 		if message == nil {
 			return []byte("null"), nil
 		}
+
 		return message, nil
 	case *jsonrpc2.RawMessage:
 		if message == nil || *message == nil {
 			return []byte("null"), nil
 		}
+
 		return *message, nil
 	default:
 		return protocol.Marshal(value)

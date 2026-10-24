@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"strings"
 	"sync"
 	"testing/fstest"
@@ -21,15 +22,18 @@ type projectFilesystem struct {
 	entrypoints int
 }
 
+//nolint:unused // Used by the js/wasm entry point, which golangci-lint does not analyze by default.
 type projectFilesystemView struct {
 	filesystem *projectFilesystem
 	excluded   string
 }
 
+//nolint:unused // Implements fs.FS for browser projects while excluding the active entrypoint.
 func (view projectFilesystemView) Open(name string) (fs.File, error) {
 	if name == view.excluded {
 		return nil, fs.ErrNotExist
 	}
+
 	return view.filesystem.Open(name)
 }
 
@@ -69,6 +73,7 @@ func (filesystem *projectFilesystem) WriteFileAtomic(name string, data []byte) e
 	return nil
 }
 
+//nolint:unused // Called by the js/wasm entry point, which golangci-lint does not analyze by default.
 func (filesystem *projectFilesystem) applyDelta(upserts map[string]wasmprotocol.FileInput, binaryFiles map[string][]byte, deletes []string, reset bool) error {
 	filesystem.mu.Lock()
 	defer filesystem.mu.Unlock()
@@ -80,9 +85,7 @@ func (filesystem *projectFilesystem) applyDelta(upserts map[string]wasmprotocol.
 		totalBytes = 0
 	} else {
 		copyOfFiles := make(fstest.MapFS, len(files)+len(upserts))
-		for filePath, file := range files {
-			copyOfFiles[filePath] = file
-		}
+		maps.Copy(copyOfFiles, files)
 		files = copyOfFiles
 	}
 
@@ -195,6 +198,7 @@ func newProjectFiles(source string, files map[string]wasmprotocol.FileInput, bin
 	}
 
 	project.totalBytes = totalBytes
+
 	return project, nil
 }
 

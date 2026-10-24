@@ -30,6 +30,11 @@ func SchemaFieldCompletions(path, source, placeholder string) []string {
 
 // SchemaFieldCompletionsWithErrorは型定義とSchema依存だけを解析し、候補または解析エラーを返します。
 func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string, error) {
+	return SchemaFieldCompletionsWithContext(context.Background(), path, source, placeholder)
+}
+
+// SchemaFieldCompletionsWithContextは呼び出し元のcontextを使ってSchemaフィールド候補を解析します。
+func SchemaFieldCompletionsWithContext(ctx context.Context, path, source, placeholder string) ([]string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -43,7 +48,7 @@ func SchemaFieldCompletionsWithError(path, source, placeholder string) ([]string
 		return nil, err
 	}
 	files := newOSProjectFilesystem(root)
-	dependencies, err := schemaCompletionDependencies(root, files)
+	dependencies, err := schemaCompletionDependenciesWithContext(ctx, root, files)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +118,11 @@ func schemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root 
 
 // SchemaTypeFieldsは型注釈とネストしたフィールド経路に対応するSchemaのプロパティ名を返します。
 func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]string, error) {
+	return SchemaTypeFieldsWithContext(context.Background(), path, source, annotation, fieldPath)
+}
+
+// SchemaTypeFieldsWithContextは呼び出し元のcontextを使ってSchemaプロパティ名を返します。
+func SchemaTypeFieldsWithContext(ctx context.Context, path, source, annotation string, fieldPath []string) ([]string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -126,7 +136,7 @@ func SchemaTypeFields(path, source, annotation string, fieldPath []string) ([]st
 		return nil, err
 	}
 	files := newOSProjectFilesystem(root)
-	dependencies, err := schemaCompletionDependencies(root, files)
+	dependencies, err := schemaCompletionDependenciesWithContext(ctx, root, files)
 	if err != nil {
 		return nil, err
 	}
@@ -226,11 +236,15 @@ func schemaCompletionProjectFS(projectRoot, entryPath string, projectFiles fs.FS
 }
 
 func schemaCompletionDependencies(root string, files *projectFilesystem) (*dependency.Lock, error) {
+	return schemaCompletionDependenciesWithContext(context.Background(), root, files)
+}
+
+func schemaCompletionDependenciesWithContext(ctx context.Context, root string, files *projectFilesystem) (*dependency.Lock, error) {
 	if files.osBacked {
-		return dependency.Open(context.Background(), root, false, dependencyToolchainIdentity())
+		return dependency.Open(ctx, root, false, dependencyToolchainIdentity())
 	}
 
-	return dependency.OpenWithFS(context.Background(), root, false, dependencyToolchainIdentity(), files.files)
+	return dependency.OpenWithFS(ctx, root, false, dependencyToolchainIdentity(), files.files)
 }
 
 func newSchemaCompletionLoader(root, modulePath, source string, files *projectFilesystem, dependencies *dependency.Lock) schemaAnalysisLoader {

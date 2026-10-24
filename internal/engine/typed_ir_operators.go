@@ -144,6 +144,7 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 		if !isStaticMapType(right, types) {
 			return false
 		}
+
 		return staticTypeCompatibility(left, ResolvedType{Name: typeString}, types).isAssignable()
 	}
 	if operator == typedOperatorCoalesce {
@@ -167,6 +168,7 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 	if isOrderedComparisonOperator(operator) {
 		leftScalar, leftIsScalar := typedScalarTypeFromTypeExpr(leftResolved)
 		rightScalar, rightIsScalar := typedScalarTypeFromTypeExpr(rightResolved)
+
 		return staticTypeCompatibility(ResolvedType{Name: typeBool}, inferred, types).isAssignable() && leftIsScalar && rightIsScalar && leftScalar.kind == rightScalar.kind && isOrderedPrimitiveType(leftScalar.kind)
 	}
 	if operator == typedOperatorEqual || operator == typedOperatorNotEqual {
@@ -178,6 +180,7 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 	if !isArithmeticOperator(operator) {
 		return false
 	}
+
 	leftScalar, leftIsScalar := typedScalarTypeFromTypeExpr(leftResolved)
 	rightScalar, rightIsScalar := typedScalarTypeFromTypeExpr(rightResolved)
 	if !leftIsScalar || !rightIsScalar || leftScalar.kind != rightScalar.kind {
