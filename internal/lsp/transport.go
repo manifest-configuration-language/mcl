@@ -27,6 +27,7 @@ func newBoundedStream(input io.Reader, output io.Writer) *boundedStream {
 	if closer, ok := output.(io.Closer); ok {
 		stream.closers = append(stream.closers, closer)
 	}
+
 	return stream
 }
 
@@ -39,6 +40,7 @@ func (s *boundedStream) Read(ctx context.Context) (jsonrpc2.Message, int64, erro
 		return nil, 0, err
 	}
 	message, err := jsonrpc2.DecodeMessage(body)
+
 	return message, int64(frameSize), err
 }
 
@@ -55,6 +57,7 @@ func readLSPFrame(reader *bufio.Reader) ([]byte, int, error) {
 			if errors.Is(err, bufio.ErrBufferFull) {
 				return nil, 0, errors.New("header line exceeds maximum size")
 			}
+
 			return nil, 0, err
 		}
 		headerSize += len(line)
@@ -83,11 +86,13 @@ func readLSPFrame(reader *bufio.Reader) ([]byte, int, error) {
 	if _, err := io.ReadFull(reader, body); err != nil {
 		return nil, 0, err
 	}
+
 	return body, headerSize + contentLength, nil
 }
 
 func (s *server) readMessage() ([]byte, error) {
 	body, _, err := readLSPFrame(s.reader)
+
 	return body, err
 }
 
@@ -111,6 +116,7 @@ func (s *boundedStream) Write(ctx context.Context, message jsonrpc2.Message) (in
 	if err := writeFull(s.output, body); err != nil {
 		return 0, err
 	}
+
 	return int64(len(frame) + len(body)), nil
 }
 
@@ -125,6 +131,7 @@ func writeFull(writer io.Writer, data []byte) error {
 		}
 		data = data[n:]
 	}
+
 	return nil
 }
 
@@ -135,5 +142,6 @@ func (s *boundedStream) Close() error {
 			firstErr = err
 		}
 	}
+
 	return firstErr
 }

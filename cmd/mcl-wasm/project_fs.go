@@ -113,5 +113,6 @@ func validProjectPath(value string) bool {
 	if len(value) >= 2 && ((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) && value[1] == ':' {
 		return false
 	}
+
 	return len(strings.Split(value, "/")) <= wasmprotocol.MaxProjectPathDepth
 }

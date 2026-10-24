@@ -61,6 +61,7 @@ func Run(input io.Reader, output io.Writer) error {
 	}
 	s.callback = func(method string, params any) (*jrpc2.Response, error) {
 		_, err := s.rpc.Call(rpcContext, method, params, nil)
+
 		return nil, err
 	}
 	s.rpc.Go(rpcContext, func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
@@ -71,9 +72,11 @@ func Run(input io.Reader, output io.Writer) error {
 				case s.fatalErrors <- err:
 				default:
 				}
+
 				return nil, jsonrpc2.NewError(jsonrpc2.InternalError, "Internal error")
 			}
 		}
+
 		return result, err
 	})
 	stopRPC := func() error {

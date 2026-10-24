@@ -16,7 +16,10 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
-const maxDepth = 128
+const (
+	maxDepth  = 128
+	kindNever = "Never"
+)
 
 var builtinValidators sync.Map //nolint:gochecknoglobals
 
@@ -372,13 +375,13 @@ func union(left, right Type) Type {
 		if option.Kind == "Any" {
 			return Type{Kind: "Any"}
 		}
-		if option.Kind != "Never" {
+		if option.Kind != kindNever {
 			filtered = append(filtered, option)
 		}
 	}
 	switch len(filtered) {
 	case 0:
-		return Type{Kind: "Never"}
+		return Type{Kind: kindNever}
 	case 1:
 		return filtered[0]
 	default:
@@ -388,7 +391,7 @@ func union(left, right Type) Type {
 
 func intersect(left, right Type) Type {
 	if hasNoValues(left) || hasNoValues(right) {
-		return Type{Kind: "Never"}
+		return Type{Kind: kindNever}
 	}
 	if left.Kind == "Any" {
 		return right
@@ -400,7 +403,7 @@ func intersect(left, right Type) Type {
 		options := make([]Type, 0, len(left.Options))
 		for _, option := range left.Options {
 			intersection := intersect(option, right)
-			if intersection.Kind != "Never" {
+			if intersection.Kind != kindNever {
 				options = append(options, intersection)
 			}
 		}
@@ -411,13 +414,13 @@ func intersect(left, right Type) Type {
 			return Type{Options: options}
 		}
 
-		return Type{Kind: "Never"}
+		return Type{Kind: kindNever}
 	}
 	if len(right.Options) > 0 {
 		return intersect(right, left)
 	}
 	if left.Kind != right.Kind {
-		return Type{Kind: "Never"}
+		return Type{Kind: kindNever}
 	}
 	if left.Kind == "List" {
 		if left.Element == nil {
@@ -427,6 +430,7 @@ func intersect(left, right Type) Type {
 			return left
 		}
 		element := intersect(*left.Element, *right.Element)
+
 		return Type{Kind: "List", Element: &element}
 	}
 	if left.Kind != "" {
@@ -440,8 +444,8 @@ func intersect(left, right Type) Type {
 		if existing, exists := fields[field.Name]; exists {
 			existing.Type = intersect(existing.Type, field.Type)
 			existing.Optional = existing.Optional && field.Optional
-			if existing.Type.Kind == "Never" && !existing.Optional {
-				return Type{Kind: "Never"}
+			if existing.Type.Kind == kindNever && !existing.Optional {
+				return Type{Kind: kindNever}
 			}
 			fields[field.Name] = existing
 		} else {
@@ -467,7 +471,7 @@ func intersect(left, right Type) Type {
 }
 
 func hasNoValues(schema Type) bool {
-	if schema.Kind == "Never" {
+	if schema.Kind == kindNever {
 		return true
 	}
 	if schema.Kind != "" {
