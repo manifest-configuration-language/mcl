@@ -45,19 +45,14 @@ func complete(source string, position Position, projectRoot, entrypoint string, 
 		{Label: "true", Kind: 14, Detail: "真偽値"},
 		{Label: "false", Kind: 14, Detail: "真偽値"},
 		{Label: "null", Kind: 14, Detail: "null値"},
-		{Label: "len", Kind: 3, Detail: "標準関数", Documentation: "文字列、リスト、マップの長さを返します。"},
-		{Label: "clone", Kind: 3, Detail: "標準関数", Documentation: "値のディープコピーを返します。"},
-		{Label: "contains", Kind: 3, Detail: "標準関数", Documentation: "リスト内の値、または文字列内の部分文字列を検索します。"},
-		{Label: "concat", Kind: 3, Detail: "標準関数", Documentation: "2つのリストを連結します。"},
-		{Label: "map", Kind: 3, Detail: "標準関数", Documentation: "リストの各要素に関数を適用します。"},
-		{Label: "filter", Kind: 3, Detail: "標準関数", Documentation: "条件に一致する要素だけをリストに残します。"},
-		{Label: "exactlyOne", Kind: 3, Detail: "標準関数", Documentation: "条件に一致する要素が1つであることを確認して返します。"},
-		{Label: "fold", Kind: 3, Detail: "標準関数", Documentation: "初期値と関数を使ってリストの要素を1つの値にまとめます。"},
-		{Label: "union", Kind: 3, Detail: "標準関数", Documentation: "重複を除きながら2つのリストを結合します。"},
-		{Label: "keyOf", Kind: 3, Detail: "標準関数", Documentation: "マップに存在する指定キーを返します。"},
-		{Label: "replace", Kind: 3, Detail: "標準関数", Documentation: "マップのマージ時に値を置き換える指定をします。"},
-		{Label: "replaceAt", Kind: 3, Detail: "標準関数", Documentation: "リストの指定位置にある要素を置き換えます。"},
-		{Label: "mergeByKey", Kind: 3, Detail: "標準関数", Documentation: "指定したキーを使ってマップのリストをマージします。"},
+	}
+	for _, function := range engine.StandardLibraryFunctions() {
+		if function.Module != "std:core" && function.Module != "std:list" && function.Module != "std:map" {
+			continue
+		}
+		items = append(items, CompletionItem{
+			Label: function.Name, Kind: 3, Detail: "標準関数", Documentation: function.Documentation,
+		})
 	}
 	lines := strings.Split(source, "\n")
 	if position.Line < 0 || position.Line >= len(lines) {

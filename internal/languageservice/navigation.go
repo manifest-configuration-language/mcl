@@ -1,10 +1,12 @@
 package languageservice
 
 import (
+	"fmt"
 	"io/fs"
 	"path"
 	"strings"
 
+	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
@@ -49,7 +51,7 @@ func DefinitionForProjectFS(params NavigationParams, projectFiles fs.FS) *Defini
 func HoverForProjectFS(params NavigationParams, projectFiles fs.FS) *Hover {
 	resolved, ok := navigationTarget(params, projectFiles)
 	if !ok {
-		return nil
+		return standardLibraryHover(params, projectFiles)
 	}
 	contents := ""
 	if resolved.node != nil {
@@ -63,6 +65,67 @@ func HoverForProjectFS(params NavigationParams, projectFiles fs.FS) *Hover {
 	}
 
 	return &Hover{Contents: contents, Range: SourceRangeAt(resolved.source, resolved.Span)}
+}
+
+func standardLibraryHover(params NavigationParams, projectFiles fs.FS) *Hover {
+	if projectFiles == nil || params.Entrypoint == "" {
+		return nil
+	}
+	index, err := AnalyzeSource(params.Source)
+	if err != nil {
+		return nil
+	}
+	offset, err := sourceindex.New(params.Source).OffsetAt(sourceindex.Position{
+		Line: params.Line, Character: params.Character,
+	})
+	if err != nil {
+		return nil
+	}
+
+	for _, reference := range index.Qualified {
+		if !spanContains(reference.Span, offset) || index.LocalAt(reference.Alias, reference.Span.Start).Found {
+			continue
+		}
+		for _, node := range index.Module.Nodes {
+			declaration, ok := node.(*syntax.ImportDeclaration)
+			if !ok || declaration.Name != reference.Alias || !strings.HasPrefix(declaration.ModulePath, "std:") {
+				continue
+			}
+			function, found := standardLibraryFunction(declaration.ModulePath, reference.Member)
+			if !found {
+				continue
+			}
+
+			return &Hover{
+				Contents: standardLibrarySignature(reference.Alias+"."+function.Name, function) + "\n" + function.Documentation,
+				Range:    SourceRangeAt(params.Source, reference.Span),
+			}
+		}
+	}
+
+	for _, reference := range index.References {
+		if !spanContains(reference.Span, offset) {
+			continue
+		}
+		function, found := standardLibraryFunction("std:core", reference.Name)
+		if !found {
+			continue
+		}
+		return &Hover{
+			Contents: standardLibrarySignature(function.Name, function) + "\n" + function.Documentation,
+			Range:    SourceRangeAt(params.Source, reference.Span),
+		}
+	}
+
+	return nil
+}
+
+func standardLibraryFunction(module, name string) (engine.StandardLibraryFunction, bool) {
+	return engine.LookupStandardLibraryFunction(module, name)
+}
+
+func standardLibrarySignature(name string, function engine.StandardLibraryFunction) string {
+	return fmt.Sprintf("%s(%s)", name, strings.Join(function.Parameters, ", "))
 }
 
 type navigationResult struct {

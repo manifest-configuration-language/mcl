@@ -14,6 +14,7 @@ type builtin struct {
 	module          string
 	exportName      string
 	parameters      []string
+	documentation   string
 	inference       builtinInference
 	evaluation      builtinEvaluation
 	staticInference func([]Expr, []ResolvedType, []bool, map[string]ResolvedType) (ResolvedType, bool, error)
@@ -23,21 +24,38 @@ type builtin struct {
 
 // StandardLibraryFunction describes the exported names registered for a standard-library function.
 type StandardLibraryFunction struct {
-	Module     string
-	Name       string
-	Parameters []string
+	Module        string
+	Name          string
+	Parameters    []string
+	Documentation string
 }
 
-// StandardLibraryFunctions returns the exported standard-library function names and parameters.
+// StandardLibraryFunctions returns metadata for exported standard-library functions.
 func StandardLibraryFunctions() []StandardLibraryFunction {
 	functions := make([]StandardLibraryFunction, 0, len(builtinRegistry))
 	for _, item := range builtinRegistry {
 		functions = append(functions, StandardLibraryFunction{
-			Module: item.module, Name: item.exportName, Parameters: append([]string(nil), item.parameters...),
+			Module: item.module, Name: item.exportName, Parameters: append([]string(nil), item.parameters...), Documentation: item.documentation,
 		})
 	}
 
 	return functions
+}
+
+// LookupStandardLibraryFunction returns metadata for an exported module function.
+func LookupStandardLibraryFunction(module, name string) (StandardLibraryFunction, bool) {
+	for _, item := range builtinRegistry {
+		if item.module == module && item.exportName == name {
+			return StandardLibraryFunction{
+				Module:        item.module,
+				Name:          item.exportName,
+				Parameters:    append([]string(nil), item.parameters...),
+				Documentation: item.documentation,
+			}, true
+		}
+	}
+
+	return StandardLibraryFunction{}, false
 }
 
 const stdlibListModule = "std:list"
@@ -67,23 +85,23 @@ const (
 )
 
 var builtinRegistry = []builtin{
-	{name: fnLen, module: "std:core", exportName: fnLen, parameters: []string{paramValue}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLenBuiltin, pureEvaluation: evaluateLenBuiltin},
-	{name: fnReplace, module: "std:core", exportName: fnReplace, parameters: []string{paramValue}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceBuiltin, pureEvaluation: evaluateReplaceBuiltin},
-	{name: fnClone, module: "std:core", exportName: fnClone, parameters: []string{paramValue}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCloneBuiltin, pureEvaluation: evaluateCloneBuiltin, deferred: builtinDeferredEvaluationClone},
-	{name: fnContains, module: stdlibListModule, exportName: fnContains, parameters: []string{paramValues, paramValue}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContainsBuiltin, pureEvaluation: evaluateContainsBuiltin},
-	{name: fnConcat, module: stdlibListModule, exportName: fnConcat, parameters: []string{"first", "second"}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticConcatBuiltin, pureEvaluation: evaluateConcatBuiltin},
-	{name: fnUnion, module: stdlibListModule, exportName: fnUnion, parameters: []string{"first", "second"}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticUnionBuiltin, pureEvaluation: evaluateUnionBuiltin},
-	{name: fnReplaceAt, module: stdlibListModule, exportName: fnReplaceAt, parameters: []string{paramValues, paramIndex, paramValue}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceAtBuiltin, pureEvaluation: evaluateReplaceAtBuiltin},
-	{name: fnMergeByKey, module: stdlibListModule, exportName: fnMergeByKey, parameters: []string{"existing", "overrides", paramKey}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticMergeByKeyBuiltin, pureEvaluation: evaluateMergeByKeyBuiltin},
-	{name: fnMap, module: stdlibListModule, exportName: fnMap, parameters: []string{paramValues, "transform"}, inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
-	{name: fnFilter, module: stdlibListModule, exportName: fnFilter, parameters: []string{paramValues, "predicate"}, inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
-	{name: fnExactlyOne, module: stdlibListModule, exportName: fnExactlyOne, parameters: []string{paramValues, "predicate"}, inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
-	{name: fnFold, module: stdlibListModule, exportName: fnFold, parameters: []string{paramValues, "initial", "combine"}, inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
-	{name: fnKeyOf, module: "std:map", exportName: fnKeyOf, parameters: []string{"mapping", paramKey}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticKeyOfBuiltin, pureEvaluation: evaluateKeyOfBuiltin},
-	{name: fnKustomizeBuild, module: "std:kustomize", exportName: "build", parameters: []string{paramSource, "revision", "directory"}, inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
-	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
-	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
-	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
+	{name: fnLen, module: "std:core", exportName: fnLen, parameters: []string{paramValue}, documentation: "文字列、リスト、マップの長さを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLenBuiltin, pureEvaluation: evaluateLenBuiltin},
+	{name: fnReplace, module: "std:core", exportName: fnReplace, parameters: []string{paramValue}, documentation: "マップのマージ時に値を置き換える指定をします。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceBuiltin, pureEvaluation: evaluateReplaceBuiltin},
+	{name: fnClone, module: "std:core", exportName: fnClone, parameters: []string{paramValue}, documentation: "値のディープコピーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCloneBuiltin, pureEvaluation: evaluateCloneBuiltin, deferred: builtinDeferredEvaluationClone},
+	{name: fnContains, module: stdlibListModule, exportName: fnContains, parameters: []string{paramValues, paramValue}, documentation: "リスト内の値、または文字列内の部分文字列を検索します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContainsBuiltin, pureEvaluation: evaluateContainsBuiltin},
+	{name: fnConcat, module: stdlibListModule, exportName: fnConcat, parameters: []string{"first", "second"}, documentation: "2つのリストを連結します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticConcatBuiltin, pureEvaluation: evaluateConcatBuiltin},
+	{name: fnUnion, module: stdlibListModule, exportName: fnUnion, parameters: []string{"first", "second"}, documentation: "重複を除きながら2つのリストを結合します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticUnionBuiltin, pureEvaluation: evaluateUnionBuiltin},
+	{name: fnReplaceAt, module: stdlibListModule, exportName: fnReplaceAt, parameters: []string{paramValues, paramIndex, paramValue}, documentation: "リストの指定位置にある要素を置き換えます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceAtBuiltin, pureEvaluation: evaluateReplaceAtBuiltin},
+	{name: fnMergeByKey, module: stdlibListModule, exportName: fnMergeByKey, parameters: []string{"existing", "overrides", paramKey}, documentation: "指定したキーを使ってマップのリストをマージします。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticMergeByKeyBuiltin, pureEvaluation: evaluateMergeByKeyBuiltin},
+	{name: fnMap, module: stdlibListModule, exportName: fnMap, parameters: []string{paramValues, "transform"}, documentation: "リストの各要素に関数を適用します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
+	{name: fnFilter, module: stdlibListModule, exportName: fnFilter, parameters: []string{paramValues, "predicate"}, documentation: "条件に一致する要素だけをリストに残します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
+	{name: fnExactlyOne, module: stdlibListModule, exportName: fnExactlyOne, parameters: []string{paramValues, "predicate"}, documentation: "条件に一致する要素が1つであることを確認して返します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
+	{name: fnFold, module: stdlibListModule, exportName: fnFold, parameters: []string{paramValues, "initial", "combine"}, documentation: "初期値と関数を使ってリストの要素を1つの値にまとめます。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
+	{name: fnKeyOf, module: "std:map", exportName: fnKeyOf, parameters: []string{"mapping", paramKey}, documentation: "マップに指定したキーが存在することを確認し、そのキーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticKeyOfBuiltin, pureEvaluation: evaluateKeyOfBuiltin},
+	{name: fnKustomizeBuild, module: "std:kustomize", exportName: "build", parameters: []string{paramSource, "revision", "directory"}, documentation: "指定したKustomizeディレクトリをビルドします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
+	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, documentation: "指定したソースからManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
+	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, documentation: "指定したHelmチャートをレンダリングします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
+	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, documentation: "値にLifecycleイベントを関連付けます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
 }
 
 var standardFunctions = func() map[string]struct{} {
