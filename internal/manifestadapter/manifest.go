@@ -3,12 +3,12 @@ package manifestadapter
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
 )
@@ -115,12 +115,12 @@ func readLimitedSourceFS(files fs.FS, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maxManifestBytes+1))
+	data, exceeded, readErr := content.ReadAllLimited(file, maxManifestBytes)
 	closeErr := file.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > maxManifestBytes {
+	if exceeded {
 		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", name, maxManifestBytes)
 	}
 

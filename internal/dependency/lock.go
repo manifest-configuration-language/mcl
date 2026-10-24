@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -485,11 +484,11 @@ func fetchRemote(ctx context.Context, source, category string) ([]byte, error) {
 	if category == "chart" {
 		maximumSize = maxRemoteChartArchiveSize
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maximumSize+1))
+	data, exceeded, err := contentutil.ReadAllLimited(response.Body, maximumSize)
 	if err != nil {
 		return nil, fmt.Errorf("read Manifest response: %w", err)
 	}
-	if int64(len(data)) > maximumSize {
+	if exceeded {
 		return nil, fmt.Errorf("%s response exceeds %d bytes", category, maximumSize)
 	}
 

@@ -331,11 +331,11 @@ func writeGitTreeToFS(archive []byte, root string, destination filesys.FileSyste
 			return nil, fmt.Errorf("cached Kustomize Git archive repeats file %q", name)
 		}
 		seenFiles[name] = true
-		data, err := io.ReadAll(io.LimitReader(reader, header.Size+1))
+		data, exceeded, err := content.ReadAllLimited(reader, header.Size)
 		if err != nil {
 			return nil, fmt.Errorf("read cached Kustomize file %q: %w", name, err)
 		}
-		if int64(len(data)) != header.Size {
+		if exceeded || int64(len(data)) != header.Size {
 			return nil, fmt.Errorf("read cached Kustomize file %q: archive entry length does not match its header", name)
 		}
 		target := filepath.Join(root, filepath.FromSlash(name))

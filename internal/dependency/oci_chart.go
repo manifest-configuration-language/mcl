@@ -188,11 +188,11 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 
 func readOCIContent(reader io.ReadCloser, maximum int64, label string) ([]byte, error) {
 	defer reader.Close()
-	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	data, exceeded, err := content.ReadAllLimited(reader, maximum)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", label, err)
 	}
-	if int64(len(data)) > maximum {
+	if exceeded {
 		return nil, fmt.Errorf("%s exceeds %d bytes", label, maximum)
 	}
 

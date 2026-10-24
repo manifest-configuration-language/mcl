@@ -3,7 +3,6 @@ package dependency
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -138,12 +137,12 @@ func (filesystem *rootFilesystem) readLimitedFile(name string, maximumSize int64
 	if err != nil {
 		return nil, err
 	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maximumSize+1))
+	data, exceeded, readErr := contentutil.ReadAllLimited(file, maximumSize)
 	closeErr := file.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > maximumSize {
+	if exceeded {
 		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", name, maximumSize)
 	}
 
