@@ -21,6 +21,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
+	"go.lsp.dev/protocol"
 )
 
 const renamedTypeName = "Renamed"
@@ -31,11 +32,23 @@ const (
 	exitRequest       = `{"jsonrpc":"2.0","method":"exit"}`
 )
 
-func handleForTest(s *server, method string, params jsontext.Value, diagnostics chan<- diagnosticResult) error {
+func didChangeForTest(ctx context.Context, s *server, params []byte, diagnostics chan<- diagnosticResult) error {
 	s.diagnosticResults = diagnostics
-	_, err := s.handle(method, params, true, context.Background())
+	var request protocol.DidChangeTextDocumentParams
+	if err := json.Unmarshal(params, &request); err != nil {
+		return err
+	}
 
-	return err
+	return s.DidChange(ctx, &request)
+}
+
+func watchedFilesForTest(ctx context.Context, s *server, params []byte) error {
+	var request protocol.DidChangeWatchedFilesParams
+	if err := json.Unmarshal(params, &request); err != nil {
+		return err
+	}
+
+	return s.DidChangeWatchedFiles(ctx, &request)
 }
 
 func TestRunPublishesDiagnosticsForOpenDocument(t *testing.T) {
@@ -264,21 +277,21 @@ func TestDidChangeRejectsNonIncreasingVersionsAndResynchronizesFullText(t *testi
 	documents := map[string]documentState{"file:///main.mcl": {Text: "old", Version: 4}}
 	s := server{documents: documents}
 	params := `{"textDocument":{"uri":"file:///main.mcl","version":4},"contentChanges":[{"text":"duplicate"}]}`
-	if err := handleForTest(&s, "textDocument/didChange", jsontext.Value(params), make(chan diagnosticResult, 1)); err != nil {
+	if err := didChangeForTest(t.Context(), &s, []byte(params), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.documents["file:///main.mcl"].Text; got != "old" {
 		t.Fatalf("duplicate version changed document to %q", got)
 	}
 	params = `{"textDocument":{"uri":"file:///main.mcl","version":5},"contentChanges":[{"range":{"start":{"line":9,"character":0},"end":{"line":9,"character":0}},"text":"bad"}]}`
-	if err := handleForTest(&s, "textDocument/didChange", jsontext.Value(params), make(chan diagnosticResult, 1)); err != nil {
+	if err := didChangeForTest(t.Context(), &s, []byte(params), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if !s.documents["file:///main.mcl"].SyncLost {
 		t.Fatal("invalid range did not mark document synchronization as lost")
 	}
 	params = `{"textDocument":{"uri":"file:///main.mcl","version":6},"contentChanges":[{"text":"resynchronized"}]}`
-	if err := handleForTest(&s, "textDocument/didChange", jsontext.Value(params), make(chan diagnosticResult, 1)); err != nil {
+	if err := didChangeForTest(t.Context(), &s, []byte(params), make(chan diagnosticResult, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if state := s.documents["file:///main.mcl"]; state.Text != "resynchronized" || state.SyncLost {
@@ -560,7 +573,8 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 
 		return nil
 	}
-	if err := handleForTest(&s, "initialized", jsontext.Value(""), make(chan diagnosticResult, 1)); err != nil {
+	s.diagnosticResults = make(chan diagnosticResult, 1)
+	if err := s.Initialized(t.Context(), &protocol.InitializedParams{}); err != nil {
 		t.Fatal(err)
 	}
 	if !s.watchRegistrationPending || s.watchRegistered {
@@ -578,8 +592,8 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	importerURI := (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(importer)}).String()
-	params := jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":2}]}", importerURI))
-	if err := handleForTest(&s, workspaceWatchedFilesMethod, params, make(chan diagnosticResult, 1)); err != nil {
+	params := fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":2}]}", importerURI)
+	if err := watchedFilesForTest(t.Context(), &s, params); err != nil {
 		t.Fatal(err)
 	}
 	dependent, err := index.SourcesFromIndex(target, []string{root}, nil)
@@ -590,8 +604,8 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 		t.Fatalf("watched update source = %q, want %q", got, importSource)
 	}
 	markerURI := (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(filepath.Join(root, "mcl.toml"))}).String()
-	markerParams := jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":2}]}", markerURI))
-	if err := handleForTest(&s, workspaceWatchedFilesMethod, markerParams, make(chan diagnosticResult, 1)); err != nil {
+	markerParams := fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":2}]}", markerURI)
+	if err := watchedFilesForTest(t.Context(), &s, markerParams); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := index.SourcesFromIndex(target, []string{root}, nil); err != nil {
@@ -611,8 +625,8 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	innerURI := (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(innerPath)}).String()
-	innerParams := jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":1}]}", innerURI))
-	if err := handleForTest(&s, workspaceWatchedFilesMethod, innerParams, make(chan diagnosticResult, 1)); err != nil {
+	innerParams := fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":1}]}", innerURI)
+	if err := watchedFilesForTest(t.Context(), &s, innerParams); err != nil {
 		t.Fatal(err)
 	}
 	dependent, err = index.SourcesFromIndex(target, []string{root}, nil)
@@ -626,8 +640,8 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	markerURI = (&url.URL{Scheme: uriSchemeFile, Path: filepath.ToSlash(filepath.Join(nestedRoot, "mcl.toml"))}).String()
-	markerParams = jsontext.Value(fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":1}]}", markerURI))
-	if err := handleForTest(&s, workspaceWatchedFilesMethod, markerParams, make(chan diagnosticResult, 1)); err != nil {
+	markerParams = fmt.Appendf(nil, "{\"changes\":[{\"uri\":%q,\"type\":1}]}", markerURI)
+	if err := watchedFilesForTest(t.Context(), &s, markerParams); err != nil {
 		t.Fatal(err)
 	}
 	dependent, err = index.SourcesFromIndex(target, []string{root}, nil)

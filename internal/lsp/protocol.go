@@ -2,8 +2,6 @@ package lsp
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"path/filepath"
 	"slices"
 
@@ -32,10 +30,7 @@ const (
 	watchRegistrationID         = "mcl-didChangeWatchedFiles"
 )
 
-type initializeParams = protocol.InitializeParams
-
 type workspaceFolder = protocol.WorkspaceFolder
-type workspaceFolderChange = protocol.DidChangeWorkspaceFoldersParams
 
 type watchedFileChange struct {
 	URI  string `json:"uri"`
@@ -50,33 +45,6 @@ type formattingParams struct {
 	TextDocument struct {
 		URI string `json:"uri"`
 	} `json:"textDocument"`
-}
-
-func (s *server) handle(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
-	if isReadOnlyDocumentRequest(method) {
-		s.mu.Lock()
-		documents := make(map[string]documentState, len(s.documents))
-		for uri, state := range s.documents {
-			documents[uri] = state
-		}
-		s.mu.Unlock()
-
-		return (&server{documents: documents}).handleLocked(method, rawParams, notification, ctx)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.handleLocked(method, rawParams, notification, ctx)
-}
-
-func isReadOnlyDocumentRequest(method string) bool {
-	switch method {
-	case "textDocument/completion", "textDocument/formatting", "textDocument/definition":
-		return true
-	default:
-		return false
-	}
 }
 
 func (s *server) dispatchReadOnly(result any, handler func(*server) (any, error)) error {
@@ -241,7 +209,10 @@ func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDo
 			case *protocol.TextDocumentContentChangePartial:
 				if change != nil {
 					converted.Text = change.Text
-					converted.Range = &textRange{}
+					converted.Range = &textRange{
+						Start: location{Line: int(change.Range.Start.Line), Character: int(change.Range.Start.Character)},
+						End:   location{Line: int(change.Range.End.Line), Character: int(change.Range.End.Character)},
+					}
 				}
 			default:
 				converted.Range = &textRange{}
@@ -468,124 +439,6 @@ func (s *server) requestExit() {
 	}
 }
 
-func (s *server) handleLocked(method string, rawParams jsontext.Value, notification bool, ctx context.Context) (any, error) {
-	switch method {
-	case "initialize":
-		var params initializeParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		return s.initializeLocked(&params), nil
-	case "textDocument/completion":
-		var params completionParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		//nolint:contextcheck // The engine completion APIs do not accept a context.
-		items := s.completions(params)
-		if state, exists := s.documents[params.TextDocument.URI]; exists && state.SyncLost {
-			items = []completionItem{}
-		}
-
-		return map[string]any{"isIncomplete": false, "items": items}, nil
-	case "textDocument/formatting":
-		var params formattingParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-
-		result := s.formatDocument(params)
-		if state, exists := s.documents[params.TextDocument.URI]; exists && state.SyncLost {
-			result = []textEdit{}
-		}
-
-		return result, nil
-	case "textDocument/definition":
-		var params definitionParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-
-		result := s.definition(params)
-		if state, exists := s.documents[params.TextDocument.URI]; exists && state.SyncLost {
-			result = nil
-		}
-
-		return result, nil
-	case "textDocument/rename":
-		var params renameParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-
-		//nolint:contextcheck // Schema completion APIs used by rename do not accept a context.
-		result := s.rename(params)
-		if state, exists := s.documents[params.TextDocument.URI]; exists && state.SyncLost {
-			result = nil
-		}
-
-		return result, nil
-	case "workspace/didChangeWorkspaceFolders":
-		var params workspaceFolderChange
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		s.didChangeWorkspaceFoldersLocked(&params)
-		return nil, nil
-	case "workspace/didChangeWatchedFiles":
-		var params watchedFilesParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		if err := s.didChangeWatchedFilesLocked(ctx, params); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	case "shutdown":
-		return nil, nil
-	case "textDocument/didOpen":
-		var params documentParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		s.didOpenLocked(ctx, params)
-		return nil, nil
-	case "textDocument/didChange":
-		var params documentParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		s.didChangeLocked(ctx, params)
-		return nil, nil
-	case "textDocument/didSave":
-		var params documentParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		s.didSaveLocked(ctx, params.TextDocument.URI)
-		return nil, nil
-	case "textDocument/didClose":
-		var params documentParams
-		if err := json.Unmarshal(rawParams, &params); err != nil {
-			return nil, invalidParamsError()
-		}
-		s.didCloseLocked(ctx, params.TextDocument.URI)
-		return nil, nil
-	case "initialized":
-		s.registerMCLFileWatcher()
-		return nil, nil
-	case "exit":
-		s.requestExit()
-		return nil, nil
-	default:
-		if notification {
-			return nil, nil
-		}
-
-		return nil, jsonrpc2.NewError(jsonrpc2.MethodNotFound, "Method not found")
-	}
-}
-
 func (s *server) registerMCLFileWatcher() {
 	if !s.canWatchMCLFiles || s.watchRegistrationPending || s.watchRegistered {
 		return
@@ -611,8 +464,4 @@ func (s *server) registerMCLFileWatcher() {
 		case <-s.rpcDone:
 		}
 	}()
-}
-
-func invalidParamsError() error {
-	return jsonrpc2.NewError(jsonrpc2.InvalidParams, "Invalid params")
 }

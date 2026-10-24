@@ -14,7 +14,6 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/netpolicy"
-	digest "github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -24,15 +23,6 @@ const (
 	helmChartLayerMediaType       = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 	helmLegacyChartLayerMediaType = "application/tar+gzip"
 )
-
-type ociManifest struct {
-	SchemaVersion int `json:"schemaVersion"`
-	Layers        []struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int64  `json:"size"`
-	} `json:"layers"`
-}
 
 type httpsOnlyTransport struct {
 	base http.RoundTripper
@@ -131,18 +121,14 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 	if "sha256:"+content.SHA256(manifestData) != string(manifestDescriptor.Digest) {
 		return nil, empty, errors.New("OCI Helm Chart manifest digest does not match the registry descriptor")
 	}
-	var manifest ociManifest
+	var manifest v1.Manifest
 	if err := json.Unmarshal(manifestData, &manifest, json.RejectUnknownMembers(false)); err != nil {
 		return nil, empty, fmt.Errorf("decode OCI Helm Chart manifest: %w", err)
 	}
 	if manifest.SchemaVersion != 2 {
 		return nil, empty, fmt.Errorf("unsupported OCI Helm Chart manifest schema version %d", manifest.SchemaVersion)
 	}
-	var layer *struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-		Size      int64  `json:"size"`
-	}
+	var layer *v1.Descriptor
 	for index := range manifest.Layers {
 		candidate := &manifest.Layers[index]
 		if candidate.MediaType == helmChartLayerMediaType || candidate.MediaType == helmLegacyChartLayerMediaType {
@@ -155,14 +141,13 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 	if layer == nil {
 		return nil, empty, errors.New("OCI manifest does not contain a Helm Chart content layer")
 	}
-	if !validOCIDigest(layer.Digest) {
+	if !validOCIDigest(string(layer.Digest)) {
 		return nil, empty, fmt.Errorf("OCI Helm Chart layer has unsupported digest %q", layer.Digest)
 	}
 	if layer.Size < 0 || layer.Size > maxRemoteChartArchiveSize {
 		return nil, empty, fmt.Errorf("OCI Helm Chart layer exceeds %d bytes", maxRemoteChartArchiveSize)
 	}
-	layerDescriptor := v1.Descriptor{MediaType: layer.MediaType, Digest: digest.Digest(layer.Digest), Size: layer.Size}
-	layerReader, err := repository.Fetch(ctx, layerDescriptor)
+	layerReader, err := repository.Fetch(ctx, *layer)
 	if err != nil {
 		return nil, empty, fmt.Errorf("fetch OCI Helm Chart content layer: %w", err)
 	}
@@ -173,14 +158,14 @@ func fetchOCIChart(ctx context.Context, source, version string) ([]byte, ociChar
 	if int64(len(archive)) != layer.Size {
 		return nil, empty, errors.New("OCI Helm Chart layer size does not match its descriptor")
 	}
-	if "sha256:"+content.SHA256(archive) != layer.Digest {
+	if "sha256:"+content.SHA256(archive) != string(layer.Digest) {
 		return nil, empty, errors.New("OCI Helm Chart layer digest does not match its descriptor")
 	}
 
 	return archive, ociChartLock{
 		ManifestDigest:   string(manifestDescriptor.Digest),
 		ManifestSize:     manifestDescriptor.Size,
-		ChartLayerDigest: layer.Digest,
+		ChartLayerDigest: string(layer.Digest),
 		ChartLayerSize:   layer.Size,
 		ArchiveDigest:    content.SHA256(archive),
 	}, nil
