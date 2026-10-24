@@ -15,11 +15,7 @@ func analyzeModule(module syntax.ModuleAST) *moduleSemanticIndex {
 	return languageservice.AnalyzeModule(module)
 }
 
-type (
-	scopedLocalBinding = languageservice.ScopedLocalBinding
-	localBindingMatch  = languageservice.LocalBindingMatch
-	localBinding       = languageservice.LocalBinding
-)
+type localBinding = languageservice.LocalBinding
 
 func astDeclarationInfo(node syntax.ASTNode) (string, int, syntax.SourceSpan, bool) {
 	return languageservice.ASTDeclarationInfo(node)
@@ -35,10 +31,6 @@ func isRenameableASTDeclaration(node syntax.ASTNode) bool {
 
 func isTypeDeclaration(node syntax.ASTNode) bool { return languageservice.IsTypeDeclaration(node) }
 func isMCLIdentifier(value string) bool          { return languageservice.IsMCLIdentifier(value) }
-
-func localBindingAt(bindings []scopedLocalBinding, name string, offset int) localBindingMatch {
-	return languageservice.LocalBindingAt(bindings, name, offset)
-}
 
 func declaredName(line string) (string, int, bool) { return languageservice.DeclaredName(line) }
 func utf16Length(runes []rune) int                 { return languageservice.UTF16Length(runes) }

@@ -795,7 +795,26 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 		return edit
 	}
 	if match := index.LocalAt(name, offset); match.Found {
-		return renameLocalBinding(state.Text, params.TextDocument.URI, params.NewName, name, match.Binding, index.Locals, index.References)
+		result := languageservice.RenameForSource(
+			params.TextDocument.URI,
+			state.Text,
+			languageservice.Position{Line: params.Position.Line, Character: params.Position.Character},
+			params.NewName,
+		)
+		if result == nil || len(result.Edits) == 0 {
+			return nil
+		}
+		edits := make([]textEdit, len(result.Edits))
+		for index, edit := range result.Edits {
+			if edit.Path != params.TextDocument.URI {
+				return nil
+			}
+			edits[index].Range.Start = location{Line: edit.Range.Start.Line, Character: edit.Range.Start.Character}
+			edits[index].Range.End = location{Line: edit.Range.End.Line, Character: edit.Range.End.Character}
+			edits[index].NewText = edit.NewText
+		}
+
+		return &workspaceEdit{Changes: map[string][]textEdit{params.TextDocument.URI: edits}}
 	}
 	if edit, handled := s.renameSchemaField(ctx, params, name, offset, module, state.Text); handled {
 		return edit
@@ -1118,71 +1137,6 @@ func isRenameConflictASTDeclaration(node syntax.ASTNode) bool {
 	default:
 		return false
 	}
-}
-
-func renameLocalBinding(source, uri, newName, oldName string, target languageservice.ScopedLocalBinding, bindings []languageservice.ScopedLocalBinding, references []languageservice.SourceReference) *workspaceEdit {
-	for _, binding := range bindings {
-		if binding.Name != newName || binding.Declaration == target.Declaration {
-			continue
-		}
-		if binding.Scope.Start <= target.Scope.End && target.Scope.Start <= binding.Scope.End {
-			return nil
-		}
-	}
-	spans := []syntax.SourceSpan{target.Declaration}
-	for _, reference := range references {
-		if reference.Name != oldName {
-			continue
-		}
-		resolved := localBindingAt(bindings, oldName, reference.Span.Start)
-		if !resolved.Found || resolved.Binding.Declaration != target.Declaration {
-			continue
-		}
-		if localBindingAt(bindings, newName, reference.Span.Start).Found {
-			return nil
-		}
-		spans = append(spans, syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(oldName)})
-	}
-	seen := make(map[syntax.SourceSpan]struct{}, len(spans))
-	unique := spans[:0]
-	for _, span := range spans {
-		if span.Start < 0 || span.End > len(source) || source[span.Start:span.End] != oldName {
-			return nil
-		}
-		if _, exists := seen[span]; exists {
-			continue
-		}
-		seen[span] = struct{}{}
-		unique = append(unique, span)
-	}
-	spans = unique
-	editSpans := slices.Clone(spans)
-	slices.SortFunc(editSpans, func(left, right syntax.SourceSpan) int {
-		return right.Start - left.Start
-	})
-	candidate := source
-	for _, span := range editSpans {
-		candidate = candidate[:span.Start] + newName + candidate[span.End:]
-	}
-	if _, err := syntax.ParseAST(candidate); err != nil {
-		return nil
-	}
-	sourceIndex := sourceindex.New(source)
-	edits := make([]textEdit, len(spans))
-	for index, span := range spans {
-		edits[index].Range.Start = sourcePositionAt(sourceIndex, span.Start)
-		edits[index].Range.End = sourcePositionAt(sourceIndex, span.End)
-		edits[index].NewText = newName
-	}
-	slices.SortFunc(edits, func(left, right textEdit) int {
-		if left.Range.Start.Line != right.Range.Start.Line {
-			return left.Range.Start.Line - right.Range.Start.Line
-		}
-
-		return left.Range.Start.Character - right.Range.Start.Character
-	})
-
-	return &workspaceEdit{Changes: map[string][]textEdit{uri: edits}}
 }
 
 func sourceDefinitionLocation(uri, source string, span syntax.SourceSpan) *definitionLocation {
