@@ -929,6 +929,10 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 	if !ok || node.Left == nil || node.Right == nil {
 		return ResolvedType{}, false, nil
 	}
+	operator, ok := typedOperatorFromToken(node.Operator)
+	if !ok {
+		return ResolvedType{}, false, nil
+	}
 	left, leftKnown, err := inferStaticExprType(node.Left, bindings, types)
 	if err != nil {
 		return ResolvedType{}, false, err
@@ -945,10 +949,10 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 	}
 	sameOperand := isStaticNarrowingTarget(node.Left) && isStaticNarrowingTarget(node.Right) && node.Left.(interface{ ExprSpan() SourceSpan }) != nil && staticNarrowingName(node.Left) == staticNarrowingName(node.Right) && fmt.Sprintf("%T", node.Left) == fmt.Sprintf("%T", node.Right)
 	if len(left.Options) > 0 || len(right.Options) > 0 {
-		return inferStaticUnionBinary(node.Operator, left, right, sameOperand, types)
+		return inferStaticUnionBinary(operator.token(), left, right, sameOperand, types)
 	}
-	switch node.Operator {
-	case operatorAnd, operatorOr:
+	switch operator {
+	case typedOperatorAnd, typedOperatorOr:
 		for _, operand := range []struct {
 			typeExpr ResolvedType
 			known    bool
@@ -958,14 +962,14 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 			}
 			matches, compatible := staticTypeAssignable(operand.typeExpr, ResolvedType{Name: typeBool}, types)
 			if compatible && !matches {
-				return ResolvedType{}, false, fmt.Errorf("%s expects Bool operands", node.Operator)
+				return ResolvedType{}, false, fmt.Errorf("%s expects Bool operands", operator.token())
 			}
 		}
 
 		return ResolvedType{Name: typeBool}, true, nil
-	case "==", "!=":
+	case typedOperatorEqual, typedOperatorNotEqual:
 		return ResolvedType{Name: typeBool}, true, nil
-	case "<", "<=", ">", ">=":
+	case typedOperatorLess, typedOperatorLessEqual, typedOperatorGreater, typedOperatorGreaterEqual:
 		if leftKnown && rightKnown && sameOperand {
 			if _, valid := staticSameOperandResultType(left, types, func(option ResolvedType) bool {
 				return option.Name == typeInt || option.Name == typeDecimal || option.Name == typeString
@@ -984,7 +988,7 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 		}
 
 		return ResolvedType{Name: typeBool}, true, nil
-	case "in":
+	case typedOperatorIn:
 		if rightKnown {
 			container, known := resolveStaticAlias(right, types, make(map[string]bool))
 			isContainer, _ := staticMembershipContainer(container, types)
@@ -1027,7 +1031,7 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 		}
 
 		return ResolvedType{Name: typeBool}, true, nil
-	case "??":
+	case typedOperatorCoalesce:
 		if leftKnown {
 			withoutNull, hasNull := removeNullStaticType(left)
 			if !hasNull {
@@ -1042,7 +1046,7 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 
 			return joinStaticTypes(withoutNull, right), true, nil
 		}
-	case "+":
+	case typedOperatorAdd:
 		if leftKnown && left.Name != typeString && left.Name != typeInt && left.Name != typeDecimal {
 			return ResolvedType{}, false, errors.New("operator + expects two numeric operands of the same type or two String operands")
 		}
@@ -1070,7 +1074,7 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 		}
 
 		return ResolvedType{}, false, errors.New("operator + expects two numeric operands of the same type or two String operands")
-	case "-", "*", "/", "%":
+	case typedOperatorSubtract, typedOperatorMultiply, typedOperatorDivide, typedOperatorModulo:
 		if leftKnown && rightKnown && sameOperand {
 			if result, valid := staticSameOperandResultType(left, types, func(option ResolvedType) bool {
 				return option.Name == typeInt || option.Name == typeDecimal
@@ -1079,11 +1083,11 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 			}
 		}
 		if leftKnown && left.Name != typeInt && left.Name != typeDecimal || rightKnown && right.Name != typeInt && right.Name != typeDecimal {
-			return ResolvedType{}, false, fmt.Errorf("operator %s expects numeric operands (Int or Decimal)", node.Operator)
+			return ResolvedType{}, false, fmt.Errorf("operator %s expects numeric operands (Int or Decimal)", operator.token())
 		}
 		if leftKnown && rightKnown {
 			if left.Name != right.Name {
-				return ResolvedType{}, false, fmt.Errorf("operator %s expects operands of the same numeric type", node.Operator)
+				return ResolvedType{}, false, fmt.Errorf("operator %s expects operands of the same numeric type", operator.token())
 			}
 
 			return ResolvedType{Name: left.Name}, true, nil
