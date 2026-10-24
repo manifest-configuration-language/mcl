@@ -436,38 +436,75 @@ func intersect(left, right Type) Type {
 	if left.Kind != "" {
 		return left
 	}
-	fields := make(map[string]Field, len(left.Fields)+len(right.Fields))
+	fields := make(map[string]struct{}, len(left.Fields)+len(right.Fields))
 	for _, field := range left.Fields {
-		fields[field.Name] = field
+		fields[field.Name] = struct{}{}
 	}
 	for _, field := range right.Fields {
-		if existing, exists := fields[field.Name]; exists {
-			existing.Type = intersect(existing.Type, field.Type)
-			existing.Optional = existing.Optional && field.Optional
-			if existing.Type.Kind == kindNever && !existing.Optional {
-				return Type{Kind: kindNever}
-			}
-			fields[field.Name] = existing
-		} else {
-			fields[field.Name] = field
-		}
+		fields[field.Name] = struct{}{}
 	}
 	merged := make([]Field, 0, len(fields))
-	for _, field := range fields {
-		merged = append(merged, field)
+	for name := range fields {
+		field, exists, impossible := intersectRecordField(left, right, name)
+		if impossible {
+			return Type{Kind: kindNever}
+		}
+		if exists {
+			merged = append(merged, field)
+		}
 	}
 	slices.SortFunc(merged, func(left, right Field) int { return strings.Compare(left.Name, right.Name) })
 	result := Type{Fields: merged, OpenRecord: left.OpenRecord && right.OpenRecord}
-	if left.AdditionalProperties != nil && right.AdditionalProperties != nil {
-		additional := intersect(*left.AdditionalProperties, *right.AdditionalProperties)
+	if result.OpenRecord {
+		leftAdditional := Type{Kind: "Any"}
+		if left.AdditionalProperties != nil {
+			leftAdditional = *left.AdditionalProperties
+		}
+		rightAdditional := Type{Kind: "Any"}
+		if right.AdditionalProperties != nil {
+			rightAdditional = *right.AdditionalProperties
+		}
+		additional := intersect(leftAdditional, rightAdditional)
 		result.AdditionalProperties = &additional
-	} else if left.AdditionalProperties != nil && right.OpenRecord {
-		result.AdditionalProperties = left.AdditionalProperties
-	} else if right.AdditionalProperties != nil && left.OpenRecord {
-		result.AdditionalProperties = right.AdditionalProperties
 	}
 
 	return result
+}
+
+func intersectRecordField(left, right Type, name string) (Field, bool, bool) {
+	leftType, leftOptional, leftAllowed := recordFieldConstraint(left, name)
+	rightType, rightOptional, rightAllowed := recordFieldConstraint(right, name)
+	if !leftAllowed || !rightAllowed {
+		if (!leftAllowed && !rightOptional) || (!rightAllowed && !leftOptional) {
+			return Field{}, false, true
+		}
+
+		return Field{Name: name, Type: Type{Kind: kindNever}, Optional: true}, true, false
+	}
+
+	fieldType := intersect(leftType, rightType)
+	optional := leftOptional && rightOptional
+	if hasNoValues(fieldType) && !optional {
+		return Field{}, false, true
+	}
+
+	return Field{Name: name, Type: fieldType, Optional: optional}, true, false
+}
+
+func recordFieldConstraint(schema Type, name string) (Type, bool, bool) {
+	for _, field := range schema.Fields {
+		if field.Name == name {
+			return field.Type, field.Optional, true
+		}
+	}
+	if !schema.OpenRecord {
+		return Type{}, true, false
+	}
+	if schema.AdditionalProperties != nil {
+		return *schema.AdditionalProperties, true, true
+	}
+
+	return Type{Kind: "Any"}, true, true
 }
 
 func hasNoValues(schema Type) bool {
