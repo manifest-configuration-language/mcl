@@ -59,7 +59,8 @@ const goLimitNames = [
 const goOperationNames = requestOperations
   .map((operation, index) => {
     const separator = index < requestOperations.length - 1 ? ", " : "";
-    return `\t${JSON.stringify(operation + separator)}`;
+    const indentation = index === 0 ? "" : "\t";
+    return `${indentation}${JSON.stringify(operation + separator)}`;
   })
   .join(" +\n");
 const goLimitWidth = Math.max(...goLimitNames.map(([name]) => name.length));
@@ -68,7 +69,7 @@ const goLimits = goLimitNames.map(([name, value]) => `\t${name.padEnd(goLimitWid
 await writeFile(output, declarations);
 await writeFile(
   goLimitsOutput,
-  `// Code generated from cmd/mcl-wasm/protocol.schema.json. DO NOT EDIT.\n\npackage wasmprotocol\n\nconst RequestOperationNames =\n${goOperationNames}\n\nconst (\n${goLimits}\n)\n`,
+  `// Code generated from cmd/mcl-wasm/protocol.schema.json. DO NOT EDIT.\n\npackage wasmprotocol\n\nconst RequestOperationNames = ${goOperationNames}\n\nconst (\n${goLimits}\n)\n`,
 );
 await writeFile(
   jsLimitsOutput,
