@@ -102,6 +102,20 @@ type Diagnostic struct {
 	Message  string
 	Severity int
 	Span     SourceSpan
+	Actions  []DiagnosticAction
+}
+
+const DiagnosticActionRemoveUnreachableDefinition = "removeUnreachableDefinition"
+
+type DiagnosticAction struct {
+	Kind  string
+	Edits []DiagnosticTextEdit
+}
+
+type DiagnosticTextEdit struct {
+	Path    string
+	Span    SourceSpan
+	NewText string
 }
 
 func LintAST(module ModuleAST) []Diagnostic {
@@ -213,7 +227,15 @@ func LintAST(module ModuleAST) []Diagnostic {
 	var diagnostics []Diagnostic
 	for name, definition := range definitions {
 		if !reachable[name] {
-			diagnostics = append(diagnostics, Diagnostic{Code: "MCLW001", Line: definition.metadata.Line, Message: fmt.Sprintf("%s %q is not reachable from an emitted value, validation, or exported declaration", definition.kind, name), Severity: 2, Span: definition.nameSpan})
+			diagnostics = append(diagnostics, Diagnostic{
+				Code: "MCLW001", Line: definition.metadata.Line,
+				Message:  fmt.Sprintf("%s %q is not reachable from an emitted value, validation, or exported declaration", definition.kind, name),
+				Severity: 2, Span: definition.nameSpan,
+				Actions: []DiagnosticAction{{
+					Kind:  DiagnosticActionRemoveUnreachableDefinition,
+					Edits: []DiagnosticTextEdit{{Path: definition.metadata.SourcePath, Span: definition.metadata.Span}},
+				}},
+			})
 		}
 	}
 	slices.SortFunc(diagnostics, func(left, right Diagnostic) int {

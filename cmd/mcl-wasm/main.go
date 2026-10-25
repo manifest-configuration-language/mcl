@@ -351,9 +351,30 @@ func diagnostics(module engine.ModuleAST, source, sourcePath string) wasmprotoco
 	for _, item := range items {
 		line, column := sourcePosition(source, item.Span.Start)
 		endLine, endColumn := sourcePosition(source, item.Span.End)
+		actions := make([]wasmprotocol.LintCodeAction, 0, len(item.Actions))
+		for _, action := range item.Actions {
+			edits := make([]wasmprotocol.RenameEdit, 0, len(action.Edits))
+			for _, edit := range action.Edits {
+				path := edit.Path
+				if path == "" {
+					path = sourcePath
+				}
+				editLine, editColumn := sourcePosition(source, edit.Span.Start)
+				editEndLine, editEndColumn := sourcePosition(source, edit.Span.End)
+				edits = append(edits, wasmprotocol.RenameEdit{
+					Path: wasmprotocol.ProjectPath(path),
+					Range: wasmprotocol.SourceRange{
+						Start: wasmprotocol.CompletionPosition{Line: uint64(editLine - 1), Character: uint64(editColumn - 1)},
+						End:   wasmprotocol.CompletionPosition{Line: uint64(editEndLine - 1), Character: uint64(editEndColumn - 1)},
+					},
+					NewText: edit.NewText,
+				})
+			}
+			actions = append(actions, wasmprotocol.LintCodeAction{Kind: wasmprotocol.LintCodeActionKind(action.Kind), Edits: edits})
+		}
 		result = append(result, wasmprotocol.LintDiagnostic{
 			Code: item.Code, Message: item.Message, Severity: lintSeverity(item.Severity), Path: sourcePath,
-			Line: uint64(line), Column: uint64(column), EndLine: uint64(endLine), EndColumn: uint64(endColumn),
+			Line: uint64(line), Column: uint64(column), EndLine: uint64(endLine), EndColumn: uint64(endColumn), Actions: actions,
 		})
 	}
 

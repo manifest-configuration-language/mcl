@@ -145,7 +145,22 @@ type HoverResultHover struct {
 	StandardLibrary *StandardLibraryFunction `json:"standardLibrary,omitempty,omitzero" yaml:"standardLibrary,omitempty" mapstructure:"standardLibrary,omitempty"`
 }
 
+type LintCodeAction struct {
+	// Edits corresponds to the JSON schema field "edits".
+	Edits []RenameEdit `json:"edits" yaml:"edits" mapstructure:"edits"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind LintCodeActionKind `json:"kind" yaml:"kind" mapstructure:"kind"`
+}
+
+type LintCodeActionKind string
+
+const LintCodeActionKindRemoveUnreachableDefinition LintCodeActionKind = "removeUnreachableDefinition"
+
 type LintDiagnostic struct {
+	// Actions corresponds to the JSON schema field "actions".
+	Actions []LintCodeAction `json:"actions,omitempty,omitzero" yaml:"actions,omitempty" mapstructure:"actions,omitempty"`
+
 	// Code corresponds to the JSON schema field "code".
 	Code string `json:"code" yaml:"code" mapstructure:"code"`
 
@@ -371,9 +386,10 @@ type SourceMapOriginKind string
 
 const SourceMapOriginKindMcl SourceMapOriginKind = "mcl"
 const SourceMapOriginKindMclOverlayBase SourceMapOriginKind = "mcl-overlay-base"
-const SourceMapOriginKindMclOverlayPatch SourceMapOriginKind = "mcl-overlay-patch"
 
 type HoverResultHover_0 = HoverInfo
+
+const SourceMapOriginKindMclOverlayPatch SourceMapOriginKind = "mcl-overlay-patch"
 
 type SourceMapOriginMultiplicity string
 

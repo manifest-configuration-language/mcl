@@ -11,6 +11,7 @@ import type {
   HoverInfo as ProtocolHoverInfo,
   HoverResult as ProtocolHoverResult,
   LintDiagnostic as ProtocolLintDiagnostic,
+  LintCodeAction as ProtocolLintCodeAction,
   ParseResult,
   RelatedLocation as ProtocolRelatedLocation,
   ReferenceLocation as ProtocolReferenceLocation,
@@ -46,6 +47,7 @@ export type ProjectFiles = Readonly<Record<string, ProjectFile>>;
 export type MclError = ProtocolError;
 
 export type LintDiagnostic = ProtocolLintDiagnostic;
+export type LintCodeAction = ProtocolLintCodeAction;
 export type CompletionPosition = ProtocolCompletionPosition;
 export type CompletionItem = ProtocolCompletionItem;
 export type CompletionResult = ProtocolCompletionResult;

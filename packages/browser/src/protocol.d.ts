@@ -83,6 +83,23 @@ export interface LintDiagnostic {
   column: number;
   endLine: number;
   endColumn: number;
+  actions?: LintCodeAction[];
+}
+export interface LintCodeAction {
+  kind: "removeUnreachableDefinition";
+  /**
+   * @minItems 1
+   */
+  edits: [RenameEdit, ...RenameEdit[]];
+}
+export interface RenameEdit {
+  path: ProjectPath;
+  range: SourceRange;
+  newText: string;
+}
+export interface SourceRange {
+  start: CompletionPosition;
+  end: CompletionPosition;
 }
 export interface FormatResult {
   source: string;
@@ -116,10 +133,6 @@ export interface SourceMapEntry {
   kind: "key" | "value";
   output: SourceRange;
   sources: SourceMapOrigin[];
-}
-export interface SourceRange {
-  start: CompletionPosition;
-  end: CompletionPosition;
 }
 export interface SourceMapOrigin {
   path: ProjectPath;
@@ -167,11 +180,6 @@ export interface ReferenceLocation {
 }
 export interface RenameResult {
   edits: RenameEdit[];
-}
-export interface RenameEdit {
-  path: ProjectPath;
-  range: SourceRange;
-  newText: string;
 }
 export interface RenameFileImportsResult {
   oldPath: ProjectPath;

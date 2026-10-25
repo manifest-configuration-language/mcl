@@ -125,9 +125,19 @@
         "line": { "type": "integer", "minimum": 0 },
         "column": { "type": "integer", "minimum": 0 },
         "endLine": { "type": "integer", "minimum": 0 },
-        "endColumn": { "type": "integer", "minimum": 0 }
+        "endColumn": { "type": "integer", "minimum": 0 },
+        "actions": { "type": "array", "items": { "$ref": "#/$defs/lintCodeAction" } }
       },
       "required": ["code", "message", "severity", "path", "line", "column", "endLine", "endColumn"],
+      "additionalProperties": false
+    },
+    "lintCodeAction": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["removeUnreachableDefinition"] },
+        "edits": { "type": "array", "items": { "$ref": "#/$defs/renameEdit" }, "minItems": 1 }
+      },
+      "required": ["kind", "edits"],
       "additionalProperties": false
     },
     "formatResult": {

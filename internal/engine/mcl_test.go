@@ -361,13 +361,22 @@ func TestNumberSyntaxRejectsLeadingZeroes(t *testing.T) {
 
 func TestLintTracksValuesReachableFromEmittedBundle(t *testing.T) {
 	t.Parallel()
-	module, err := ParseAST("let used = \"value\"\nlet transitivelyUsed = used\nlet unused = \"unused\"\nemit transitivelyUsed\n")
+	source := "let used = \"value\"\nlet transitivelyUsed = used\nlet unused = \"unused\"\nemit transitivelyUsed\n"
+	module, err := ParseAST(source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	diagnostics := LintAST(module)
 	if len(diagnostics) != 1 || diagnostics[0].Line != 3 {
 		t.Fatalf("LintAST() = %#v, want only the unreachable definition at line 3", diagnostics)
+	}
+	actions := diagnostics[0].Actions
+	if len(actions) != 1 || actions[0].Kind != "removeUnreachableDefinition" || len(actions[0].Edits) != 1 {
+		t.Fatalf("LintAST() actions = %#v, want one remove-definition action", actions)
+	}
+	edit := actions[0].Edits[0]
+	if got := source[edit.Span.Start:edit.Span.End]; got != `let unused = "unused"` || edit.NewText != "" {
+		t.Fatalf("remove-definition edit = %#v (%q), want an empty replacement for the declaration", edit, got)
 	}
 }
 
