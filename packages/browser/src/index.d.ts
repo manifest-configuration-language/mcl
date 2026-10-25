@@ -77,8 +77,21 @@ export type MclResult =
 export interface RuntimeOptions {
   initializationTimeoutMs?: number;
   operationTimeoutMs?: number;
+  /** Receives local WebAssembly initialization state changes without project data. */
+  onStatus?: (event: RuntimeStatusEvent) => void;
+  /** Receives local operation latency measurements without source or project data. */
+  onOperation?: (event: RuntimeOperationEvent) => void;
   workerFactory?: () => Worker;
 }
+
+export type RuntimeStatus = "fetching" | "compiling" | "initializing" | "ready" | "error";
+export type RuntimeStatusEvent = { status: RuntimeStatus };
+export type RuntimeOperationOutcome = "success" | "error" | "aborted";
+export type RuntimeOperationEvent = {
+  operation: MclOperation;
+  durationMs: number;
+  outcome: RuntimeOperationOutcome;
+};
 
 export interface MclRuntime {
   openProject(files: ProjectFiles): MclProject;

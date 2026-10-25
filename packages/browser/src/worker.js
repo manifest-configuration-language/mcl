@@ -73,6 +73,7 @@ async function initialize() {
   initialized = (async () => {
     if (!runtimeAssets?.wasmURL || !runtimeAssets?.wasmExecURL)
       throw new Error("MCL runtime assets were not configured");
+    postMessage({ type: "status", status: "fetching" });
     await import(runtimeAssets.wasmExecURL);
     const go = new Go();
     const response = await runtimeFetch(runtimeAssets.wasmURL);
@@ -80,11 +81,13 @@ async function initialize() {
     // Load the runtime before denying network APIs, then lock them before Go starts.
     denyNetworkAccess();
     let instance;
+    postMessage({ type: "status", status: "compiling" });
     try {
       ({ instance } = await WebAssembly.instantiateStreaming(response.clone(), go.importObject));
     } catch {
       ({ instance } = await WebAssembly.instantiate(await response.arrayBuffer(), go.importObject));
     }
+    postMessage({ type: "status", status: "initializing" });
     const wasmReady = waitForWasmReady();
     await Promise.race([
       wasmReady,
@@ -92,8 +95,10 @@ async function initialize() {
         throw new Error("MCL WebAssembly exited before initialization completed");
       }),
     ]);
+    postMessage({ type: "status", status: "ready" });
     postMessage({ type: "ready" });
   })().catch((error) => {
+    postMessage({ type: "status", status: "error" });
     postMessage({ type: "fatal", message: error instanceof Error ? error.message : String(error) });
     throw error;
   });
