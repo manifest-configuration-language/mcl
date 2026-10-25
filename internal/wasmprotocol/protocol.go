@@ -124,6 +124,9 @@ type HoverInfo struct {
 
 	// Range corresponds to the JSON schema field "range".
 	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+
+	// StandardLibrary corresponds to the JSON schema field "standardLibrary".
+	StandardLibrary *StandardLibraryFunction `json:"standardLibrary,omitempty,omitzero" yaml:"standardLibrary,omitempty" mapstructure:"standardLibrary,omitempty"`
 }
 
 type HoverResult struct {
@@ -137,6 +140,9 @@ type HoverResultHover struct {
 
 	// Range corresponds to the JSON schema field "range".
 	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
+
+	// StandardLibrary corresponds to the JSON schema field "standardLibrary".
+	StandardLibrary *StandardLibraryFunction `json:"standardLibrary,omitempty,omitzero" yaml:"standardLibrary,omitempty" mapstructure:"standardLibrary,omitempty"`
 }
 
 type LintDiagnostic struct {
@@ -347,16 +353,18 @@ type SourceMapOriginKind string
 
 const SourceMapOriginKindMcl SourceMapOriginKind = "mcl"
 const SourceMapOriginKindMclOverlayBase SourceMapOriginKind = "mcl-overlay-base"
-
-type HoverResultHover_0 = HoverInfo
-
 const SourceMapOriginKindMclOverlayPatch SourceMapOriginKind = "mcl-overlay-patch"
 
 type SourceMapOriginMultiplicity string
 
-const SourceMapOriginMultiplicityAmbiguous SourceMapOriginMultiplicity = "ambiguous"
 const SourceMapOriginMultiplicityRepeated SourceMapOriginMultiplicity = "repeated"
 const SourceMapOriginMultiplicityUnique SourceMapOriginMultiplicity = "unique"
+
+type HoverResultHover_0 = HoverInfo
+
+const SourceMapOriginMultiplicityAmbiguous SourceMapOriginMultiplicity = "ambiguous"
+
+type DefinitionResultLocation_0 = DefinitionLocation
 
 type SourceRange struct {
 	// End corresponds to the JSON schema field "end".
@@ -366,4 +374,10 @@ type SourceRange struct {
 	Start CompletionPosition `json:"start" yaml:"start" mapstructure:"start"`
 }
 
-type DefinitionResultLocation_0 = DefinitionLocation
+type StandardLibraryFunction struct {
+	// Module corresponds to the JSON schema field "module".
+	Module string `json:"module" yaml:"module" mapstructure:"module"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+}

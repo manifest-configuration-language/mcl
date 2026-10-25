@@ -194,8 +194,16 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 		case wasmprotocol.RequestOperationHover:
 			var hover *wasmprotocol.HoverResultHover
 			if info := languageservice.HoverForProjectFS(params, projectFiles); info != nil {
+				var standardLibrary *wasmprotocol.StandardLibraryFunction
+				if info.StandardLibrary != nil {
+					standardLibrary = &wasmprotocol.StandardLibraryFunction{
+						Module: info.StandardLibrary.Module,
+						Name:   info.StandardLibrary.Name,
+					}
+				}
 				hover = &wasmprotocol.HoverResultHover{
-					Contents: info.Contents,
+					Contents:        info.Contents,
+					StandardLibrary: standardLibrary,
 					Range: wasmprotocol.SourceRange{
 						Start: wasmprotocol.CompletionPosition{Line: uint64(info.Range.Start.Line), Character: uint64(info.Range.Start.Character)},
 						End:   wasmprotocol.CompletionPosition{Line: uint64(info.Range.End.Line), Character: uint64(info.Range.End.Character)},

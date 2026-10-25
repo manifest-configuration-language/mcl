@@ -148,6 +148,11 @@ export interface HoverResult {
 export interface HoverInfo {
   contents: string;
   range: SourceRange;
+  standardLibrary?: StandardLibraryFunction;
+}
+export interface StandardLibraryFunction {
+  module: string;
+  name: string;
 }
 export interface ReferencesResult {
   references: ReferenceLocation[];

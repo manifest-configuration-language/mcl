@@ -259,9 +259,19 @@
       "type": "object",
       "properties": {
         "contents": { "type": "string" },
-        "range": { "$ref": "#/$defs/sourceRange" }
+        "range": { "$ref": "#/$defs/sourceRange" },
+        "standardLibrary": { "$ref": "#/$defs/standardLibraryFunction" }
       },
       "required": ["contents", "range"],
+      "additionalProperties": false
+    },
+    "standardLibraryFunction": {
+      "type": "object",
+      "properties": {
+        "module": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["module", "name"],
       "additionalProperties": false
     },
     "hoverResult": {

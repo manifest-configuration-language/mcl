@@ -33,8 +33,15 @@ type Definition struct {
 
 // Hover contains declaration information that is present in source syntax.
 type Hover struct {
-	Contents string      `json:"contents"`
-	Range    SourceRange `json:"range"`
+	Contents        string                        `json:"contents"`
+	Range           SourceRange                   `json:"range"`
+	StandardLibrary *StandardLibraryFunctionHover `json:"standardLibrary,omitempty"`
+}
+
+// StandardLibraryFunctionHover identifies a standard-library function without parsing its display text.
+type StandardLibraryFunctionHover struct {
+	Module string `json:"module"`
+	Name   string `json:"name"`
 }
 
 // DefinitionForProjectFS finds a local or imported declaration without reading host files.
@@ -97,8 +104,9 @@ func standardLibraryHover(params NavigationParams, projectFiles fs.FS) *Hover {
 			}
 
 			return &Hover{
-				Contents: standardLibrarySignature(reference.Alias+"."+function.Name, function) + "\n" + function.Documentation,
-				Range:    SourceRangeAt(params.Source, reference.Span),
+				Contents:        standardLibrarySignature(reference.Alias+"."+function.Name, function) + "\n" + function.Documentation,
+				Range:           SourceRangeAt(params.Source, reference.Span),
+				StandardLibrary: &StandardLibraryFunctionHover{Module: declaration.ModulePath, Name: function.Name},
 			}
 		}
 	}
@@ -113,8 +121,9 @@ func standardLibraryHover(params NavigationParams, projectFiles fs.FS) *Hover {
 		}
 
 		return &Hover{
-			Contents: standardLibrarySignature(function.Name, function) + "\n" + function.Documentation,
-			Range:    SourceRangeAt(params.Source, reference.Span),
+			Contents:        standardLibrarySignature(function.Name, function) + "\n" + function.Documentation,
+			Range:           SourceRangeAt(params.Source, reference.Span),
+			StandardLibrary: &StandardLibraryFunctionHover{Module: "std:core", Name: function.Name},
 		}
 	}
 
