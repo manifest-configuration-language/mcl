@@ -24,8 +24,8 @@ func diagnostics(module engine.ModuleAST, source, sourcePath string) wasmprotoco
 				edits = append(edits, wasmprotocol.RenameEdit{
 					Path: wasmprotocol.ProjectPath(path),
 					Range: wasmprotocol.SourceRange{
-						Start: wasmprotocol.CompletionPosition{Line: uint64(editLine - 1), Character: uint64(editColumn - 1)},
-						End:   wasmprotocol.CompletionPosition{Line: uint64(editEndLine - 1), Character: uint64(editEndColumn - 1)},
+						Start: wasmprotocol.CompletionPosition{Line: sourcePositionValue(editLine - 1), Character: sourcePositionValue(editColumn - 1)},
+						End:   wasmprotocol.CompletionPosition{Line: sourcePositionValue(editEndLine - 1), Character: sourcePositionValue(editEndColumn - 1)},
 					},
 					NewText: edit.NewText,
 				})
@@ -34,7 +34,8 @@ func diagnostics(module engine.ModuleAST, source, sourcePath string) wasmprotoco
 		}
 		result = append(result, wasmprotocol.LintDiagnostic{
 			Code: item.Code, Message: item.Message, Severity: lintSeverity(item.Severity), Path: sourcePath,
-			Line: uint64(line), Column: uint64(column), EndLine: uint64(endLine), EndColumn: uint64(endColumn), Actions: actions,
+			Line: sourcePositionValue(line), Column: sourcePositionValue(column),
+			EndLine: sourcePositionValue(endLine), EndColumn: sourcePositionValue(endColumn), Actions: actions,
 		})
 	}
 
@@ -58,4 +59,12 @@ func lintSeverity(severity int) string {
 
 func sourcePosition(source string, offset int) (int, int) {
 	return engine.SourcePositionUTF16(source, offset)
+}
+
+func sourcePositionValue(position int) uint64 {
+	if position < 0 {
+		return 0
+	}
+
+	return uint64(position)
 }
