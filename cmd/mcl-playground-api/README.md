@@ -26,4 +26,6 @@ Binary file content uses unpadded base64url. `activePath` is optional and must n
 
 `DATABASE_URL` is required. `LISTEN_ADDR` defaults to `:8080`; `PORT` is used when `LISTEN_ADDR` is unset. `SHARE_TTL` accepts a Go duration from one hour through 365 days. Request bodies are limited to 64 MiB, and aggregate stored snapshot payloads are limited to 5 GiB.
 
+Each client IP can create 10 shares per hour with a burst of 3, and retrieve 60 shares per minute with a burst of 30. Rate limits are held in process memory.
+
 `GET /healthz` reports process health. `GET /readyz` also checks the PostgreSQL connection.

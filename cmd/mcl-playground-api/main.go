@@ -79,6 +79,7 @@ type shareAPI struct {
 	database        *pgxpool.Pool
 	expiresAfter    time.Duration
 	createLimiter   *clientRateLimiter
+	readLimiter     *clientRateLimiter
 	requestCapacity chan struct{}
 }
 
@@ -150,6 +151,7 @@ func run() error {
 		database:        database,
 		expiresAfter:    expiresAfter,
 		createLimiter:   newClientRateLimiter(rate.Every(time.Hour/10), 3),
+		readLimiter:     newClientRateLimiter(rate.Every(time.Minute/60), 30),
 		requestCapacity: make(chan struct{}, 1),
 	}
 	mux := http.NewServeMux()
@@ -463,6 +465,12 @@ func (api *shareAPI) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *shareAPI) get(w http.ResponseWriter, r *http.Request) {
+	if !api.readLimiter.allow(clientAddress(r)) {
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, "share retrieval rate limit exceeded")
+
+		return
+	}
 	id := r.PathValue("id")
 	if len(id) != maxShareIDLength {
 		writeError(w, http.StatusNotFound, "project snapshot not found")
