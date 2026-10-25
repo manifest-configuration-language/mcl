@@ -112,19 +112,30 @@ export function createMclRuntime(options = {}) {
   let stopCurrent;
   let stopInitialization;
 
-  function emitStatus(status) {
+  function emitStatus(status, details = {}) {
     try {
-      Promise.resolve(options.onStatus?.({ status })).catch(() => {});
+      Promise.resolve(options.onStatus?.({ status, workerGeneration, ...details })).catch(() => {});
     } catch {
       // Observability callbacks must not affect runtime behavior.
     }
   }
 
-  function emitOperation(operation, startedAt, outcome) {
+  function emitOperation(operation, startedAt, outcome, details = {}) {
     try {
+      const durationMs = Math.max(0, performance.now() - startedAt);
       Promise.resolve(options.onOperation?.({
         operation,
-        durationMs: Math.max(0, performance.now() - startedAt),
+        durationMs,
+        queueWaitMs: details.executionStartedAt !== undefined
+          ? Math.max(0, details.executionStartedAt - startedAt)
+          : durationMs,
+        executionDurationMs: details.executionDurationMs ?? 0,
+        ...(details.wasmDurationMs === undefined
+          ? {}
+          : { wasmDurationMs: details.wasmDurationMs }),
+        ...(details.workerGeneration === undefined
+          ? {}
+          : { workerGeneration: details.workerGeneration }),
         outcome,
       })).catch(() => {});
     } catch {
@@ -132,7 +143,7 @@ export function createMclRuntime(options = {}) {
     }
   }
 
-  function enqueue(operation, run, signal, scope = "runtime", requestedPriority) {
+  function enqueue(operation, run, signal, scope = "runtime", requestedPriority, timing) {
     if (signal?.aborted) return Promise.reject(signal.reason ?? abortError());
     const priority =
       requestPriorities[requestedPriority] ?? operationPriorities[operation] ?? 0;
@@ -192,7 +203,17 @@ export function createMclRuntime(options = {}) {
         async () => {
           pending.started = true;
           if (latestOnlyOperations.has(operation)) removePending(priority, pending);
-          return run();
+          if (timing) timing.executionStartedAt = performance.now();
+          try {
+            return await run();
+          } finally {
+            if (timing) {
+              timing.executionDurationMs = Math.max(
+                0,
+                performance.now() - timing.executionStartedAt,
+              );
+            }
+          }
         },
         { priority, signal: queueController.signal },
       )
@@ -210,6 +231,7 @@ export function createMclRuntime(options = {}) {
   function startWorker() {
     if (disposed) return Promise.reject(new Error("MCL runtime has been disposed"));
     if (ready) return ready;
+    const initializationStartedAt = performance.now();
     const currentWorker = workerFactory();
     worker = currentWorker;
     workerGeneration++;
@@ -218,10 +240,17 @@ export function createMclRuntime(options = {}) {
     const reportStatus = (status) => {
       if (lastStatus === status) return;
       lastStatus = status;
-      emitStatus(status);
+      if (status === "ready" || status === "error") {
+        emitStatus(status, {
+          initializationDurationMs: Math.max(0, performance.now() - initializationStartedAt),
+        });
+      } else {
+        emitStatus(status);
+      }
     };
     let resolveReady;
     let rejectReady;
+    let initialized = false;
     const initialization = new Promise((resolve, reject) => {
       resolveReady = resolve;
       rejectReady = reject;
@@ -235,6 +264,7 @@ export function createMclRuntime(options = {}) {
       if (event.data?.type === "status") {
         reportStatus(event.data.status);
       } else if (event.data?.type === "ready") {
+        initialized = true;
         reportStatus("ready");
         clearTimeout(timer);
         currentWorker.removeEventListener("message", onMessage);
@@ -250,7 +280,7 @@ export function createMclRuntime(options = {}) {
       fail(new Error(event.message || "MCL worker failed"));
     };
     function fail(error) {
-      reportStatus("error");
+      if (!initialized) reportStatus("error");
       clearTimeout(timer);
       currentWorker.removeEventListener("message", onMessage);
       currentWorker.removeEventListener("error", onError);
@@ -388,6 +418,8 @@ export function createMclRuntime(options = {}) {
     const signal = requestOptions.signal;
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
     const startedAt = performance.now();
+    const timing = {};
+    let operationWorkerGeneration;
     const run = async () => {
       if (disposed) throw new Error("MCL runtime has been disposed");
       if (requestOptions.signal?.aborted)
@@ -410,6 +442,7 @@ export function createMclRuntime(options = {}) {
           throw new DOMException("The operation was aborted", "AbortError");
         const currentWorker = worker;
         const currentGeneration = workerGeneration;
+        operationWorkerGeneration = currentGeneration;
         if (project) {
           await syncProjectToWorker(
             project,
@@ -423,6 +456,10 @@ export function createMclRuntime(options = {}) {
           ? undefined
           : prepareFilesForTransfer(source, files, entrypoint);
         const requestId = ++sequence;
+        const completeWasmTiming = () => {
+          if (timing.wasmStartedAt === undefined || timing.wasmDurationMs !== undefined) return;
+          timing.wasmDurationMs = Math.max(0, performance.now() - timing.wasmStartedAt);
+        };
         return await new Promise((resolve, reject) => {
           let settled = false;
           const cleanup = () => {
@@ -442,6 +479,7 @@ export function createMclRuntime(options = {}) {
             if (worker !== currentWorker || workerGeneration !== currentGeneration) return;
             const response = event.data;
             if (response?.type !== "response" || response.requestId !== requestId) return;
+            completeWasmTiming();
             if (!response.value.ok) finish(reject, new MclRuntimeError(response.value.error));
             else if (operation === "lint")
               finish(resolve, { operation, diagnostics: response.value.result });
@@ -450,6 +488,7 @@ export function createMclRuntime(options = {}) {
           const onError = (event) => stop(new Error(event.message || "MCL worker failed"));
           const onAbort = () => stop(new DOMException("The operation was aborted", "AbortError"));
           const stop = (error) => {
+            completeWasmTiming();
             finish(reject, error);
             currentWorker.terminate();
             if (worker === currentWorker) {
@@ -473,6 +512,7 @@ export function createMclRuntime(options = {}) {
             };
             if (project) message.projectId = project.id;
             else message.files = preparedFiles.files;
+            timing.wasmStartedAt = performance.now();
             currentWorker.postMessage(message, preparedFiles?.transferables ?? []);
           } catch (error) {
             stop(error);
@@ -490,11 +530,18 @@ export function createMclRuntime(options = {}) {
         signal,
         project?.id ?? "runtime",
         requestOptions.priority,
+        timing,
       );
-      emitOperation(operation, startedAt, "success");
+      emitOperation(operation, startedAt, "success", {
+        ...timing,
+        workerGeneration: operationWorkerGeneration,
+      });
       return result;
     } catch (error) {
-      emitOperation(operation, startedAt, error?.name === "AbortError" ? "aborted" : "error");
+      emitOperation(operation, startedAt, error?.name === "AbortError" ? "aborted" : "error", {
+        ...timing,
+        workerGeneration: operationWorkerGeneration,
+      });
       throw error;
     }
   }

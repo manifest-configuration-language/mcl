@@ -85,11 +85,19 @@ export interface RuntimeOptions {
 }
 
 export type RuntimeStatus = "fetching" | "compiling" | "initializing" | "ready" | "error";
-export type RuntimeStatusEvent = { status: RuntimeStatus };
+export type RuntimeStatusEvent = {
+  status: RuntimeStatus;
+  workerGeneration: number;
+  initializationDurationMs?: number;
+};
 export type RuntimeOperationOutcome = "success" | "error" | "aborted";
 export type RuntimeOperationEvent = {
   operation: MclOperation;
   durationMs: number;
+  queueWaitMs: number;
+  executionDurationMs: number;
+  wasmDurationMs?: number;
+  workerGeneration?: number;
   outcome: RuntimeOperationOutcome;
 };
 
