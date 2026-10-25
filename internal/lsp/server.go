@@ -64,6 +64,7 @@ func (s *server) dispatchOrdered(ctx context.Context, method string, handler fun
 		snapshot := s.readOnlySnapshot()
 		close(next)
 		ctx = context.WithValue(ctx, requestSnapshotContextKey{}, snapshot)
+
 		return handler(ctx)
 	}
 	defer close(next)

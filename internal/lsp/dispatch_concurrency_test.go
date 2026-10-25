@@ -7,6 +7,8 @@ import (
 )
 
 func TestDispatchOrderedSnapshotsReadOnlyRequestsInWireOrder(t *testing.T) {
+	t.Parallel()
+
 	s := &server{documents: map[string]documentState{"file:///main.mcl": {Text: "version one", Version: 1}}}
 	s.dispatchTail = make(chan struct{})
 	close(s.dispatchTail)
@@ -15,7 +17,7 @@ func TestDispatchOrderedSnapshotsReadOnlyRequestsInWireOrder(t *testing.T) {
 	allowFirstFinish := make(chan struct{})
 	firstDone := make(chan any, 1)
 	go func() {
-		result, err := s.dispatchOrdered(context.Background(), "textDocument/completion", func(ctx context.Context) (any, error) {
+		result, err := s.dispatchOrdered(t.Context(), "textDocument/completion", func(ctx context.Context) (any, error) {
 			snapshot := s.snapshotForRequest(ctx)
 			firstStarted <- snapshot.documents["file:///main.mcl"].Version
 			<-allowFirstFinish
@@ -24,6 +26,7 @@ func TestDispatchOrderedSnapshotsReadOnlyRequestsInWireOrder(t *testing.T) {
 		})
 		if err != nil {
 			firstDone <- err
+
 			return
 		}
 		firstDone <- result
@@ -40,7 +43,7 @@ func TestDispatchOrderedSnapshotsReadOnlyRequestsInWireOrder(t *testing.T) {
 
 	changed := make(chan struct{})
 	go func() {
-		_, err := s.dispatchOrdered(context.Background(), "textDocument/didChange", func(context.Context) (any, error) {
+		_, err := s.dispatchOrdered(t.Context(), "textDocument/didChange", func(context.Context) (any, error) {
 			s.mu.Lock()
 			s.documents["file:///main.mcl"] = documentState{Text: "version two", Version: 2}
 			s.mu.Unlock()
@@ -61,8 +64,9 @@ func TestDispatchOrderedSnapshotsReadOnlyRequestsInWireOrder(t *testing.T) {
 	secondSnapshot := make(chan int, 1)
 	secondDone := make(chan struct{})
 	go func() {
-		_, err := s.dispatchOrdered(context.Background(), "textDocument/definition", func(ctx context.Context) (any, error) {
+		_, err := s.dispatchOrdered(t.Context(), "textDocument/definition", func(ctx context.Context) (any, error) {
 			secondSnapshot <- s.snapshotForRequest(ctx).documents["file:///main.mcl"].Version
+
 			return nil, nil
 		})
 		if err != nil {

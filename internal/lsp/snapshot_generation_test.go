@@ -11,6 +11,8 @@ import (
 )
 
 func TestReadOnlyHandlerRejectsSnapshotAfterWatchedFileChange(t *testing.T) {
+	t.Parallel()
+
 	s := &server{
 		documents:         map[string]documentState{"file:///workspace/main.mcl": {Text: "import \"dependency\"", Version: 1}},
 		diagnosticResults: make(chan diagnosticResult, 1),
@@ -22,13 +24,14 @@ func TestReadOnlyHandlerRejectsSnapshotAfterWatchedFileChange(t *testing.T) {
 	continueHandler := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
-		_, err := s.dispatchOrdered(context.Background(), "textDocument/references", func(ctx context.Context) (any, error) {
+		_, err := s.dispatchOrdered(t.Context(), "textDocument/references", func(ctx context.Context) (any, error) {
 			snapshot := s.snapshotForRequest(ctx)
 			close(started)
 			<-continueHandler
 			if !s.documentSnapshotIsCurrent(snapshot) {
 				return nil, protocol.ErrContentModified
 			}
+
 			return nil, nil
 		})
 		result <- err
@@ -40,7 +43,7 @@ func TestReadOnlyHandlerRejectsSnapshotAfterWatchedFileChange(t *testing.T) {
 		t.Fatal("read-only handler did not start")
 	}
 
-	if err := s.DidChangeWatchedFiles(context.Background(), &protocol.DidChangeWatchedFilesParams{
+	if err := s.DidChangeWatchedFiles(t.Context(), &protocol.DidChangeWatchedFilesParams{
 		Changes: []protocol.FileEvent{{URI: uri.URI("file:///workspace/dependency.mcl"), Type: protocol.FileChangeTypeChanged}},
 	}); err != nil {
 		t.Fatal(err)

@@ -1,6 +1,7 @@
 package languageservice
 
 import (
+	"context"
 	"io/fs"
 	"slices"
 	"strconv"
@@ -30,15 +31,25 @@ type CompletionParams struct {
 
 // CompletionsForProjectFS returns MCL completion candidates using files from projectFiles.
 func CompletionsForProjectFS(params CompletionParams, projectFiles fs.FS) []CompletionItem {
-	return complete(params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "")
+	return CompletionsForProjectFSWithContext(context.Background(), params, projectFiles)
+}
+
+// CompletionsForProjectFSWithContext returns completion candidates using the supplied context.
+func CompletionsForProjectFSWithContext(ctx context.Context, params CompletionParams, projectFiles fs.FS) []CompletionItem {
+	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "")
 }
 
 // CompletionForSource returns completion candidates for a document backed by the host filesystem.
 func CompletionForSource(source string, line, character int, sourcePath string) []CompletionItem {
-	return complete(source, Position{Line: line, Character: character}, "", "", nil, sourcePath)
+	return CompletionForSourceWithContext(context.Background(), source, line, character, sourcePath)
 }
 
-func complete(source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []CompletionItem {
+// CompletionForSourceWithContext returns completion candidates using the supplied context.
+func CompletionForSourceWithContext(ctx context.Context, source string, line, character int, sourcePath string) []CompletionItem {
+	return complete(ctx, source, Position{Line: line, Character: character}, "", "", nil, sourcePath)
+}
+
+func complete(ctx context.Context, source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []CompletionItem {
 	items := []CompletionItem{
 		{Label: "let", Kind: 14, Detail: "キーワード", Documentation: "現在のモジュールで値を宣言します。"},
 		{Label: "emit", Kind: 14, Detail: "キーワード", Documentation: "値をレンダリング結果へ追加します。"},
@@ -91,10 +102,10 @@ func complete(source string, position Position, projectRoot, entrypoint string, 
 			items = append(items, CompletionItem{Label: binding.Name, Kind: 6, Detail: "ローカル変数"})
 		}
 	}
-	if fields := schemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
+	if fields := schemaFieldCompletions(ctx, position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
-	if fields := helmSchemaFieldCompletions(position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
+	if fields := helmSchemaFieldCompletions(ctx, position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
 	if fields := kubernetesSchemaFieldCompletions(position, lines, runes, end); len(fields) != 0 {
@@ -112,7 +123,7 @@ func complete(source string, position Position, projectRoot, entrypoint string, 
 	return filtered
 }
 
-func schemaFieldCompletions(position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
+func schemaFieldCompletions(ctx context.Context, position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
 	line := lines[position.Line]
 	indent := len(line) - len(strings.TrimLeft(line, " "))
 	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
@@ -122,18 +133,20 @@ func schemaFieldCompletions(position Position, lines []string, runes []rune, cur
 	candidateLines := slices.Clone(lines[:position.Line+1])
 	candidateLines[len(candidateLines)-1] = strings.Repeat(" ", indent) + placeholder + ": null"
 	if projectFiles != nil {
-		fields, _ := engine.SchemaFieldCompletionsWithErrorForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+		fields, _ := engine.SchemaFieldCompletionsWithErrorForProjectFSWithContext(ctx, projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
 
 		return fields
 	}
 	if sourcePath != "" {
-		return engine.SchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+		fields, _ := engine.SchemaFieldCompletionsWithContext(ctx, sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+
+		return fields
 	}
 
 	return nil
 }
 
-func helmSchemaFieldCompletions(position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
+func helmSchemaFieldCompletions(ctx context.Context, position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {
 	line := lines[position.Line]
 	indent := len(line) - len(strings.TrimLeft(line, " "))
 	if indent == 0 || strings.Contains(string(runes[:cursor]), ":") {
@@ -144,10 +157,10 @@ func helmSchemaFieldCompletions(position Position, lines []string, runes []rune,
 	candidateLines[position.Line] = strings.Repeat(" ", indent) + placeholder + ": null"
 
 	if projectFiles != nil {
-		return engine.HelmSchemaFieldCompletionsForProjectFS(projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
+		return engine.HelmSchemaFieldCompletionsForProjectFSWithContext(ctx, projectRoot, entrypoint, strings.Join(candidateLines, "\n"), placeholder, projectFiles)
 	}
 	if sourcePath != "" {
-		return engine.HelmSchemaFieldCompletions(sourcePath, strings.Join(candidateLines, "\n"), placeholder)
+		return engine.HelmSchemaFieldCompletionsWithContext(ctx, sourcePath, strings.Join(candidateLines, "\n"), placeholder)
 	}
 
 	return nil

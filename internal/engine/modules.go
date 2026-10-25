@@ -304,10 +304,6 @@ func canonicalRenameOverlayPath(path, root string, searchRoots []string) (string
 	return absolute, nil
 }
 
-func applyDependentOverlays(diskSources map[string]string, root string, searchRoots []string, overlays map[string]string) (map[string]string, map[string]struct{}, error) {
-	return applyDependentOverlaysWithContext(context.Background(), diskSources, root, searchRoots, overlays)
-}
-
 func applyDependentOverlaysWithContext(ctx context.Context, diskSources map[string]string, root string, searchRoots []string, overlays map[string]string) (map[string]string, map[string]struct{}, error) {
 	sources := maps.Clone(diskSources)
 	paths := make(map[string]struct{}, len(overlays))
@@ -465,6 +461,11 @@ func (index *DependentMCLSourceIndex) Invalidate() {
 
 // ApplyFileChangesは監視通知に含まれるファイルだけを読み直して逆参照indexを更新します。
 func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFileChange) error {
+	return index.ApplyFileChangesWithContext(context.Background(), changes)
+}
+
+// ApplyFileChangesWithContext applies watched file changes using the supplied context.
+func (index *DependentMCLSourceIndex) ApplyFileChangesWithContext(ctx context.Context, changes []DependentMCLFileChange) error {
 	index.mu.Lock()
 	defer index.mu.Unlock()
 	if !index.initialized {
@@ -550,7 +551,7 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 		}
 		changed[path] = struct{}{}
 	}
-	if err := index.applySnapshotChanges(diskSources, effectiveSources, index.overlayPaths, changed); err != nil {
+	if err := index.applySnapshotChangesWithContext(ctx, diskSources, effectiveSources, index.overlayPaths, changed, files); err != nil {
 		index.initialized = false
 
 		return err
@@ -606,10 +607,6 @@ func canonicalWatchedModulePath(path string, deleted bool, diskSources map[strin
 	}
 
 	return "", fmt.Errorf("resolve changed module %q: %w", absolute, err)
-}
-
-func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources map[string]string, overlayPaths map[string]struct{}, changed map[string]struct{}) error {
-	return index.applySnapshotChangesWithContext(context.Background(), diskSources, sources, overlayPaths, changed, index.files)
 }
 
 func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx context.Context, diskSources, sources map[string]string, overlayPaths map[string]struct{}, changed map[string]struct{}, files *projectFilesystem) error {

@@ -57,8 +57,19 @@ func SchemaFieldCompletionsWithContext(ctx context.Context, path, source, placeh
 
 // SchemaFieldCompletionsWithErrorForProjectFSはfs.FS上のMCLファイルとSchemaからフィールド補完候補を返します。
 func SchemaFieldCompletionsWithErrorForProjectFS(projectRoot, entryPath, source, placeholder string, projectFiles fs.FS) ([]string, error) {
-	root, modulePath, files, dependencies, err := schemaCompletionProjectFS(projectRoot, entryPath, projectFiles)
+	return SchemaFieldCompletionsWithErrorForProjectFSWithContext(context.Background(), projectRoot, entryPath, source, placeholder, projectFiles)
+}
+
+// SchemaFieldCompletionsWithErrorForProjectFSWithContext returns schema field candidates using the supplied context.
+func SchemaFieldCompletionsWithErrorForProjectFSWithContext(ctx context.Context, projectRoot, entryPath, source, placeholder string, projectFiles fs.FS) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	root, modulePath, files, dependencies, err := schemaCompletionProjectFSWithContext(ctx, projectRoot, entryPath, projectFiles)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -214,6 +225,13 @@ func schemaTypeFieldsWithFilesystem(modulePath, source, annotation string, field
 }
 
 func schemaCompletionProjectFS(projectRoot, entryPath string, projectFiles fs.FS) (string, string, *projectFilesystem, *dependency.Lock, error) {
+	return schemaCompletionProjectFSWithContext(context.Background(), projectRoot, entryPath, projectFiles)
+}
+
+func schemaCompletionProjectFSWithContext(ctx context.Context, projectRoot, entryPath string, projectFiles fs.FS) (string, string, *projectFilesystem, *dependency.Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", nil, nil, err
+	}
 	if projectFiles == nil {
 		return "", "", nil, nil, errors.New("project filesystem is required")
 	}
@@ -226,16 +244,12 @@ func schemaCompletionProjectFS(projectRoot, entryPath string, projectFiles fs.FS
 	root := filepath.Clean(projectRoot)
 	files := newProjectFilesystem(root, projectFiles)
 	modulePath := filepath.Join(root, filepath.FromSlash(entryPath))
-	dependencies, err := schemaCompletionDependencies(root, files)
+	dependencies, err := schemaCompletionDependenciesWithContext(ctx, root, files)
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 
 	return root, modulePath, files, dependencies, nil
-}
-
-func schemaCompletionDependencies(root string, files *projectFilesystem) (*dependency.Lock, error) {
-	return schemaCompletionDependenciesWithContext(context.Background(), root, files)
 }
 
 func schemaCompletionDependenciesWithContext(ctx context.Context, root string, files *projectFilesystem) (*dependency.Lock, error) {
@@ -525,6 +539,11 @@ func literalMapString(expression Expr, key string) (string, bool) {
 }
 
 func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
+	return HelmSchemaFieldCompletionsWithContext(context.Background(), path, source, placeholder)
+}
+
+// HelmSchemaFieldCompletionsWithContext returns Helm values candidates using the supplied context.
+func HelmSchemaFieldCompletionsWithContext(ctx context.Context, path, source, placeholder string) []string {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil
@@ -538,7 +557,7 @@ func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
 		return nil
 	}
 	files := newOSProjectFilesystem(root)
-	dependencies, err := schemaCompletionDependencies(root, files)
+	dependencies, err := schemaCompletionDependenciesWithContext(ctx, root, files)
 	if err != nil {
 		return nil
 	}
@@ -548,7 +567,12 @@ func HelmSchemaFieldCompletions(path, source, placeholder string) []string {
 
 // HelmSchemaFieldCompletionsForProjectFSはfs.FS上のHelm chartからvaluesの補完候補を返します。
 func HelmSchemaFieldCompletionsForProjectFS(projectRoot, entryPath, source, placeholder string, projectFiles fs.FS) []string {
-	root, modulePath, files, dependencies, err := schemaCompletionProjectFS(projectRoot, entryPath, projectFiles)
+	return HelmSchemaFieldCompletionsForProjectFSWithContext(context.Background(), projectRoot, entryPath, source, placeholder, projectFiles)
+}
+
+// HelmSchemaFieldCompletionsForProjectFSWithContext returns Helm values candidates using the supplied context.
+func HelmSchemaFieldCompletionsForProjectFSWithContext(ctx context.Context, projectRoot, entryPath, source, placeholder string, projectFiles fs.FS) []string {
+	root, modulePath, files, dependencies, err := schemaCompletionProjectFSWithContext(ctx, projectRoot, entryPath, projectFiles)
 	if err != nil {
 		return nil
 	}

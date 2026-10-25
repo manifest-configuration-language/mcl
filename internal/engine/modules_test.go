@@ -9,16 +9,21 @@ import (
 	"testing/fstest"
 )
 
+const (
+	targetFilename     = "target.mcl"
+	importerFilename   = "importer.mcl"
+	importerSourceText = "import \"./target.mcl\" as target\nemit target.value\n"
+)
+
 func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
 	t.Parallel()
-	const targetFilename = "target.mcl"
 	root := filepath.Join(t.TempDir(), "project")
 	files := newProjectFilesystem(root, fstest.MapFS{
-		projectConfigFileName:     &fstest.MapFile{Data: []byte("")},
-		targetFilename:            &fstest.MapFile{Data: []byte("export let value = 1\n")},
-		"nested/importer.mcl":     &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\nemit target.value\n")},
-		".mcl/cache/cached.mcl":   &fstest.MapFile{Data: []byte("ignored\n")},
-		"node_modules/module.mcl": &fstest.MapFile{Data: []byte("ignored\n")},
+		projectConfigFileName:        &fstest.MapFile{Data: []byte("")},
+		targetFilename:               &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		"nested/" + importerFilename: &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\nemit target.value\n")},
+		".mcl/cache/cached.mcl":      &fstest.MapFile{Data: []byte("ignored\n")},
+		"node_modules/module.mcl":    &fstest.MapFile{Data: []byte("ignored\n")},
 	})
 	canonical := filepath.Join(root, targetFilename)
 	sources, err := collectDependentSourcesWithFilesystem(files, canonical, root, []string{root})
@@ -41,7 +46,6 @@ func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
 
 func TestDependentMCLSourcesForProjectFS(t *testing.T) {
 	t.Parallel()
-	const targetFilename = "target.mcl"
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
 	files := fstest.MapFS{
 		targetFilename:             &fstest.MapFile{Data: []byte("export let value = 1\n")},
@@ -71,19 +75,18 @@ func TestDependentMCLSourcesForProjectFS(t *testing.T) {
 func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T) {
 	t.Parallel()
 	const root = "/virtual-project"
-	const targetFilename = "target.mcl"
 	files := fstest.MapFS{
-		targetFilename: &fstest.MapFile{Data: []byte("export let value = 1\n")},
-		"importer.mcl": &fstest.MapFile{Data: []byte("let local = 1\n")},
+		targetFilename:   &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		importerFilename: &fstest.MapFile{Data: []byte("let local = 1\n")},
 	}
-	importer := filepath.Join(root, "importer.mcl")
+	importer := filepath.Join(root, importerFilename)
 	index := &DependentMCLSourceIndex{}
 	if _, err := index.SourcesForProjectFS(root, targetFilename, files, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	importSource := "import \"./target.mcl\" as target\nemit target.value\n"
-	files["importer.mcl"].Data = []byte(importSource)
+	importSource := importerSourceText
+	files[importerFilename].Data = []byte(importSource)
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer}}); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +108,7 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 	}
 
 	updatedImportSource := "import \"./target.mcl\" as target\nlet value = target.value\nemit value\n"
-	files["importer.mcl"].Data = []byte(updatedImportSource)
+	files[importerFilename].Data = []byte(updatedImportSource)
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer}}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +127,7 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 		t.Fatalf("closing overlay restored %q, want %q", got, updatedImportSource)
 	}
 
-	delete(files, "importer.mcl")
+	delete(files, importerFilename)
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer, Deleted: true}}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,15 +145,15 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	root := t.TempDir()
 	for path, source := range map[string]string{
 		projectConfigFileName: "",
-		"target.mcl":          "export let value = \"old\"\n",
-		"importer.mcl":        "let local = \"old\"\n",
+		targetFilename:        "export let value = \"old\"\n",
+		importerFilename:      "let local = \"old\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(root, "target.mcl")
-	importer := filepath.Join(root, "importer.mcl")
+	target := filepath.Join(root, targetFilename)
+	importer := filepath.Join(root, importerFilename)
 	importer, err := filepath.EvalSymlinks(importer)
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +163,7 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	importSource := "import \"./target.mcl\" as target\nemit target.value\n"
+	importSource := importerSourceText
 	if err := os.WriteFile(importer, []byte(importSource), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -217,14 +220,14 @@ func TestDependentMCLSourceIndexInvalidatesOnDeletedImport(t *testing.T) {
 	root := t.TempDir()
 	for path, source := range map[string]string{
 		projectConfigFileName: "",
-		"target.mcl":          "export let value = \"old\"\n",
-		"importer.mcl":        "import \"./target.mcl\" as target\nemit target.value\n",
+		targetFilename:        "export let value = \"old\"\n",
+		importerFilename:      importerSourceText,
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(root, "target.mcl")
+	target := filepath.Join(root, targetFilename)
 	index := &DependentMCLSourceIndex{}
 	if _, err := index.Sources(target, []string{root}, nil); err != nil {
 		t.Fatal(err)
@@ -245,7 +248,7 @@ func TestDependentMCLSourceIndexIgnoresWatchedFilesInCache(t *testing.T) {
 	root := t.TempDir()
 	for path, source := range map[string]string{
 		projectConfigFileName: "",
-		"target.mcl":          "export let value = \"old\"\n",
+		targetFilename:        "export let value = \"old\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
@@ -255,8 +258,8 @@ func TestDependentMCLSourceIndexIgnoresWatchedFilesInCache(t *testing.T) {
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(root, "target.mcl")
-	cachedImporter := filepath.Join(cache, "importer.mcl")
+	target := filepath.Join(root, targetFilename)
+	cachedImporter := filepath.Join(cache, importerFilename)
 	index := &DependentMCLSourceIndex{}
 	if _, err := index.Sources(target, []string{root}, nil); err != nil {
 		t.Fatal(err)
@@ -281,15 +284,15 @@ func TestDependentMCLSourceIndexConcurrentUpdates(t *testing.T) {
 	root := t.TempDir()
 	for path, source := range map[string]string{
 		projectConfigFileName: "",
-		"target.mcl":          "export let value = 1\n",
-		"importer.mcl":        "import \"./target.mcl\" as target\nemit target.value\n",
+		targetFilename:        "export let value = 1\n",
+		importerFilename:      importerSourceText,
 	} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(root, "target.mcl")
-	importer := filepath.Join(root, "importer.mcl")
+	target := filepath.Join(root, targetFilename)
+	importer := filepath.Join(root, importerFilename)
 	index := &DependentMCLSourceIndex{}
 	if _, err := index.Sources(target, []string{root}, nil); err != nil {
 		t.Fatal(err)

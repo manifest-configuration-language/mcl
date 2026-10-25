@@ -35,6 +35,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 		if err != nil {
 			return "", false
 		}
+
 		return canonicalSourcePath(resolved)
 	}
 	readSource := func(path string) (string, bool) {
@@ -45,6 +46,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 		if err != nil {
 			return "", false
 		}
+
 		return string(data), true
 	}
 	target, ok := languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
@@ -57,6 +59,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 		if !s.documentSnapshotIsCurrent(snapshot) {
 			return nil, protocol.ErrContentModified
 		}
+
 		return []protocol.Location{}, nil
 	}
 	canonicalTarget, ok := canonicalSourcePath(target.Path)
@@ -64,6 +67,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 		if !s.documentSnapshotIsCurrent(snapshot) {
 			return nil, protocol.ErrContentModified
 		}
+
 		return []protocol.Location{}, nil
 	}
 	target.Path = canonicalTarget
@@ -119,6 +123,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 	if !s.documentSnapshotIsCurrent(snapshot) {
 		return nil, protocol.ErrContentModified
 	}
+
 	return locations, nil
 }
 
@@ -160,5 +165,6 @@ func (s *server) documentSnapshotIsCurrent(snapshot *server) bool {
 			return false
 		}
 	}
+
 	return slices.Equal(s.workspaceRoots, snapshot.workspaceRoots)
 }

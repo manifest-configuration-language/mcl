@@ -1,6 +1,10 @@
 package lsp
 
-import "github.com/manifest-configuration-language/mcl/internal/languageservice"
+import (
+	"context"
+
+	"github.com/manifest-configuration-language/mcl/internal/languageservice"
+)
 
 type completionItem = languageservice.CompletionItem
 
@@ -14,11 +18,11 @@ type completionParams struct {
 	} `json:"position"`
 }
 
-func (s *server) completions(params completionParams) []languageservice.CompletionItem {
+func (s *server) completions(ctx context.Context, params completionParams) []languageservice.CompletionItem {
 	state, exists := s.documents[params.TextDocument.URI]
 	if !exists {
-		return languageservice.CompletionForSource("", params.Position.Line, params.Position.Character, "")
+		return languageservice.CompletionForSourceWithContext(ctx, "", params.Position.Line, params.Position.Character, "")
 	}
 
-	return languageservice.CompletionForSource(state.Text, params.Position.Line, params.Position.Character, documentPath(params.TextDocument.URI))
+	return languageservice.CompletionForSourceWithContext(ctx, state.Text, params.Position.Line, params.Position.Character, documentPath(params.TextDocument.URI))
 }

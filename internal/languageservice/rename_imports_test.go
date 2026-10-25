@@ -7,6 +7,8 @@ import (
 )
 
 func TestRenameFileImportsForProjectFS(t *testing.T) {
+	t.Parallel()
+
 	projectFiles := fstest.MapFS{
 		"lib/old.mcl":    {Data: []byte("import \"./shared.mcl\" as shared\nlet value = shared.value\nemit value\n")},
 		"lib/shared.mcl": {Data: []byte("export let value = 1\n")},
@@ -30,6 +32,8 @@ func TestRenameFileImportsForProjectFS(t *testing.T) {
 }
 
 func TestRenameFileImportsRejectsIncompleteSource(t *testing.T) {
+	t.Parallel()
+
 	projectFiles := fstest.MapFS{
 		"lib/old.mcl": {Data: []byte("emit 1\n")},
 		"broken.mcl":  {Data: []byte("import \"./lib/old.mcl\" as old\nemit old.\n")},

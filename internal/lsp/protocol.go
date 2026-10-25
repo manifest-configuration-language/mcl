@@ -45,6 +45,7 @@ func (s *server) readOnlySnapshot() *server {
 	renameIndex := s.renameIndex
 	stateGeneration := s.stateGeneration
 	s.mu.Unlock()
+
 	return &server{documents: documents, workspaceRoots: workspaceRoots, watchRegistered: watchRegistered, renameIndex: renameIndex, stateGeneration: stateGeneration}
 }
 
@@ -52,13 +53,14 @@ func (s *server) snapshotForRequest(ctx context.Context) *server {
 	if snapshot, ok := ctx.Value(requestSnapshotContextKey{}).(*server); ok && snapshot != nil {
 		return snapshot
 	}
+
 	return s.readOnlySnapshot()
 }
 
 func protocolCompletionItems(items []completionItem) protocol.CompletionItemSlice {
 	result := make(protocol.CompletionItemSlice, len(items))
 	for i, item := range items {
-		result[i] = protocol.CompletionItem{Label: item.Label, Kind: protocol.CompletionItemKind(item.Kind)}
+		result[i] = protocol.CompletionItem{Label: item.Label, Kind: protocolCompletionKind(item.Kind)}
 		if item.InsertText != "" {
 			result[i].InsertText = protocol.NewOptional(item.InsertText)
 		}
@@ -69,7 +71,23 @@ func protocolCompletionItems(items []completionItem) protocol.CompletionItemSlic
 			result[i].Documentation = protocol.String(item.Documentation)
 		}
 	}
+
 	return result
+}
+
+func protocolCompletionKind(kind int) protocol.CompletionItemKind {
+	switch kind {
+	case 3:
+		return protocol.CompletionItemKindFunction
+	case 6:
+		return protocol.CompletionItemKindVariable
+	case 10:
+		return protocol.CompletionItemKindProperty
+	case 14:
+		return protocol.CompletionItemKindKeyword
+	default:
+		return protocol.CompletionItemKindText
+	}
 }
 
 func protocolTextEdits(edits []textEdit) []protocol.TextEdit {
@@ -83,6 +101,7 @@ func protocolTextEdits(edits []textEdit) []protocol.TextEdit {
 			NewText: edit.NewText,
 		}
 	}
+
 	return result
 }
 
@@ -90,6 +109,7 @@ func protocolDefinitionResult(location *definitionLocation) protocol.DefinitionR
 	if location == nil {
 		return nil
 	}
+
 	return &protocol.Location{
 		URI: uri.URI(location.URI),
 		Range: protocol.Range{
@@ -137,7 +157,7 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 	request.TextDocument.URI = string(params.TextDocument.URI)
 	request.Position.Line = int(params.Position.Line)
 	request.Position.Character = int(params.Position.Character)
-	items := state.completions(request)
+	items := state.completions(ctx, request)
 	if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
 		items = []completionItem{}
 	}
@@ -216,6 +236,7 @@ func (s *server) Rename(ctx context.Context, params *protocol.RenameParams) (*pr
 	if !s.documentSnapshotIsCurrent(state) {
 		return nil, protocol.ErrContentModified
 	}
+
 	return protocolWorkspaceEdit(edit), nil
 }
 
@@ -333,9 +354,9 @@ func (s *server) initializeLocked(params *protocol.InitializeParams) *protocol.I
 	s.workspaceRoots = workspaceFolderPaths(workspaceFolders)
 	if len(s.workspaceRoots) == 0 {
 		rootURI := ""
-		//nolint:staticcheck // RootURI remains a compatibility fallback for clients without workspaceFolders.
+		//nolint:staticcheck // RootURI remains a compatibility fallback for clients without workspaceFolders or rootUri.
 		if params.RootURI != nil {
-			//nolint:staticcheck // RootURI remains a compatibility fallback for clients without workspaceFolders.
+			//nolint:staticcheck // RootURI remains a compatibility fallback for clients without workspaceFolders or rootUri.
 			rootURI = params.RootURI.String()
 		}
 		if root := documentPath(rootURI); root != "" {
@@ -461,7 +482,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params *protoc
 	if s.watchRegistered && s.renameIndex != nil {
 		if invalidateRenameIndex {
 			s.renameIndex.Invalidate()
-		} else if err := s.renameIndex.ApplyFileChanges(changes); err != nil {
+		} else if err := s.renameIndex.ApplyFileChangesWithContext(ctx, changes); err != nil {
 			return err
 		}
 	}

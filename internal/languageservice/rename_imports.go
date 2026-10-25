@@ -1,6 +1,7 @@
 package languageservice
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -37,11 +38,11 @@ func (err *ImportRenameError) Unwrap() error { return err.Err }
 // The caller applies the returned edits and moves the file in its project model.
 func RenameFileImportsForProjectFS(params NavigationParams, projectFiles fs.FS, oldPath, newPath string) (*RenameFileImportsResult, error) {
 	if !validMCLProjectPath(oldPath) || !validMCLProjectPath(newPath) || oldPath == newPath {
-		return nil, fmt.Errorf("old and new paths must be distinct project-relative MCL paths")
+		return nil, errors.New("old and new paths must be distinct project-relative MCL paths")
 	}
 	sources, _, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
-		return nil, fmt.Errorf("could not read the MCL project")
+		return nil, errors.New("could not read the MCL project")
 	}
 	if _, exists := sources[oldPath]; !exists {
 		return nil, fmt.Errorf("MCL source does not exist: %s", oldPath)
@@ -100,6 +101,7 @@ func RenameFileImportsForProjectFS(params NavigationParams, projectFiles fs.FS, 
 		if left.Range.Start.Line != right.Range.Start.Line {
 			return left.Range.Start.Line - right.Range.Start.Line
 		}
+
 		return left.Range.Start.Character - right.Range.Start.Character
 	})
 
