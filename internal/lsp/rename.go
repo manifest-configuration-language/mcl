@@ -198,6 +198,9 @@ type schemaFieldOccurrence struct {
 }
 
 func (s *server) renameSchemaField(ctx context.Context, params renameParams, name string, offset int, module syntax.ModuleAST, source string) (*workspaceEdit, bool) {
+	if ctx.Err() != nil {
+		return nil, true
+	}
 	path := documentPath(params.TextDocument.URI)
 	if path == "" {
 		return nil, false
@@ -215,6 +218,9 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 	pathByBinding := make(map[string][]string)
 	functionReturnSchemas := schemaFunctionReturnSchemas(module, source)
 	for _, node := range module.Nodes {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		declaration, ok := node.(*syntax.LetDeclaration)
 		if !ok || declaration.Expression == nil {
 			continue
@@ -233,6 +239,9 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 	}
 	var target *schemaFieldOccurrence
 	for index := range occurrences {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		occurrence := &occurrences[index]
 		fieldStart, fieldEnd, ok := schemaFieldSourceRange(source, occurrence)
 		if !ok || occurrence.name != name || offset < fieldStart || offset > fieldEnd {
@@ -249,6 +258,9 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 	}
 	if target == nil {
 		for _, reference := range schemaFieldReferenceOccurrences(module, source, annotationByBinding, pathByBinding) {
+			if ctx.Err() != nil {
+				return nil, true
+			}
 			if reference.entry.Start > offset || offset > reference.entry.End || reference.name != name {
 				continue
 			}
@@ -260,6 +272,9 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 				return nil, true
 			}
 			for index := range occurrences {
+				if ctx.Err() != nil {
+					return nil, true
+				}
 				occurrence := &occurrences[index]
 				if occurrence.name != reference.name || occurrence.annotation != reference.annotation || !slices.Equal(occurrence.parentPath, reference.parentPath) {
 					continue
@@ -299,14 +314,17 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 	}
 	var sources map[string]string
 	if s.watchRegistered {
-		sources, err = s.renameIndex.SourcesFromIndex(path, s.workspaceRoots, overlays)
+		sources, err = s.renameIndex.SourcesFromIndexWithContext(ctx, path, s.workspaceRoots, overlays)
 	} else {
-		sources, err = s.renameIndex.Sources(path, s.workspaceRoots, overlays)
+		sources, err = s.renameIndex.SourcesWithContext(ctx, path, s.workspaceRoots, overlays)
 	}
 	if err != nil {
 		return nil, true
 	}
 	for candidatePath, candidateSource := range sources {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		candidatePath, pathErr := filepath.Abs(candidatePath)
 		if pathErr != nil {
 			return nil, true
@@ -335,6 +353,9 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 	}
 
 	for documentPath, documentSource := range sourceByPath {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		documentModule := moduleByPath[documentPath]
 		documentAnnotations := annotationByPath[documentPath]
 		documentPaths := bindingsPathByPath[documentPath]
@@ -770,6 +791,9 @@ func (s *server) rename(params renameParams) *workspaceEdit {
 }
 
 func (s *server) renameWithContext(ctx context.Context, params renameParams) *workspaceEdit {
+	if ctx.Err() != nil {
+		return nil
+	}
 	state, exists := s.documents[params.TextDocument.URI]
 	if !exists || !isMCLIdentifier(params.NewName) {
 		return nil
@@ -790,8 +814,11 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	if err != nil {
 		return nil
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	module := index.Module
-	if edit, handled := s.renameImportedExport(params, name, offset, module, index); handled {
+	if edit, handled := s.renameImportedExport(ctx, params, name, offset, module, index); handled {
 		return edit
 	}
 	if match := index.LocalAt(name, offset); match.Found {
@@ -806,6 +833,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 		}
 		edits := make([]textEdit, len(result.Edits))
 		for index, edit := range result.Edits {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if edit.Path != params.TextDocument.URI {
 				return nil
 			}
@@ -823,6 +853,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	target := index.DeclarationAt(name, offset)
 	if target < 0 {
 		for _, reference := range references {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if reference.Name != name || offset < reference.Span.Start || offset > reference.Span.Start+len(name) {
 				continue
 			}
@@ -837,6 +870,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 		return nil
 	}
 	for index, node := range module.Nodes {
+		if ctx.Err() != nil {
+			return nil
+		}
 		declarationName, _, _, ok := astDeclarationInfo(node)
 		if !ok {
 			continue
@@ -849,6 +885,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 		}
 	}
 	for _, reference := range references {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if reference.TypeName == isTypeDeclaration(module.Nodes[target]) && reference.Name == params.NewName {
 			return nil
 		}
@@ -858,6 +897,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	spans := []syntax.SourceSpan{declarationSpan}
 	seen := map[syntax.SourceSpan]struct{}{declarationSpan: {}}
 	for _, reference := range index.TopLevelReferences(name, target, isTypeDeclaration(module.Nodes[target])) {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if index.LocalAt(params.NewName, reference.Span.Start).Found {
 			return nil
 		}
@@ -877,6 +919,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	})
 	candidate := state.Text
 	for _, span := range editSpans {
+		if ctx.Err() != nil {
+			return nil
+		}
 		candidate = candidate[:span.Start] + params.NewName + candidate[span.End:]
 	}
 	if _, err := syntax.ParseAST(candidate); err != nil {
@@ -885,6 +930,9 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	stateIndex := sourceindex.New(state.Text)
 	edits := make([]textEdit, len(spans))
 	for index, span := range spans {
+		if ctx.Err() != nil {
+			return nil
+		}
 		edits[index].Range.Start = sourcePositionAt(stateIndex, span.Start)
 		edits[index].Range.End = sourcePositionAt(stateIndex, span.End)
 		edits[index].NewText = params.NewName
@@ -900,7 +948,10 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	return &workspaceEdit{Changes: map[string][]textEdit{params.TextDocument.URI: edits}}
 }
 
-func (s *server) renameImportedExport(params renameParams, name string, offset int, current syntax.ModuleAST, index *moduleSemanticIndex) (*workspaceEdit, bool) {
+func (s *server) renameImportedExport(ctx context.Context, params renameParams, name string, offset int, current syntax.ModuleAST, index *moduleSemanticIndex) (*workspaceEdit, bool) {
+	if ctx.Err() != nil {
+		return nil, true
+	}
 	currentPath := documentPath(params.TextDocument.URI)
 	if currentPath == "" {
 		return nil, false
@@ -908,6 +959,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	targetPath := ""
 	targetName := name
 	for _, node := range current.Nodes {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		declarationName, _, nameSpan, ok := astDeclarationInfo(node)
 		if ok && astDeclarationExported(node) && isRenameableASTDeclaration(node) && declarationName == name && nameSpan.Start <= offset && offset <= nameSpan.End {
 			targetPath = currentPath
@@ -917,6 +971,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	}
 	if targetPath == "" {
 		for _, node := range current.Nodes {
+			if ctx.Err() != nil {
+				return nil, true
+			}
 			declaration, ok := node.(*syntax.ImportDeclaration)
 			if !ok || !isMCLIdentifier(declaration.Name) {
 				continue
@@ -926,6 +983,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 				continue
 			}
 			for _, reference := range index.Qualified {
+				if ctx.Err() != nil {
+					return nil, true
+				}
 				if reference.Span.Start > offset || offset > reference.Span.End {
 					continue
 				}
@@ -938,6 +998,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 			}
 			if targetPath == "" {
 				for _, reference := range index.QualifiedType {
+					if ctx.Err() != nil {
+						return nil, true
+					}
 					if reference.Alias != declaration.Name || reference.Member != name {
 						continue
 					}
@@ -961,6 +1024,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	openURIs := make(map[string]string, len(s.documents))
 	openDocumentURIs := slices.Sorted(maps.Keys(s.documents))
 	for _, uri := range openDocumentURIs {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		document := s.documents[uri]
 		path := documentPath(uri)
 		if path == "" {
@@ -983,9 +1049,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	var sources map[string]string
 	var err error
 	if s.watchRegistered {
-		sources, err = s.renameIndex.SourcesFromIndex(targetPath, s.workspaceRoots, overlays)
+		sources, err = s.renameIndex.SourcesFromIndexWithContext(ctx, targetPath, s.workspaceRoots, overlays)
 	} else {
-		sources, err = s.renameIndex.Sources(targetPath, s.workspaceRoots, overlays)
+		sources, err = s.renameIndex.SourcesWithContext(ctx, targetPath, s.workspaceRoots, overlays)
 	}
 	if err != nil {
 		return nil, true
@@ -995,6 +1061,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	paths := make(map[string]string, len(sources))
 	texts := make(map[string]string, len(sources))
 	for path, source := range sources {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		uri := openURIs[path]
 		if uri == "" {
 			uri = filePathToURI(path)
@@ -1011,10 +1080,16 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	declarationURI := ""
 	var declaration syntax.ASTNode
 	for uri, parsed := range parsedDocuments {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		if paths[uri] != targetPath {
 			continue
 		}
 		for _, node := range parsed.Nodes {
+			if ctx.Err() != nil {
+				return nil, true
+			}
 			declarationName, _, _, ok := astDeclarationInfo(node)
 			if ok && astDeclarationExported(node) && declarationName == targetName && isRenameableASTDeclaration(node) {
 				if declarationURI != "" {
@@ -1030,6 +1105,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 	_, _, declarationSpan, _ := astDeclarationInfo(declaration)
 	declarationIndex := -1
 	for index, node := range parsedDocuments[declarationURI].Nodes {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		declarationName, _, nameSpan, ok := astDeclarationInfo(node)
 		if ok && nameSpan == declarationSpan && declarationName == targetName {
 			declarationIndex = index
@@ -1041,6 +1119,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 		return nil, true
 	}
 	for _, node := range parsedDocuments[declarationURI].Nodes {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		declarationName, _, nameSpan, ok := astDeclarationInfo(node)
 		if !ok || declarationName != params.NewName || nameSpan == declarationSpan {
 			continue
@@ -1072,9 +1153,15 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 		return nil, true
 	}
 	for uri, parsed := range parsedDocuments {
+		if ctx.Err() != nil {
+			return nil, true
+		}
 		if paths[uri] == targetPath {
 			index := semanticDocuments[uri]
 			for _, reference := range index.TopLevelReferences(targetName, declarationIndex, isTypeDeclaration(declaration)) {
+				if ctx.Err() != nil {
+					return nil, true
+				}
 				span := syntax.SourceSpan{Start: reference.Span.Start, End: reference.Span.Start + len(targetName)}
 				if !addEdit(uri, texts[uri], span) {
 					return nil, true
@@ -1085,6 +1172,9 @@ func (s *server) renameImportedExport(params renameParams, name string, offset i
 		}
 		aliases := make(map[string]bool)
 		for _, node := range parsed.Nodes {
+			if ctx.Err() != nil {
+				return nil, true
+			}
 			declaration, ok := node.(*syntax.ImportDeclaration)
 			if !ok {
 				continue

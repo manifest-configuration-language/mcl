@@ -224,6 +224,17 @@ type RenameEdit struct {
 	Range SourceRange `json:"range" yaml:"range" mapstructure:"range"`
 }
 
+type RenameFileImportsResult struct {
+	// Edits corresponds to the JSON schema field "edits".
+	Edits []RenameEdit `json:"edits" yaml:"edits" mapstructure:"edits"`
+
+	// NewPath corresponds to the JSON schema field "newPath".
+	NewPath ProjectPath `json:"newPath" yaml:"newPath" mapstructure:"newPath"`
+
+	// OldPath corresponds to the JSON schema field "oldPath".
+	OldPath ProjectPath `json:"oldPath" yaml:"oldPath" mapstructure:"oldPath"`
+}
+
 type RenameResult struct {
 	// Edits corresponds to the JSON schema field "edits".
 	Edits []RenameEdit `json:"edits" yaml:"edits" mapstructure:"edits"`
@@ -249,6 +260,12 @@ type Request struct {
 
 	// NewName corresponds to the JSON schema field "newName".
 	NewName *string `json:"newName,omitempty,omitzero" yaml:"newName,omitempty" mapstructure:"newName,omitempty"`
+
+	// NewPath corresponds to the JSON schema field "newPath".
+	NewPath *ProjectPath `json:"newPath,omitempty,omitzero" yaml:"newPath,omitempty" mapstructure:"newPath,omitempty"`
+
+	// OldPath corresponds to the JSON schema field "oldPath".
+	OldPath *ProjectPath `json:"oldPath,omitempty,omitzero" yaml:"oldPath,omitempty" mapstructure:"oldPath,omitempty"`
 
 	// Operation corresponds to the JSON schema field "operation".
 	Operation RequestOperation `json:"operation" yaml:"operation" mapstructure:"operation"`
@@ -281,6 +298,7 @@ const RequestOperationLint RequestOperation = "lint"
 const RequestOperationParse RequestOperation = "parse"
 const RequestOperationReferences RequestOperation = "references"
 const RequestOperationRename RequestOperation = "rename"
+const RequestOperationRenameFileImports RequestOperation = "renameFileImports"
 const RequestOperationRender RequestOperation = "render"
 
 type Response struct {
@@ -355,16 +373,13 @@ const SourceMapOriginKindMcl SourceMapOriginKind = "mcl"
 const SourceMapOriginKindMclOverlayBase SourceMapOriginKind = "mcl-overlay-base"
 const SourceMapOriginKindMclOverlayPatch SourceMapOriginKind = "mcl-overlay-patch"
 
-type SourceMapOriginMultiplicity string
-
-const SourceMapOriginMultiplicityRepeated SourceMapOriginMultiplicity = "repeated"
-const SourceMapOriginMultiplicityUnique SourceMapOriginMultiplicity = "unique"
-
 type HoverResultHover_0 = HoverInfo
 
-const SourceMapOriginMultiplicityAmbiguous SourceMapOriginMultiplicity = "ambiguous"
+type SourceMapOriginMultiplicity string
 
-type DefinitionResultLocation_0 = DefinitionLocation
+const SourceMapOriginMultiplicityAmbiguous SourceMapOriginMultiplicity = "ambiguous"
+const SourceMapOriginMultiplicityRepeated SourceMapOriginMultiplicity = "repeated"
+const SourceMapOriginMultiplicityUnique SourceMapOriginMultiplicity = "unique"
 
 type SourceRange struct {
 	// End corresponds to the JSON schema field "end".
@@ -373,6 +388,8 @@ type SourceRange struct {
 	// Start corresponds to the JSON schema field "start".
 	Start CompletionPosition `json:"start" yaml:"start" mapstructure:"start"`
 }
+
+type DefinitionResultLocation_0 = DefinitionLocation
 
 type StandardLibraryFunction struct {
 	// Module corresponds to the JSON schema field "module".

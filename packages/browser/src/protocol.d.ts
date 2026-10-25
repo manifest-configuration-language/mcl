@@ -15,10 +15,13 @@ export type Request = {
     | "definition"
     | "hover"
     | "references"
-    | "rename";
+    | "rename"
+    | "renameFileImports";
   position?: CompletionPosition;
   newName?: string;
-  entrypoint?: ProjectPath;
+  oldPath?: ProjectPath;
+  newPath?: ProjectPath;
+  entrypoint?: ProjectPath2;
   /**
    * UTF-8 entrypoint source, limited by the runtime.
    */
@@ -30,10 +33,12 @@ export type Request = {
     [k: string]: FileInput;
   };
 };
+export type ProjectPath = ProjectPath1;
+export type ProjectPath1 = string;
 /**
  * Project-relative MCL source path. Defaults to main.mcl.
  */
-export type ProjectPath = string;
+export type ProjectPath2 = string;
 /**
  * Binary files omit content and are supplied in the optional second run argument under the same path.
  */
@@ -42,8 +47,6 @@ export type FileInput = {
   content?: string;
 };
 export type LintResult = LintDiagnostic[];
-export type ProjectPath1 = ProjectPath2;
-export type ProjectPath2 = string;
 
 export interface CompletionPosition {
   line: number;
@@ -64,7 +67,8 @@ export interface Response {
     | DefinitionResult
     | HoverResult
     | ReferencesResult
-    | RenameResult;
+    | RenameResult
+    | RenameFileImportsResult;
   error?: Error;
 }
 export interface ParseResult {
@@ -118,7 +122,7 @@ export interface SourceRange {
   end: CompletionPosition;
 }
 export interface SourceMapOrigin {
-  path: ProjectPath1;
+  path: ProjectPath;
   range: SourceRange;
   kind: "mcl" | "mcl-overlay-base" | "mcl-overlay-patch";
   multiplicity: "unique" | "repeated" | "ambiguous";
@@ -158,16 +162,21 @@ export interface ReferencesResult {
   references: ReferenceLocation[];
 }
 export interface ReferenceLocation {
-  path: ProjectPath1;
+  path: ProjectPath;
   range: SourceRange;
 }
 export interface RenameResult {
   edits: RenameEdit[];
 }
 export interface RenameEdit {
-  path: ProjectPath1;
+  path: ProjectPath;
   range: SourceRange;
   newText: string;
+}
+export interface RenameFileImportsResult {
+  oldPath: ProjectPath;
+  newPath: ProjectPath;
+  edits: RenameEdit[];
 }
 export interface Error {
   code: string;

@@ -1,6 +1,7 @@
 package languageservice
 
 import (
+	"context"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -36,8 +37,19 @@ type ReferenceSourceReader func(path string) (string, bool)
 
 // ReferenceTargetAt resolves the declaration at a source position, including imported exports.
 func ReferenceTargetAt(path, source string, position Position, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) (ReferenceTarget, bool) {
+	return ReferenceTargetAtWithContext(context.Background(), path, source, position, resolveImport, readSource)
+}
+
+// ReferenceTargetAtWithContext resolves the declaration at a source position with cancellation support.
+func ReferenceTargetAtWithContext(ctx context.Context, path, source string, position Position, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) (ReferenceTarget, bool) {
+	if ctx.Err() != nil {
+		return ReferenceTarget{}, false
+	}
 	index, err := AnalyzeSource(source)
 	if err != nil {
+		return ReferenceTarget{}, false
+	}
+	if ctx.Err() != nil {
 		return ReferenceTarget{}, false
 	}
 	offset, err := sourceindex.New(source).OffsetAt(sourceindex.Position{Line: position.Line, Character: position.Character})
@@ -49,6 +61,9 @@ func ReferenceTargetAt(path, source string, position Position, resolveImport Ref
 		return ReferenceTarget{}, false
 	}
 	for _, node := range index.Module.Nodes {
+		if ctx.Err() != nil {
+			return ReferenceTarget{}, false
+		}
 		declaration, ok := node.(*syntax.ImportDeclaration)
 		if !ok || declaration.Name != name || !spanContains(declaration.NameSpan, offset) {
 			continue
@@ -64,10 +79,16 @@ func ReferenceTargetAt(path, source string, position Position, resolveImport Ref
 	}
 
 	for _, reference := range append(append([]QualifiedReference(nil), index.Qualified...), index.QualifiedType...) {
+		if ctx.Err() != nil {
+			return ReferenceTarget{}, false
+		}
 		if !spanContains(reference.Span, offset) || index.LocalAt(reference.Alias, reference.Span.Start).Found {
 			continue
 		}
 		for _, node := range index.Module.Nodes {
+			if ctx.Err() != nil {
+				return ReferenceTarget{}, false
+			}
 			declaration, ok := node.(*syntax.ImportDeclaration)
 			if !ok || declaration.Name != reference.Alias || strings.HasPrefix(declaration.ModulePath, "std:") {
 				continue
@@ -87,6 +108,9 @@ func ReferenceTargetAt(path, source string, position Position, resolveImport Ref
 			var target ReferenceTarget
 			found := false
 			for _, candidate := range targetModule.Nodes {
+				if ctx.Err() != nil {
+					return ReferenceTarget{}, false
+				}
 				candidateName, _, span, valid := ASTDeclarationInfo(candidate)
 				if !valid || candidateName != reference.Member || !ASTDeclarationExported(candidate) {
 					continue
@@ -119,6 +143,11 @@ func ReferenceTargetAt(path, source string, position Position, resolveImport Ref
 
 // ReferencesForProject finds references to a resolved target in the supplied project snapshot.
 func ReferencesForProject(target ReferenceTarget, sources map[string]string, resolveImport ReferenceImportResolver, includeDeclaration bool) []Reference {
+	return ReferencesForProjectWithContext(context.Background(), target, sources, resolveImport, includeDeclaration)
+}
+
+// ReferencesForProjectWithContext finds references in a project snapshot with cancellation support.
+func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget, sources map[string]string, resolveImport ReferenceImportResolver, includeDeclaration bool) []Reference {
 	paths := make([]string, 0, len(sources))
 	for path := range sources {
 		paths = append(paths, path)
@@ -126,10 +155,16 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 	slices.Sort(paths)
 	var result []Reference
 	for _, path := range paths {
+		if ctx.Err() != nil {
+			return nil
+		}
 		source := sources[path]
 		index, err := AnalyzeSource(source)
 		if err != nil {
 			continue
+		}
+		if ctx.Err() != nil {
+			return nil
 		}
 		if path == target.Path {
 			if includeDeclaration {
@@ -137,6 +172,9 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 			}
 			if target.ImportAlias {
 				for _, reference := range append(append([]QualifiedReference(nil), index.Qualified...), index.QualifiedType...) {
+					if ctx.Err() != nil {
+						return nil
+					}
 					if reference.Alias == target.Name && !index.LocalAt(target.Name, reference.Span.Start).Found {
 						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
 					}
@@ -146,6 +184,9 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 			}
 			if target.Local {
 				for _, reference := range index.References {
+					if ctx.Err() != nil {
+						return nil
+					}
 					if reference.Name != target.Name || reference.TypeName {
 						continue
 					}
@@ -159,6 +200,9 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 			}
 			declarationIndex := -1
 			for i, node := range index.Module.Nodes {
+				if ctx.Err() != nil {
+					return nil
+				}
 				_, _, span, ok := ASTDeclarationInfo(node)
 				if ok && span == target.Declaration {
 					declarationIndex = i
@@ -179,6 +223,9 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 		}
 		aliases := make(map[string]struct{})
 		for _, node := range index.Module.Nodes {
+			if ctx.Err() != nil {
+				return nil
+			}
 			declaration, ok := node.(*syntax.ImportDeclaration)
 			if !ok || strings.HasPrefix(declaration.ModulePath, "std:") {
 				continue
@@ -189,6 +236,9 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 			}
 		}
 		for _, reference := range index.Qualified {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if _, ok := aliases[reference.Alias]; !ok || reference.Member != target.Name || index.LocalAt(reference.Alias, reference.Span.Start).Found {
 				continue
 			}
@@ -196,6 +246,9 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 		}
 		if target.TypeName {
 			for _, reference := range index.QualifiedType {
+				if ctx.Err() != nil {
+					return nil
+				}
 				if _, ok := aliases[reference.Alias]; !ok || reference.Member != target.Name || index.LocalAt(reference.Alias, reference.Span.Start).Found {
 					continue
 				}
@@ -210,6 +263,14 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 // ReferencesForProjectFS finds references to the symbol at the requested position
 // using only files available in projectFiles and the supplied entrypoint source.
 func ReferencesForProjectFS(params NavigationParams, projectFiles fs.FS, includeDeclaration bool) []Reference {
+	return ReferencesForProjectFSWithContext(context.Background(), params, projectFiles, includeDeclaration)
+}
+
+// ReferencesForProjectFSWithContext finds references in a project filesystem with cancellation support.
+func ReferencesForProjectFSWithContext(ctx context.Context, params NavigationParams, projectFiles fs.FS, includeDeclaration bool) []Reference {
+	if ctx.Err() != nil {
+		return nil
+	}
 	sources, _, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
 		return nil
@@ -226,7 +287,7 @@ func ReferencesForProjectFS(params NavigationParams, projectFiles fs.FS, include
 
 		return resolved, exists
 	}
-	target, found := ReferenceTargetAt(params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, resolveImport, func(path string) (string, bool) {
+	target, found := ReferenceTargetAtWithContext(ctx, params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, resolveImport, func(path string) (string, bool) {
 		source, exists := sources[path]
 
 		return source, exists
@@ -235,5 +296,5 @@ func ReferencesForProjectFS(params NavigationParams, projectFiles fs.FS, include
 		return nil
 	}
 
-	return ReferencesForProject(target, sources, resolveImport, includeDeclaration)
+	return ReferencesForProjectWithContext(ctx, target, sources, resolveImport, includeDeclaration)
 }

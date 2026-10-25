@@ -18,6 +18,7 @@ import type {
   RenderResult,
   RenameEdit as ProtocolRenameEdit,
   RenameResult as ProtocolRenameResult,
+  RenameFileImportsResult as ProtocolRenameFileImportsResult,
   Request as WasmRequest,
   SourceRange as ProtocolSourceRange,
   SourceMap as ProtocolSourceMap,
@@ -54,6 +55,7 @@ export type HoverResult = ProtocolHoverResult;
 export type HoverInfo = ProtocolHoverInfo;
 export type RenameEdit = ProtocolRenameEdit;
 export type RenameResult = ProtocolRenameResult;
+export type RenameFileImportsResult = ProtocolRenameFileImportsResult;
 export type ReferenceLocation = ProtocolReferenceLocation;
 export type ReferencesResult = ProtocolReferencesResult;
 export type SourceRange = ProtocolSourceRange;
@@ -69,6 +71,7 @@ export type MclResult =
   | ({ operation: "hover" } & ProtocolHoverResult)
   | ({ operation: "references" } & ProtocolReferencesResult)
   | ({ operation: "rename" } & ProtocolRenameResult)
+  | ({ operation: "renameFileImports" } & ProtocolRenameFileImportsResult)
   | ({ operation: "format" } & FormatResult)
   | ({ operation: "check" } & CheckResult)
   | ({ operation: "evaluate" } & EvaluateResult)
@@ -158,6 +161,15 @@ export interface MclRuntime {
     files: ProjectFiles | undefined,
     options: RenameRequestOptions,
   ): Promise<MclResult & { operation: "rename" }>;
+  renameFileImports(
+    source: string,
+    options: FileRenameRequestOptions,
+  ): Promise<MclResult & { operation: "renameFileImports" }>;
+  renameFileImports(
+    source: string,
+    files: ProjectFiles | undefined,
+    options: FileRenameRequestOptions,
+  ): Promise<MclResult & { operation: "renameFileImports" }>;
   dispose(): void;
 }
 
@@ -171,6 +183,9 @@ export interface MclProject {
   hover(options: ProjectNavigationOptions): Promise<MclResult & { operation: "hover" }>;
   references(options: ProjectNavigationOptions): Promise<MclResult & { operation: "references" }>;
   rename(options: ProjectRenameOptions): Promise<MclResult & { operation: "rename" }>;
+  renameFileImports(
+    options: ProjectFileRenameOptions,
+  ): Promise<MclResult & { operation: "renameFileImports" }>;
   format(options?: ProjectOperationOptions): Promise<MclResult & { operation: "format" }>;
   check(options?: ProjectOperationOptions): Promise<MclResult & { operation: "check" }>;
   evaluate(options?: ProjectOperationOptions): Promise<MclResult & { operation: "evaluate" }>;
@@ -200,6 +215,11 @@ export interface ProjectRenameOptions extends ProjectNavigationOptions {
   newName: string;
 }
 
+export interface ProjectFileRenameOptions extends ProjectOperationOptions {
+  oldPath: string;
+  newPath: string;
+}
+
 export interface PositionRequestOptions extends RequestOptions {
   entrypoint?: string;
   position: CompletionPosition;
@@ -207,6 +227,12 @@ export interface PositionRequestOptions extends RequestOptions {
 
 export interface RenameRequestOptions extends PositionRequestOptions {
   newName: string;
+}
+
+export interface FileRenameRequestOptions extends RequestOptions {
+  entrypoint?: string;
+  oldPath: string;
+  newPath: string;
 }
 
 export declare class MclRuntimeError extends Error {

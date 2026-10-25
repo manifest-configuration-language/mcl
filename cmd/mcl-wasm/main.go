@@ -135,8 +135,8 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 		}
 		return marshal(result)
 	}
-	if input.Operation == wasmprotocol.RequestOperationCompletion || input.Operation == wasmprotocol.RequestOperationDefinition || input.Operation == wasmprotocol.RequestOperationHover || input.Operation == wasmprotocol.RequestOperationReferences || input.Operation == wasmprotocol.RequestOperationRename {
-		if input.Position == nil || input.Position.Line > uint64(^uint(0)>>1) || input.Position.Character > uint64(^uint(0)>>1) {
+	if input.Operation == wasmprotocol.RequestOperationCompletion || input.Operation == wasmprotocol.RequestOperationDefinition || input.Operation == wasmprotocol.RequestOperationHover || input.Operation == wasmprotocol.RequestOperationReferences || input.Operation == wasmprotocol.RequestOperationRename || input.Operation == wasmprotocol.RequestOperationRenameFileImports {
+		if input.Operation != wasmprotocol.RequestOperationRenameFileImports && (input.Position == nil || input.Position.Line > uint64(^uint(0)>>1) || input.Position.Character > uint64(^uint(0)>>1)) {
 			result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "operation requires a valid non-negative position"}
 			return marshal(result)
 		}
@@ -157,7 +157,10 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 		}
 		params := languageservice.NavigationParams{
 			Entrypoint: entrypoint, Source: input.Source,
-			Line: int(input.Position.Line), Character: int(input.Position.Character),
+		}
+		if input.Position != nil {
+			params.Line = int(input.Position.Line)
+			params.Character = int(input.Position.Character)
 		}
 		switch input.Operation {
 		case wasmprotocol.RequestOperationCompletion:
@@ -245,6 +248,28 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 				}
 			}
 			result.Result = wasmprotocol.RenameResult{Edits: edits}
+		case wasmprotocol.RequestOperationRenameFileImports:
+			if input.OldPath == nil || input.NewPath == nil {
+				result.Error = &responseError{Code: "MCL-WASM-INPUT", Message: "renameFileImports requires oldPath and newPath"}
+				return marshal(result)
+			}
+			rename, renameErr := languageservice.RenameFileImportsForProjectFS(params, projectFiles, string(*input.OldPath), string(*input.NewPath))
+			if renameErr != nil {
+				result.Error = &responseError{Code: "MCL-WASM-IMPORT-RENAME", Message: renameErr.Error()}
+				return marshal(result)
+			}
+			edits := make([]wasmprotocol.RenameEdit, len(rename.Edits))
+			for index, edit := range rename.Edits {
+				edits[index] = wasmprotocol.RenameEdit{
+					Path: wasmprotocol.ProjectPath(edit.Path),
+					Range: wasmprotocol.SourceRange{
+						Start: wasmprotocol.CompletionPosition{Line: uint64(edit.Range.Start.Line), Character: uint64(edit.Range.Start.Character)},
+						End:   wasmprotocol.CompletionPosition{Line: uint64(edit.Range.End.Line), Character: uint64(edit.Range.End.Character)},
+					},
+					NewText: edit.NewText,
+				}
+			}
+			result.Result = wasmprotocol.RenameFileImportsResult{OldPath: *input.OldPath, NewPath: *input.NewPath, Edits: edits}
 		}
 		result.Ok = true
 		return marshal(result)
@@ -320,7 +345,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 			result.Result = wasmprotocol.EvaluateResult{Artifacts: uint64(len(bundle.Artifacts)), RenderedBytes: uint64(len(output))}
 		}
 	default:
-		result.Error = &responseError{Code: "MCL-WASM-OPERATION", Message: "operation must be parse, lint, format, completion, definition, hover, evaluate, check, or render"}
+		result.Error = &responseError{Code: "MCL-WASM-OPERATION", Message: "operation must be parse, lint, format, completion, definition, hover, references, rename, renameFileImports, evaluate, check, or render"}
 	}
 
 	return marshal(result)

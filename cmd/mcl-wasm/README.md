@@ -20,7 +20,7 @@ Web WorkerでGoの`wasm_exec.js`を読み込み、Goの実行開始後に`global
 }
 ```
 
-`operation`には`parse`、`lint`、`format`、`completion`、`definition`、`hover`、`evaluate`、`check`、`render`を指定します。`completion`、`definition`、`hover`にはゼロ始まりのUTF-16位置を`position`で指定します。定義ジャンプは同じファイル内と`files`で渡したMCL importを解決し、結果のパスはプロジェクトルート相対です。Hoverは宣言に記述されたkind、名前、シグネチャ、型注釈を返し、値から型を推論しません。`files`のキーは仮想プロジェクトルートからの相対パスです。MCL import、`mcl.toml`、ローカルManifest、Helm Chart、Kustomize入力を含められます。`entrypoint`には評価対象の相対パスを指定します。省略時は`main.mcl`を使います。選択したentrypointの内容には`source`を使い、同じパスを`files`にも指定できません。
+`operation`には`parse`、`lint`、`format`、`completion`、`definition`、`hover`、`references`、`rename`、`renameFileImports`、`evaluate`、`check`、`render`を指定します。`completion`、`definition`、`hover`、`references`、`rename`にはゼロ始まりのUTF-16位置を`position`で指定します。`renameFileImports`には移動前後のMCLファイルパスを`oldPath`と`newPath`で指定します。返された編集は移動前のファイルパスとソース位置を参照します。プロジェクト内のMCLファイルに構文エラーがある場合、安全な編集位置を特定できないため操作はエラーになります。定義ジャンプは同じファイル内と`files`で渡したMCL importを解決し、結果のパスはプロジェクトルート相対です。Hoverは宣言に記述されたkind、名前、シグネチャ、型注釈を返し、値から型を推論しません。`files`のキーは仮想プロジェクトルートからの相対パスです。MCL import、`mcl.toml`、ローカルManifest、Helm Chart、Kustomize入力を含められます。`entrypoint`には評価対象の相対パスを指定します。省略時は`main.mcl`を使います。選択したentrypointの内容には`source`を使い、同じパスを`files`にも指定できません。
 
 ## レスポンス
 

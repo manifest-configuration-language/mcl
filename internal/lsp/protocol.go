@@ -33,23 +33,70 @@ const (
 
 type workspaceFolder = protocol.WorkspaceFolder
 
-func (s *server) dispatchReadOnly(result any, handler func(*server) (any, error)) error {
+func (s *server) readOnlySnapshot() *server {
 	s.mu.Lock()
+	if s.renameIndex == nil {
+		s.renameIndex = &engine.DependentMCLSourceIndex{}
+	}
 	documents := make(map[string]documentState, len(s.documents))
 	maps.Copy(documents, s.documents)
+	workspaceRoots := slices.Clone(s.workspaceRoots)
+	watchRegistered := s.watchRegistered
+	renameIndex := s.renameIndex
+	stateGeneration := s.stateGeneration
 	s.mu.Unlock()
-	state := &server{documents: documents}
+	return &server{documents: documents, workspaceRoots: workspaceRoots, watchRegistered: watchRegistered, renameIndex: renameIndex, stateGeneration: stateGeneration}
+}
 
-	value, err := handler(state)
-	if err != nil || result == nil {
-		return err
+func (s *server) snapshotForRequest(ctx context.Context) *server {
+	if snapshot, ok := ctx.Value(requestSnapshotContextKey{}).(*server); ok && snapshot != nil {
+		return snapshot
 	}
-	rawResult, err := protocol.Marshal(value)
-	if err != nil {
-		return err
-	}
+	return s.readOnlySnapshot()
+}
 
-	return protocol.Unmarshal(rawResult, result)
+func protocolCompletionItems(items []completionItem) protocol.CompletionItemSlice {
+	result := make(protocol.CompletionItemSlice, len(items))
+	for i, item := range items {
+		result[i] = protocol.CompletionItem{Label: item.Label, Kind: protocol.CompletionItemKind(item.Kind)}
+		if item.InsertText != "" {
+			result[i].InsertText = protocol.NewOptional(item.InsertText)
+		}
+		if item.Detail != "" {
+			result[i].Detail = protocol.NewOptional(item.Detail)
+		}
+		if item.Documentation != "" {
+			result[i].Documentation = protocol.String(item.Documentation)
+		}
+	}
+	return result
+}
+
+func protocolTextEdits(edits []textEdit) []protocol.TextEdit {
+	result := make([]protocol.TextEdit, len(edits))
+	for i, edit := range edits {
+		result[i] = protocol.TextEdit{
+			Range: protocol.Range{
+				Start: protocol.Position{Line: protocolPosition(edit.Range.Start.Line), Character: protocolPosition(edit.Range.Start.Character)},
+				End:   protocol.Position{Line: protocolPosition(edit.Range.End.Line), Character: protocolPosition(edit.Range.End.Character)},
+			},
+			NewText: edit.NewText,
+		}
+	}
+	return result
+}
+
+func protocolDefinitionResult(location *definitionLocation) protocol.DefinitionResult {
+	if location == nil {
+		return nil
+	}
+	return &protocol.Location{
+		URI: uri.URI(location.URI),
+		Range: protocol.Range{
+			Start: protocol.Position{Line: protocolPosition(location.Range.Start.Line), Character: protocolPosition(location.Range.Start.Character)},
+			End:   protocol.Position{Line: protocolPosition(location.Range.End.Line), Character: protocolPosition(location.Range.End.Character)},
+		},
+	}
 }
 
 func (s *server) Initialize(ctx context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
@@ -82,60 +129,76 @@ func (s *server) Exit(ctx context.Context) error {
 }
 
 func (s *server) Completion(ctx context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
-	var result protocol.CompletionResult
-	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
-		request := completionParams{}
-		request.TextDocument.URI = string(params.TextDocument.URI)
-		request.Position.Line = int(params.Position.Line)
-		request.Position.Character = int(params.Position.Character)
-		items := state.completions(request)
-		if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
-			items = []completionItem{}
-		}
+	state := s.snapshotForRequest(ctx)
+	if params == nil {
+		return protocol.CompletionItemSlice{}, nil
+	}
+	request := completionParams{}
+	request.TextDocument.URI = string(params.TextDocument.URI)
+	request.Position.Line = int(params.Position.Line)
+	request.Position.Character = int(params.Position.Character)
+	items := state.completions(request)
+	if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
+		items = []completionItem{}
+	}
+	if ctx.Err() != nil {
+		return nil, protocol.ErrRequestCancelled
+	}
+	if !s.documentSnapshotIsCurrent(state) {
+		return nil, protocol.ErrContentModified
+	}
 
-		return map[string]any{"isIncomplete": false, "items": items}, nil
-	})
-
-	return result, err
+	return &protocol.CompletionList{IsIncomplete: false, Items: protocolCompletionItems(items)}, nil
 }
 
 func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
-	var result []protocol.TextEdit
-	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
-		uri := params.TextDocument.URI.String()
-		edits := state.formatDocument(uri)
-		if document, exists := state.documents[uri]; exists && document.SyncLost {
-			edits = []textEdit{}
-		}
+	state := s.snapshotForRequest(ctx)
+	if params == nil {
+		return []protocol.TextEdit{}, nil
+	}
+	uri := params.TextDocument.URI.String()
+	edits := state.formatDocument(uri)
+	if document, exists := state.documents[uri]; exists && document.SyncLost {
+		edits = []textEdit{}
+	}
+	if ctx.Err() != nil {
+		return nil, protocol.ErrRequestCancelled
+	}
+	if !s.documentSnapshotIsCurrent(state) {
+		return nil, protocol.ErrContentModified
+	}
 
-		return edits, nil
-	})
-
-	return result, err
+	return protocolTextEdits(edits), nil
 }
 
 func (s *server) Definition(ctx context.Context, params *protocol.DefinitionParams) (protocol.DefinitionResult, error) {
-	var result protocol.DefinitionResult
-	err := s.dispatchReadOnly(&result, func(state *server) (any, error) {
-		request := definitionParams{}
-		request.TextDocument.URI = string(params.TextDocument.URI)
-		request.Position.Line = int(params.Position.Line)
-		request.Position.Character = int(params.Position.Character)
-		location := state.definition(request)
-		if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
-			location = nil
-		}
+	state := s.snapshotForRequest(ctx)
+	if params == nil {
+		return nil, nil
+	}
+	request := definitionParams{}
+	request.TextDocument.URI = string(params.TextDocument.URI)
+	request.Position.Line = int(params.Position.Line)
+	request.Position.Character = int(params.Position.Character)
+	location := state.definition(request)
+	if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
+		location = nil
+	}
+	if ctx.Err() != nil {
+		return nil, protocol.ErrRequestCancelled
+	}
+	if !s.documentSnapshotIsCurrent(state) {
+		return nil, protocol.ErrContentModified
+	}
 
-		return location, nil
-	})
-
-	return result, err
+	return protocolDefinitionResult(location), nil
 }
 
 func (s *server) Rename(ctx context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	if ctx.Err() != nil {
+		return nil, protocol.ErrRequestCancelled
+	}
+	state := s.snapshotForRequest(ctx)
 	var request renameParams
 	if params != nil {
 		request.TextDocument.URI = params.TextDocument.URI.String()
@@ -143,11 +206,16 @@ func (s *server) Rename(ctx context.Context, params *protocol.RenameParams) (*pr
 		request.NewName = params.NewName
 	}
 
-	edit := s.renameWithContext(ctx, request)
-	if state, exists := s.documents[request.TextDocument.URI]; exists && state.SyncLost {
+	edit := state.renameWithContext(ctx, request)
+	if ctx.Err() != nil {
+		return nil, protocol.ErrRequestCancelled
+	}
+	if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
 		edit = nil
 	}
-
+	if !s.documentSnapshotIsCurrent(state) {
+		return nil, protocol.ErrContentModified
+	}
 	return protocolWorkspaceEdit(edit), nil
 }
 
@@ -360,6 +428,7 @@ func (s *server) didChangeWorkspaceFoldersLocked(params *protocol.DidChangeWorks
 	s.watchRegistrationPending = false
 	s.watchRegistered = false
 	s.watchRegistrationGen++
+	s.stateGeneration++
 	if s.renameIndex != nil {
 		s.renameIndex.Invalidate()
 	}
@@ -397,6 +466,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params *protoc
 		}
 	}
 	if len(changedURIs) > 0 {
+		s.stateGeneration++
 		s.scheduleDiagnosticsForChanges(context.WithoutCancel(ctx), changedURIs, s.diagnosticResults)
 	}
 
@@ -410,6 +480,7 @@ func (s *server) didOpenLocked(ctx context.Context, params documentParams) {
 		return
 	}
 	s.documents[uri] = documentState{Text: params.TextDocument.Text, Version: params.TextDocument.Version}
+	s.stateGeneration++
 	s.scheduleDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 }
 
@@ -428,6 +499,7 @@ func (s *server) didChangeLocked(ctx context.Context, params documentParams) {
 			state.SyncLost = true
 			state.Diagnostics = nil
 			s.documents[uri] = state
+			s.stateGeneration++
 		}
 		s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 
@@ -438,11 +510,13 @@ func (s *server) didChangeLocked(ctx context.Context, params documentParams) {
 		state.SyncLost = true
 		state.Diagnostics = nil
 		s.documents[uri] = state
+		s.stateGeneration++
 		s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 
 		return
 	}
 	s.documents[uri] = documentState{Text: updated, Version: params.TextDocument.Version, Dependencies: state.Dependencies, Diagnostics: state.Diagnostics}
+	s.stateGeneration++
 	s.scheduleStaticDiagnostics(context.WithoutCancel(ctx), uri, diagnostics)
 }
 
@@ -453,7 +527,10 @@ func (s *server) didSaveLocked(ctx context.Context, uri string) {
 }
 
 func (s *server) didCloseLocked(ctx context.Context, uri string) {
-	delete(s.documents, uri)
+	if _, exists := s.documents[uri]; exists {
+		delete(s.documents, uri)
+		s.stateGeneration++
+	}
 	s.scheduleDiagnostics(context.WithoutCancel(ctx), uri, s.diagnosticResults)
 }
 

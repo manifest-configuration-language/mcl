@@ -22,9 +22,10 @@ type NodeMetadata struct {
 
 type ImportDeclaration struct {
 	NodeMetadata
-	Name       string
-	ModulePath string
-	NameSpan   SourceSpan
+	Name           string
+	ModulePath     string
+	NameSpan       SourceSpan
+	ModulePathSpan SourceSpan
 }
 
 type TypeDeclaration struct {

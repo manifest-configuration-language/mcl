@@ -1,6 +1,6 @@
 {
   "name": "@manifest-configuration-language/language",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "MCL TextMate grammar and CodeMirror language support.",
   "repository": {
     "type": "git",
@@ -9,9 +9,16 @@
   },
   "type": "module",
   "license": "Apache-2.0",
-  "files": ["src", "reference", "README.md"],
+  "files": [
+    "src",
+    "reference",
+    "README.md"
+  ],
   "exports": {
-    ".": { "types": "./src/index.d.ts", "import": "./src/index.js" },
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    },
     "./textmate": "./src/mcl.tmLanguage.json"
   },
   "scripts": {
@@ -34,5 +41,7 @@
     "@codemirror/state": ">=6 <7",
     "@codemirror/view": ">=6 <7"
   },
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }

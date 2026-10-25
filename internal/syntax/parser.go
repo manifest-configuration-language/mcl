@@ -198,13 +198,13 @@ func parseASTWithLexedTokens(source string, tokens []sourceToken) (module Module
 			if phase != 0 {
 				return ModuleAST{}, fmt.Errorf("line %d: imports must precede definitions", lineToken.lineNumber)
 			}
-			path, alias, aliasSpan, err := parser.parseImportLine(lineToken)
+			path, alias, pathSpan, aliasSpan, err := parser.parseImportLine(lineToken)
 			if err != nil {
 				return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
 			}
 			module.Nodes = append(module.Nodes, &ImportDeclaration{
 				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, aliasSpan)},
-				Name:         alias, ModulePath: path, NameSpan: aliasSpan,
+				Name:         alias, ModulePath: path, NameSpan: aliasSpan, ModulePathSpan: pathSpan,
 			})
 
 			continue
@@ -1467,30 +1467,30 @@ findClose:
 	return name, definition, nil
 }
 
-func (p *Parser) parseImportLine(lineToken sourceToken) (string, string, SourceSpan, error) {
+func (p *Parser) parseImportLine(lineToken sourceToken) (string, string, SourceSpan, SourceSpan, error) {
 	pathToken, ok := p.consumeLineLexeme(lineToken)
 	pathText := p.sourceTokenLexemeText(pathToken)
 	if !ok || pathToken.lexeme.kind != sourceLexemeLiteral || len(pathText) == 0 || pathText[0] != '"' {
-		return "", "", SourceSpan{}, errors.New("import path must be a double-quoted string")
+		return "", "", SourceSpan{}, SourceSpan{}, errors.New("import path must be a double-quoted string")
 	}
 	if !sourceStringTokenIsClosed(pathText) {
-		return "", "", SourceSpan{}, errors.New("unterminated import path")
+		return "", "", SourceSpan{}, SourceSpan{}, errors.New("unterminated import path")
 	}
 	path, err := strconv.Unquote(pathText)
 	if err != nil || path == "" {
-		return "", "", SourceSpan{}, errors.New("invalid import path")
+		return "", "", SourceSpan{}, SourceSpan{}, errors.New("invalid import path")
 	}
 	aliasKeyword, hasAliasKeyword := p.consumeLineLexeme(lineToken)
 	aliasToken, hasAlias := p.consumeLineLexeme(lineToken)
 	if !hasAliasKeyword || !hasAlias || aliasKeyword.lexeme.kind != sourceLexemeIdentifier || aliasToken.lexeme.kind != sourceLexemeIdentifier || p.hasLineLexeme(lineToken) || p.sourceTokenLexemeText(aliasKeyword) != "as" || aliasKeyword.span.End >= aliasToken.span.Start || p.source[aliasKeyword.span.End] != ' ' {
-		return "", "", SourceSpan{}, errors.New("expected as and an import alias")
+		return "", "", SourceSpan{}, SourceSpan{}, errors.New("expected as and an import alias")
 	}
 	alias := p.sourceTokenLexemeText(aliasToken)
 	if !identifier(alias) {
-		return "", "", SourceSpan{}, fmt.Errorf("invalid import alias %q", alias)
+		return "", "", SourceSpan{}, SourceSpan{}, fmt.Errorf("invalid import alias %q", alias)
 	}
 
-	return path, alias, aliasToken.span, nil
+	return path, alias, pathToken.span, aliasToken.span, nil
 }
 
 func (p *Parser) consumeLineLexeme(lineToken sourceToken) (sourceToken, bool) {

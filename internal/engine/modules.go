@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
@@ -121,6 +122,7 @@ func ResolveImportPath(importer, modulePath string) (string, error) {
 
 // DependentMCLSourceIndexはworkspaceのimport逆参照indexを保持します。
 type DependentMCLSourceIndex struct {
+	mu           sync.Mutex
 	root         string
 	searchRoots  []string
 	files        *projectFilesystem
@@ -136,36 +138,59 @@ type DependentMCLSourceIndex struct {
 
 // Sourcesはworkspaceを完全snapshotし、targetを直接または間接的にimportするMCLソースを返します。
 func (index *DependentMCLSourceIndex) Sources(target string, workspaceRoots []string, overlays map[string]string) (map[string]string, error) {
+	return index.SourcesWithContext(context.Background(), target, workspaceRoots, overlays)
+}
+
+// SourcesWithContext snapshots the workspace and returns sources that depend on target.
+func (index *DependentMCLSourceIndex) SourcesWithContext(ctx context.Context, target string, workspaceRoots []string, overlays map[string]string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	index.mu.Lock()
+	defer index.mu.Unlock()
 	canonical, root, searchRoots, err := dependentSourceScope(target, workspaceRoots)
 	if err != nil {
 		return nil, err
 	}
 
-	return index.sourcesForFilesystem(canonical, root, searchRoots, newOSProjectFilesystem(root), overlays)
+	return index.sourcesForFilesystemWithContext(ctx, canonical, root, searchRoots, newOSProjectFilesystem(root), overlays)
 }
 
 // SourcesForProjectFS snapshots an injected project filesystem and returns sources that depend on targetPath.
 // Paths use an absolute logical project root and slash-separated root-relative module paths.
 func (index *DependentMCLSourceIndex) SourcesForProjectFS(projectRoot, targetPath string, files fs.FS, overlays map[string]string) (map[string]string, error) {
+	return index.SourcesForProjectFSWithContext(context.Background(), projectRoot, targetPath, files, overlays)
+}
+
+// SourcesForProjectFSWithContext snapshots an injected project filesystem with cancellation support.
+func (index *DependentMCLSourceIndex) SourcesForProjectFSWithContext(ctx context.Context, projectRoot, targetPath string, files fs.FS, overlays map[string]string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	index.mu.Lock()
+	defer index.mu.Unlock()
 	filesystem, canonical, root, searchRoots, err := dependentProjectFSscope(projectRoot, targetPath, files)
 	if err != nil {
 		return nil, err
 	}
 
-	return index.sourcesForFilesystem(canonical, root, searchRoots, filesystem, overlays)
+	return index.sourcesForFilesystemWithContext(ctx, canonical, root, searchRoots, filesystem, overlays)
 }
 
-func (index *DependentMCLSourceIndex) sourcesForFilesystem(canonical, root string, searchRoots []string, filesystem *projectFilesystem, overlays map[string]string) (map[string]string, error) {
-	diskSources, err := collectDependentSourcesWithFilesystem(filesystem, canonical, root, searchRoots)
+func (index *DependentMCLSourceIndex) sourcesForFilesystemWithContext(ctx context.Context, canonical, root string, searchRoots []string, filesystem *projectFilesystem, overlays map[string]string) (map[string]string, error) {
+	diskSources, err := collectDependentSourcesWithFilesystemContext(ctx, filesystem, canonical, root, searchRoots)
 	if err != nil {
 		return nil, err
 	}
-	allSources, overlayPaths, err := applyDependentOverlays(diskSources, root, searchRoots, overlays)
+	allSources, overlayPaths, err := applyDependentOverlaysWithContext(ctx, diskSources, root, searchRoots, overlays)
 	if err != nil {
 		return nil, err
 	}
 	hashes := make(map[string][sha256.Size]byte, len(allSources))
 	for path, source := range allSources {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		hashes[path] = sha256.Sum256([]byte(source))
 	}
 
@@ -178,6 +203,9 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystem(canonical, root strin
 		}
 	}
 	for path, source := range allSources {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, exists := modules[path]; exists {
 			continue
 		}
@@ -203,6 +231,9 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystem(canonical, root strin
 		}
 	}
 	for path, module := range modules {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		graph := moduleGraph{root: root, files: filesystem}
 		resolvedDependencies := make([]string, 0)
 		imports, err := graph.imports(path, module)
@@ -223,7 +254,7 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystem(canonical, root strin
 			importers[dependency] = append(importers[dependency], path)
 		}
 	}
-	result, err := dependentModuleSources(canonical, allSources, importers)
+	result, err := dependentModuleSourcesWithContext(ctx, canonical, allSources, importers)
 	if err != nil {
 		return nil, err
 	}
@@ -274,11 +305,18 @@ func canonicalRenameOverlayPath(path, root string, searchRoots []string) (string
 }
 
 func applyDependentOverlays(diskSources map[string]string, root string, searchRoots []string, overlays map[string]string) (map[string]string, map[string]struct{}, error) {
+	return applyDependentOverlaysWithContext(context.Background(), diskSources, root, searchRoots, overlays)
+}
+
+func applyDependentOverlaysWithContext(ctx context.Context, diskSources map[string]string, root string, searchRoots []string, overlays map[string]string) (map[string]string, map[string]struct{}, error) {
 	sources := maps.Clone(diskSources)
 	paths := make(map[string]struct{}, len(overlays))
 	seen := make(map[string]string, len(overlays))
 	keys := slices.Sorted(maps.Keys(overlays))
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		path, err := canonicalRenameOverlayPath(key, root, searchRoots)
 		if err != nil {
 			return nil, nil, err
@@ -306,6 +344,9 @@ func applyDependentOverlays(diskSources map[string]string, root string, searchRo
 	}
 	var totalBytes int64
 	for _, source := range sources {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		totalBytes += int64(len(source))
 		if totalBytes > maxProjectMCLBytes {
 			return nil, nil, fmt.Errorf("project MCL sources exceed the %d-byte limit", maxProjectMCLBytes)
@@ -318,40 +359,64 @@ func applyDependentOverlays(diskSources map[string]string, root string, searchRo
 // SourcesFromIndexはファイル監視通知で更新したsnapshotと開いている文書のoverlayを使います。
 // indexが未初期化またはscopeが変わった場合は完全snapshotを作成します。
 func (index *DependentMCLSourceIndex) SourcesFromIndex(target string, workspaceRoots []string, overlays map[string]string) (map[string]string, error) {
+	return index.SourcesFromIndexWithContext(context.Background(), target, workspaceRoots, overlays)
+}
+
+func (index *DependentMCLSourceIndex) SourcesFromIndexWithContext(ctx context.Context, target string, workspaceRoots []string, overlays map[string]string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	index.mu.Lock()
+	defer index.mu.Unlock()
 	canonical, root, searchRoots, err := dependentSourceScope(target, workspaceRoots)
 	if err != nil {
 		return nil, err
 	}
 	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) || index.files == nil || !index.files.osBacked {
-		return index.Sources(target, workspaceRoots, overlays)
+		return index.sourcesForFilesystemWithContext(ctx, canonical, root, searchRoots, newOSProjectFilesystem(root), overlays)
 	}
 
-	return index.sourcesFromIndex(canonical, root, searchRoots, index.files, overlays)
+	return index.sourcesFromIndexWithContext(ctx, canonical, root, searchRoots, index.files, overlays)
 }
 
 // SourcesFromProjectFSIndex applies overlays to the last snapshot created from the supplied filesystem.
 // If no compatible snapshot exists, it creates a complete snapshot first.
 func (index *DependentMCLSourceIndex) SourcesFromProjectFSIndex(projectRoot, targetPath string, files fs.FS, overlays map[string]string) (map[string]string, error) {
+	return index.SourcesFromProjectFSIndexWithContext(context.Background(), projectRoot, targetPath, files, overlays)
+}
+
+func (index *DependentMCLSourceIndex) SourcesFromProjectFSIndexWithContext(ctx context.Context, projectRoot, targetPath string, files fs.FS, overlays map[string]string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	index.mu.Lock()
+	defer index.mu.Unlock()
 	filesystem, canonical, root, searchRoots, err := dependentProjectFSscope(projectRoot, targetPath, files)
 	if err != nil {
 		return nil, err
 	}
 	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) || index.files == nil || index.files.osBacked {
-		return index.sourcesForFilesystem(canonical, root, searchRoots, filesystem, overlays)
+		return index.sourcesForFilesystemWithContext(ctx, canonical, root, searchRoots, filesystem, overlays)
 	}
 
-	return index.sourcesFromIndex(canonical, root, searchRoots, filesystem, overlays)
+	return index.sourcesFromIndexWithContext(ctx, canonical, root, searchRoots, filesystem, overlays)
 }
 
-func (index *DependentMCLSourceIndex) sourcesFromIndex(canonical, root string, searchRoots []string, files *projectFilesystem, overlays map[string]string) (map[string]string, error) {
+func (index *DependentMCLSourceIndex) sourcesFromIndexWithContext(ctx context.Context, canonical, root string, searchRoots []string, files *projectFilesystem, overlays map[string]string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	diskSources := maps.Clone(index.diskSources)
-	overlaySources, nextOverlayPaths, err := applyDependentOverlays(diskSources, root, searchRoots, overlays)
+	overlaySources, nextOverlayPaths, err := applyDependentOverlaysWithContext(ctx, diskSources, root, searchRoots, overlays)
 	if err != nil {
 		return nil, err
 	}
 	effectiveSources := maps.Clone(overlaySources)
 	changed := make(map[string]struct{})
 	for path := range index.overlayPaths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, remainsOpen := nextOverlayPaths[path]; remainsOpen {
 			continue
 		}
@@ -376,13 +441,13 @@ func (index *DependentMCLSourceIndex) sourcesFromIndex(canonical, root string, s
 		}
 	}
 	index.files = files
-	if err := index.applySnapshotChanges(diskSources, effectiveSources, nextOverlayPaths, changed); err != nil {
+	if err := index.applySnapshotChangesWithContext(ctx, diskSources, effectiveSources, nextOverlayPaths, changed, files); err != nil {
 		index.initialized = false
 
 		return nil, err
 	}
 
-	return dependentModuleSources(canonical, index.sources, index.importers)
+	return dependentModuleSourcesWithContext(ctx, canonical, index.sources, index.importers)
 }
 
 // DependentMCLFileChangeはLSPが通知したMCLファイルの変更を表します。
@@ -393,11 +458,15 @@ type DependentMCLFileChange struct {
 
 // Invalidateはworkspaceのproject境界が変わった場合にcached snapshotを無効化します。
 func (index *DependentMCLSourceIndex) Invalidate() {
+	index.mu.Lock()
+	defer index.mu.Unlock()
 	index.initialized = false
 }
 
 // ApplyFileChangesは監視通知に含まれるファイルだけを読み直して逆参照indexを更新します。
 func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFileChange) error {
+	index.mu.Lock()
+	defer index.mu.Unlock()
 	if !index.initialized {
 		return nil
 	}
@@ -540,8 +609,15 @@ func canonicalWatchedModulePath(path string, deleted bool, diskSources map[strin
 }
 
 func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources map[string]string, overlayPaths map[string]struct{}, changed map[string]struct{}) error {
+	return index.applySnapshotChangesWithContext(context.Background(), diskSources, sources, overlayPaths, changed, index.files)
+}
+
+func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx context.Context, diskSources, sources map[string]string, overlayPaths map[string]struct{}, changed map[string]struct{}, files *projectFilesystem) error {
 	var totalBytes int64
 	for _, source := range sources {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		totalBytes += int64(len(source))
 	}
 	if len(sources) > maxProjectMCLFiles || totalBytes > maxProjectMCLBytes {
@@ -552,6 +628,9 @@ func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources 
 	importers := cloneImporters(index.importers)
 	hashes := maps.Clone(index.hashes)
 	for path := range changed {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		source, exists := sources[path]
 		if !exists {
 			delete(modules, path)
@@ -569,11 +648,14 @@ func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources 
 		hashes[path] = sha256.Sum256([]byte(source))
 	}
 	for path := range changed {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		module, exists := modules[path]
 		if !exists {
 			continue
 		}
-		resolved, err := resolveModuleDependencies(path, module, index.root, index.files)
+		resolved, err := resolveModuleDependencies(path, module, index.root, files)
 		if err != nil {
 			return err
 		}
@@ -584,6 +666,9 @@ func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources 
 		}
 	}
 	for path, importersOfPath := range index.importers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, stillExists := sources[path]; stillExists {
 			continue
 		}
@@ -595,7 +680,7 @@ func (index *DependentMCLSourceIndex) applySnapshotChanges(diskSources, sources 
 			if !exists {
 				continue
 			}
-			if _, err := resolveModuleDependencies(importer, module, index.root, index.files); err != nil {
+			if _, err := resolveModuleDependencies(importer, module, index.root, files); err != nil {
 				return err
 			}
 		}
@@ -730,14 +815,24 @@ func dependentSourceScope(target string, workspaceRoots []string) (string, strin
 }
 
 func collectDependentSourcesWithFilesystem(files *projectFilesystem, canonical, root string, searchRoots []string) (map[string]string, error) {
+	return collectDependentSourcesWithFilesystemContext(context.Background(), files, canonical, root, searchRoots)
+}
+
+func collectDependentSourcesWithFilesystemContext(ctx context.Context, files *projectFilesystem, canonical, root string, searchRoots []string) (map[string]string, error) {
 	allSources := make(map[string]string)
 	var totalBytes int64
 	for _, searchRoot := range searchRoots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		searchPath, err := files.relativePath(searchRoot)
 		if err != nil {
 			return nil, err
 		}
 		err = fs.WalkDir(files.files, searchPath, func(path string, entry fs.DirEntry, walkErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if walkErr != nil {
 				return walkErr
 			}
@@ -814,6 +909,9 @@ func collectDependentSourcesWithFilesystem(files *projectFilesystem, canonical, 
 		}
 	}
 	if _, exists := allSources[canonical]; !exists {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		content, err := files.readLimitedFile(canonical)
 		if err != nil {
 			return nil, fmt.Errorf("read target module %q: %w", canonical, err)
@@ -883,9 +981,16 @@ func ignoredRenameIndexDirectory(name string) bool {
 }
 
 func dependentModuleSources(target string, sources map[string]string, importers map[string][]string) (map[string]string, error) {
+	return dependentModuleSourcesWithContext(context.Background(), target, sources, importers)
+}
+
+func dependentModuleSourcesWithContext(ctx context.Context, target string, sources map[string]string, importers map[string][]string) (map[string]string, error) {
 	dependent := map[string]struct{}{target: {}}
 	queue := []string{target}
 	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		dependency := queue[0]
 		queue = queue[1:]
 		for _, importer := range importers[dependency] {
@@ -898,6 +1003,9 @@ func dependentModuleSources(target string, sources map[string]string, importers 
 	}
 	result := make(map[string]string, len(dependent))
 	for path := range dependent {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if source, exists := sources[path]; exists {
 			result[path] = source
 		}

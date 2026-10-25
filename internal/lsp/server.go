@@ -25,6 +25,7 @@ type server struct {
 	watchRegistrationPending bool
 	watchRegistered          bool
 	watchRegistrationGen     uint64
+	stateGeneration          uint64
 	diagnosticURIs           map[string]struct{}
 	diagnosticCancel         context.CancelFunc
 	diagnosticGeneration     uint64
@@ -37,6 +38,37 @@ type server struct {
 	diagnosticResults        chan<- diagnosticResult
 	notify                   func(string, any) error
 	callback                 func(string, any) error
+}
+
+type requestSnapshotContextKey struct{}
+
+func isConcurrentReadOnlyMethod(method string) bool {
+	switch method {
+	case "textDocument/completion", "textDocument/definition", "textDocument/formatting", "textDocument/references", "textDocument/rename":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *server) dispatchOrdered(ctx context.Context, method string, handler func(context.Context) (any, error)) (any, error) {
+	s.dispatchMu.Lock()
+	previous := s.dispatchTail
+	next := make(chan struct{})
+	s.dispatchTail = next
+	s.dispatchMu.Unlock()
+
+	jsonrpc2.Async(ctx)
+	<-previous
+	if isConcurrentReadOnlyMethod(method) {
+		snapshot := s.readOnlySnapshot()
+		close(next)
+		ctx = context.WithValue(ctx, requestSnapshotContextKey{}, snapshot)
+		return handler(ctx)
+	}
+	defer close(next)
+
+	return handler(ctx)
 }
 
 type watchRegistrationResult struct {
@@ -70,18 +102,10 @@ func Run(input io.Reader, output io.Writer) error {
 	}
 	serverHandler := protocol.ServerHandler(s, jsonrpc2.MethodNotFoundHandler)
 	orderedHandler := func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
-		// Keep document updates in wire order while the outer cancellation middleware can read later messages.
-		s.dispatchMu.Lock()
-		previous := s.dispatchTail
-		next := make(chan struct{})
-		s.dispatchTail = next
-		s.dispatchMu.Unlock()
-
-		jsonrpc2.Async(ctx)
-		<-previous
-		defer close(next)
-
-		return serverHandler(ctx, req)
+		// Capture read-only state in wire order, then let later document updates proceed.
+		return s.dispatchOrdered(ctx, req.Method(), func(ctx context.Context) (any, error) {
+			return serverHandler(ctx, req)
+		})
 	}
 	handler := protocol.CancelHandler(orderedHandler)
 	s.rpc.Go(rpcContext, func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
@@ -123,6 +147,9 @@ func Run(input io.Reader, output io.Writer) error {
 			s.mu.Lock()
 			if result.generation == s.watchRegistrationGen && s.watchRegistrationPending {
 				s.watchRegistrationPending = false
+				if s.watchRegistered != result.success {
+					s.stateGeneration++
+				}
 				s.watchRegistered = result.success
 			}
 			s.mu.Unlock()

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 )
@@ -273,4 +274,49 @@ func TestDependentMCLSourceIndexIgnoresWatchedFilesInCache(t *testing.T) {
 	if _, exists := dependent[cachedImporter]; exists {
 		t.Fatal("incremental index included a module from the ignored cache directory")
 	}
+}
+
+func TestDependentMCLSourceIndexConcurrentUpdates(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for path, source := range map[string]string{
+		projectConfigFileName: "",
+		"target.mcl":          "export let value = 1\n",
+		"importer.mcl":        "import \"./target.mcl\" as target\nemit target.value\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(root, "target.mcl")
+	importer := filepath.Join(root, "importer.mcl")
+	index := &DependentMCLSourceIndex{}
+	if _, err := index.Sources(target, []string{root}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var workers sync.WaitGroup
+	workers.Go(func() {
+		for range 20 {
+			if _, err := index.SourcesFromIndexWithContext(t.Context(), target, []string{root}, nil); err != nil {
+				t.Errorf("read dependent sources: %v", err)
+			}
+		}
+	})
+	workers.Go(func() {
+		for range 20 {
+			index.Invalidate()
+			if _, err := index.SourcesWithContext(t.Context(), target, []string{root}, nil); err != nil {
+				t.Errorf("rebuild dependent sources: %v", err)
+			}
+		}
+	})
+	workers.Go(func() {
+		for range 20 {
+			if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: importer}}); err != nil {
+				t.Errorf("apply watched-file change: %v", err)
+			}
+		}
+	})
+	workers.Wait()
 }

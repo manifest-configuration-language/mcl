@@ -168,6 +168,8 @@ self.addEventListener("message", async (event) => {
       operation: message.operation,
       entrypoint: message.entrypoint,
       newName: message.newName,
+      oldPath: message.oldPath,
+      newPath: message.newPath,
       position: message.position,
       source: message.source,
       files: encodedFiles.files,

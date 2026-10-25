@@ -255,6 +255,50 @@ test("Browser SDK runtime lifecycle", async () => {
   }
 
   {
+    let workerCreations = 0;
+    const { runtime } = runtimeWithWorkers(() => {
+      workerCreations++;
+      return new FakeWorker({ configure: ready, run(worker, request) { respond(worker, request.requestId); } });
+    });
+    const project = runtime.openProject({ "main.mcl": "emit 1" });
+    const invalidPaths = [
+      "/main.mcl",
+      "C:/main.mcl",
+      "../main.mcl",
+      "app\\main.mcl",
+      "a".repeat(510) + ".mcl",
+      `${Array.from({ length: 64 }, () => "a").join("/")}/main.mcl`,
+      "main.txt",
+    ];
+    for (const oldPath of invalidPaths) {
+      await assert.rejects(
+        project.renameFileImports({ oldPath, newPath: "new.mcl" }),
+        /valid project-relative MCL paths/,
+      );
+      await assert.rejects(
+        runtime.renameFileImports("emit 1", { oldPath, newPath: "new.mcl" }),
+        /valid project-relative MCL paths/,
+      );
+    }
+    for (const newPath of invalidPaths) {
+      await assert.rejects(
+        project.renameFileImports({ oldPath: "main.mcl", newPath }),
+        /valid project-relative MCL paths/,
+      );
+      await assert.rejects(
+        runtime.renameFileImports("emit 1", { oldPath: "main.mcl", newPath }),
+        /valid project-relative MCL paths/,
+      );
+    }
+    await assert.rejects(
+      project.renameFileImports({ oldPath: "main.mcl", newPath: "main.mcl" }),
+      /must be distinct/,
+    );
+    assert.equal(workerCreations, 0, "invalid rename paths should be rejected before creating a Worker");
+    runtime.dispose();
+  }
+
+  {
     const diagnostic = { code: "MCL-LINT-TEST", message: "test diagnostic", severity: "warning", line: 2, column: 3 };
     const { runtime } = runtimeWithWorkers(() => new FakeWorker({
       configure: ready,

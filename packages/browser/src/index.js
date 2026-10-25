@@ -69,6 +69,7 @@ const operationPriorities = {
   parse: 20,
   format: 20,
   rename: 20,
+  renameFileImports: 20,
   references: 20,
   definition: 20,
   completion: 20,
@@ -415,6 +416,19 @@ export function createMclRuntime(options = {}) {
     position,
     project,
   ) {
+    if (operation === "renameFileImports") {
+      const { oldPath, newPath } = requestOptions;
+      if (
+        !isValidProjectPath(oldPath) ||
+        !oldPath.endsWith(".mcl") ||
+        !isValidProjectPath(newPath) ||
+        !newPath.endsWith(".mcl")
+      ) {
+        throw new TypeError("oldPath and newPath must be valid project-relative MCL paths");
+      }
+      if (oldPath === newPath)
+        throw new TypeError("oldPath and newPath must be distinct");
+    }
     const signal = requestOptions.signal;
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
     const startedAt = performance.now();
@@ -509,6 +523,8 @@ export function createMclRuntime(options = {}) {
               entrypoint,
               position,
               newName: requestOptions.newName,
+              oldPath: requestOptions.oldPath,
+              newPath: requestOptions.newPath,
             };
             if (project) message.projectId = project.id;
             else message.files = preparedFiles.files;
@@ -674,6 +690,8 @@ export function createMclRuntime(options = {}) {
       hover: (requestOptions) => runProjectOperation("hover", requestOptions),
       references: (requestOptions) => runProjectOperation("references", requestOptions),
       rename: (requestOptions) => runProjectOperation("rename", requestOptions),
+      renameFileImports: (requestOptions) =>
+        runProjectOperation("renameFileImports", requestOptions),
       format: (requestOptions) => runProjectOperation("format", requestOptions),
       check: (requestOptions) => runProjectOperation("check", requestOptions),
       evaluate: (requestOptions) => runProjectOperation("evaluate", requestOptions),
@@ -740,6 +758,21 @@ export function createMclRuntime(options = {}) {
     );
   }
 
+  function runSourceFileRename(source, filesOrOptions, requestOptions) {
+    const files = requestOptions === undefined ? undefined : filesOrOptions;
+    const options = requestOptions ?? filesOrOptions;
+    if (!options?.oldPath || !options?.newPath)
+      throw new TypeError("oldPath and newPath are required");
+    return execute(
+      "renameFileImports",
+      source,
+      files,
+      options,
+      options.entrypoint ?? "main.mcl",
+      undefined,
+    );
+  }
+
   return {
     openProject,
     warmUp,
@@ -757,6 +790,8 @@ export function createMclRuntime(options = {}) {
       runSourceNavigation("references", source, filesOrOptions, requestOptions),
     rename: (source, filesOrOptions, requestOptions) =>
       runSourceNavigation("rename", source, filesOrOptions, requestOptions),
+    renameFileImports: (source, filesOrOptions, requestOptions) =>
+      runSourceFileRename(source, filesOrOptions, requestOptions),
     dispose() {
       if (disposed) return;
       disposed = true;
