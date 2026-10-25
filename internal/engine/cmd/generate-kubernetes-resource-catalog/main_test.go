@@ -50,6 +50,7 @@ func TestDiscoverResourcesUsesCollectionRoutesAndListGVKs(t *testing.T) {
 		got, ok := resources[test.key]
 		if !ok {
 			t.Errorf("discoverResources() missing descriptor for %+v", test.key)
+
 			continue
 		}
 		if got.name != test.name || got.namespaced != test.namespaced {

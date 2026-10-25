@@ -86,6 +86,7 @@ func resourceScopeIndexFromCatalog(entries []kubernetesResourceCatalogEntry) kub
 		}
 		index[key] = value
 	}
+
 	return index
 }
 

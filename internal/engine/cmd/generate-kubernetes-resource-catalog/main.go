@@ -5,6 +5,7 @@ package main
 import (
 	"compress/gzip"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"flag"
 	"fmt"
 	"go/format"
@@ -96,7 +97,7 @@ func generate(inputPath, outputPath string) error {
 	if err != nil {
 		return fmt.Errorf("format generated source: %w", err)
 	}
-	if err := os.WriteFile(outputPath, content, 0o644); err != nil {
+	if err := os.WriteFile(outputPath, content, 0o600); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
 
@@ -144,7 +145,7 @@ func discoverResources(spec specification) (map[resourceKey]resource, error) {
 	}
 
 	if len(resources) == 0 {
-		return nil, fmt.Errorf("the OpenAPI specification contains no resource collection routes")
+		return nil, errors.New("the OpenAPI specification contains no resource collection routes")
 	}
 	groupResources := make(map[resourceKey]resource, len(resources))
 	for key, item := range resources {
@@ -205,6 +206,7 @@ func render(resources map[resourceKey]resource, source string) []byte {
 		if result := strings.Compare(left.version, right.version); result != 0 {
 			return result
 		}
+
 		return strings.Compare(left.kind, right.kind)
 	})
 
