@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json/jsontext"
@@ -41,6 +43,8 @@ const (
 	maxStoredBytes      = 5 * 1024 * 1024 * 1024
 	cleanupBatchSize    = 1000
 )
+
+const compressedPayloadMarker = "MCL-SHARE-GZIP\x00"
 
 type projectFile struct {
 	Encoding string  `json:"encoding"`
@@ -339,6 +343,46 @@ RETURNING stats.removed_bytes
 	return removedBytes, err
 }
 
+func compressPayload(payload []byte) ([]byte, error) {
+	var compressed bytes.Buffer
+	compressed.WriteString(compressedPayloadMarker)
+
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(payload); err != nil {
+		return nil, fmt.Errorf("compress share payload: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("finish compressed share payload: %w", err)
+	}
+	if compressed.Len() >= len(payload) {
+		return payload, nil
+	}
+
+	return compressed.Bytes(), nil
+}
+
+func decompressPayload(payload []byte) ([]byte, error) {
+	if !bytes.HasPrefix(payload, []byte(compressedPayloadMarker)) {
+		return payload, nil
+	}
+
+	reader, err := gzip.NewReader(bytes.NewReader(payload[len(compressedPayloadMarker):]))
+	if err != nil {
+		return nil, fmt.Errorf("open compressed share payload: %w", err)
+	}
+	defer reader.Close()
+
+	decompressed, err := io.ReadAll(io.LimitReader(reader, maxRequestBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("decompress share payload: %w", err)
+	}
+	if len(decompressed) > maxRequestBytes {
+		return nil, errors.New("decompressed share payload exceeds the request size limit")
+	}
+
+	return decompressed, nil
+}
+
 func health(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -396,6 +440,13 @@ func (api *shareAPI) create(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	storedPayload, err := compressPayload(body)
+	if err != nil {
+		slog.Error("Compress Playground share", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not store project snapshot")
+
+		return
+	}
 
 	id := uuid.NewV4().String()
 	expiresAt := time.Now().UTC().Add(api.expiresAfter)
@@ -428,7 +479,7 @@ func (api *shareAPI) create(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	if storedBytes+int64(len(body)) > maxStoredBytes {
+	if storedBytes+int64(len(storedPayload)) > maxStoredBytes {
 		writeError(w, http.StatusInsufficientStorage, "share storage is full")
 
 		return
@@ -437,7 +488,7 @@ func (api *shareAPI) create(w http.ResponseWriter, r *http.Request) {
 		UPDATE playground_share_storage
 		SET stored_bytes = stored_bytes + $1
 		WHERE id = 1
-	`, int64(len(body))); err != nil {
+	`, int64(len(storedPayload))); err != nil {
 		slog.Error("Update Playground share storage quota", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not store project snapshot")
 
@@ -446,7 +497,7 @@ func (api *shareAPI) create(w http.ResponseWriter, r *http.Request) {
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO playground_snippets (id, payload, expires_at)
 		VALUES ($1, $2, $3)
-	`, id, body, expiresAt); err != nil {
+	`, id, storedPayload, expiresAt); err != nil {
 		slog.Error("Store Playground share", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not store project snapshot")
 
@@ -503,6 +554,13 @@ func (api *shareAPI) get(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Error("Load Playground share", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not load project snapshot")
+
+		return
+	}
+	payload, err = decompressPayload(payload)
+	if err != nil {
+		slog.Error("Decompress Playground share", "error", err)
 		writeError(w, http.StatusInternalServerError, "could not load project snapshot")
 
 		return
