@@ -48,15 +48,6 @@ func NewKubernetesResourceCatalog(additionalResources ...KubernetesResourceDescr
 	return catalog
 }
 
-// リソーステーブルで繰り返し現れるAPIグループ名。
-const (
-	groupAdmissionRegistration = "admissionregistration.k8s.io"
-	groupApps                  = "apps"
-	groupNetworking            = "networking.k8s.io"
-	groupRBAC                  = "rbac.authorization.k8s.io"
-	groupStorage               = "storage.k8s.io"
-)
-
 type kubernetesResourceScope uint8
 
 const (
@@ -77,56 +68,28 @@ type kubernetesResourceDescriptor struct {
 
 type kubernetesResourceScopeIndex map[kubernetesResourceKey]kubernetesResourceDescriptor
 
-var builtinKubernetesResourceDescriptors = kubernetesResourceScopeIndex{
-	{group: "", kind: "ConfigMap"}:                                                {resourceName: "configmaps", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "Endpoints"}:                                                {resourceName: "endpoints", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "Event"}:                                                    {resourceName: "events", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "LimitRange"}:                                               {resourceName: "limitranges", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "Namespace"}:                                                {resourceName: "namespaces", scope: kubernetesResourceCluster},
-	{group: "", kind: "Node"}:                                                     {resourceName: "nodes", scope: kubernetesResourceCluster},
-	{group: "", kind: "PersistentVolume"}:                                         {resourceName: "persistentvolumes", scope: kubernetesResourceCluster},
-	{group: "", kind: "PersistentVolumeClaim"}:                                    {resourceName: "persistentvolumeclaims", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "Pod"}:                                                      {resourceName: "pods", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "PodTemplate"}:                                              {resourceName: "podtemplates", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "ReplicationController"}:                                    {resourceName: "replicationcontrollers", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "ResourceQuota"}:                                            {resourceName: "resourcequotas", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "Secret"}:                                                   {resourceName: "secrets", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "Service"}:                                                  {resourceName: "services", scope: kubernetesResourceNamespaced},
-	{group: "", kind: "ServiceAccount"}:                                           {resourceName: "serviceaccounts", scope: kubernetesResourceNamespaced},
-	{group: groupAdmissionRegistration, kind: "MutatingWebhookConfiguration"}:     {resourceName: "mutatingwebhookconfigurations", scope: kubernetesResourceCluster},
-	{group: groupAdmissionRegistration, kind: "ValidatingAdmissionPolicy"}:        {resourceName: "validatingadmissionpolicies", scope: kubernetesResourceCluster},
-	{group: groupAdmissionRegistration, kind: "ValidatingAdmissionPolicyBinding"}: {resourceName: "validatingadmissionpolicybindings", scope: kubernetesResourceCluster},
-	{group: groupAdmissionRegistration, kind: "ValidatingWebhookConfiguration"}:   {resourceName: "validatingwebhookconfigurations", scope: kubernetesResourceCluster},
-	{group: "apiregistration.k8s.io", kind: "APIService"}:                         {resourceName: "apiservices", scope: kubernetesResourceCluster},
-	{group: "apiextensions.k8s.io", kind: kindCustomResourceDefinition}:           {resourceName: "customresourcedefinitions", scope: kubernetesResourceCluster},
-	{group: groupApps, kind: "ControllerRevision"}:                                {resourceName: "controllerrevisions", scope: kubernetesResourceNamespaced},
-	{group: groupApps, kind: "DaemonSet"}:                                         {resourceName: "daemonsets", scope: kubernetesResourceNamespaced},
-	{group: groupApps, kind: "Deployment"}:                                        {resourceName: "deployments", scope: kubernetesResourceNamespaced},
-	{group: groupApps, kind: "ReplicaSet"}:                                        {resourceName: "replicasets", scope: kubernetesResourceNamespaced},
-	{group: groupApps, kind: "StatefulSet"}:                                       {resourceName: "statefulsets", scope: kubernetesResourceNamespaced},
-	{group: "autoscaling", kind: "HorizontalPodAutoscaler"}:                       {resourceName: "horizontalpodautoscalers", scope: kubernetesResourceNamespaced},
-	{group: "batch", kind: "CronJob"}:                                             {resourceName: "cronjobs", scope: kubernetesResourceNamespaced},
-	{group: "batch", kind: "Job"}:                                                 {resourceName: "jobs", scope: kubernetesResourceNamespaced},
-	{group: "certificates.k8s.io", kind: "CertificateSigningRequest"}:             {resourceName: "certificatesigningrequests", scope: kubernetesResourceCluster},
-	{group: "coordination.k8s.io", kind: "Lease"}:                                 {resourceName: "leases", scope: kubernetesResourceNamespaced},
-	{group: "discovery.k8s.io", kind: "EndpointSlice"}:                            {resourceName: "endpointslices", scope: kubernetesResourceNamespaced},
-	{group: "flowcontrol.apiserver.k8s.io", kind: "FlowSchema"}:                   {resourceName: "flowschemas", scope: kubernetesResourceCluster},
-	{group: "flowcontrol.apiserver.k8s.io", kind: "PriorityLevelConfiguration"}:   {resourceName: "prioritylevelconfigurations", scope: kubernetesResourceCluster},
-	{group: groupNetworking, kind: "Ingress"}:                                     {resourceName: "ingresses", scope: kubernetesResourceNamespaced},
-	{group: groupNetworking, kind: "IngressClass"}:                                {resourceName: "ingressclasses", scope: kubernetesResourceCluster},
-	{group: groupNetworking, kind: "NetworkPolicy"}:                               {resourceName: "networkpolicies", scope: kubernetesResourceNamespaced},
-	{group: "node.k8s.io", kind: "RuntimeClass"}:                                  {resourceName: "runtimeclasses", scope: kubernetesResourceCluster},
-	{group: "policy", kind: "PodDisruptionBudget"}:                                {resourceName: "poddisruptionbudgets", scope: kubernetesResourceNamespaced},
-	{group: groupRBAC, kind: "ClusterRole"}:                                       {resourceName: "clusterroles", scope: kubernetesResourceCluster},
-	{group: groupRBAC, kind: "ClusterRoleBinding"}:                                {resourceName: "clusterrolebindings", scope: kubernetesResourceCluster},
-	{group: groupRBAC, kind: "Role"}:                                              {resourceName: "roles", scope: kubernetesResourceNamespaced},
-	{group: groupRBAC, kind: "RoleBinding"}:                                       {resourceName: "rolebindings", scope: kubernetesResourceNamespaced},
-	{group: "scheduling.k8s.io", kind: "PriorityClass"}:                           {resourceName: "priorityclasses", scope: kubernetesResourceCluster},
-	{group: groupStorage, kind: "CSIDriver"}:                                      {resourceName: "csidrivers", scope: kubernetesResourceCluster},
-	{group: groupStorage, kind: "CSINode"}:                                        {resourceName: "csinodes", scope: kubernetesResourceCluster},
-	{group: groupStorage, kind: "StorageClass"}:                                   {resourceName: "storageclasses", scope: kubernetesResourceCluster},
-	{group: groupStorage, kind: "VolumeAttachment"}:                               {resourceName: "volumeattachments", scope: kubernetesResourceCluster},
+type kubernetesResourceCatalogEntry struct {
+	group        string
+	version      string
+	kind         string
+	resourceName string
+	scope        kubernetesResourceScope
 }
+
+func resourceScopeIndexFromCatalog(entries []kubernetesResourceCatalogEntry) kubernetesResourceScopeIndex {
+	index := make(kubernetesResourceScopeIndex, len(entries))
+	for _, entry := range entries {
+		key := kubernetesResourceKey{group: entry.group, kind: entry.kind}
+		value := kubernetesResourceDescriptor{resourceName: entry.resourceName, scope: entry.scope}
+		if previous, exists := index[key]; exists && previous != value {
+			panic(fmt.Sprintf("inconsistent built-in Kubernetes resource descriptor across API versions for %s/%s", entry.group, entry.kind))
+		}
+		index[key] = value
+	}
+	return index
+}
+
+//go:generate go run ./cmd/generate-kubernetes-resource-catalog -input ../k8sschema/data/kubernetes-v1.37.1.swagger.json.gz -output kubernetes_resource_catalog_generated.go
 
 func newKubernetesResourceScopeIndex(artifacts []Artifact) (kubernetesResourceScopeIndex, error) {
 	return newKubernetesResourceScopeIndexWithCatalog(artifacts, DefaultKubernetesResourceCatalog())

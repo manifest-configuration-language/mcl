@@ -150,6 +150,7 @@ func run() error {
 	if err := initializeSchema(startupCtx, database); err != nil {
 		return err
 	}
+	go removeExpired(ctx, database)
 
 	api := &shareAPI{
 		database:        database,
@@ -246,12 +247,15 @@ INSERT INTO playground_share_storage (id, stored_bytes) VALUES (1, 0)
 	if _, err := database.Exec(ctx, initializeStorageCounter); err != nil {
 		return fmt.Errorf("initialize Playground share storage quota: %w", err)
 	}
-	go removeExpired(ctx, database)
-
 	return nil
 }
 
 func removeExpired(ctx context.Context, database *pgxpool.Pool) {
+	cleanupExpired(ctx, database)
+	if ctx.Err() != nil {
+		return
+	}
+
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
@@ -701,11 +705,20 @@ func validFileSet(paths map[string]struct{}) bool {
 }
 
 func clientAddress(r *http.Request) string {
-	if address := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Envoy-External-Address"))); address != nil {
-		return address.String()
-	}
 	address, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
+		remoteIP := net.ParseIP(address)
+		if remoteIP != nil {
+			// The API ingress policy permits only Envoy Gateway pods. Envoy replaces
+			// this header for external requests; ignore it on other connections.
+			if remoteIP.IsPrivate() {
+				if forwardedIP := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Envoy-External-Address"))); forwardedIP != nil {
+					return forwardedIP.String()
+				}
+			}
+			return remoteIP.String()
+		}
+
 		return address
 	}
 

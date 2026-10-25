@@ -2,6 +2,19 @@
 
 package wasmprotocol
 
+const RequestOperationNames = "parse, " +
+	"lint, " +
+	"format, " +
+	"check, " +
+	"evaluate, " +
+	"render, " +
+	"completion, " +
+	"definition, " +
+	"hover, " +
+	"references, " +
+	"rename, " +
+	"renameFileImports"
+
 const (
 	MaxSourceBytes          = 65536
 	MaxProjectFiles         = 4096

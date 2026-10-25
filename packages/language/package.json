@@ -23,7 +23,8 @@
   },
   "scripts": {
     "build": "lezer-generator src/mcl.grammar -o src/parser.js",
-    "check:parity": "pnpm run build && node scripts/check-parity.mjs && node scripts/check-textmate.mjs && node scripts/smoke-language-support.mjs",
+    "generate:textmate": "node scripts/generate-textmate.mjs",
+    "check:parity": "pnpm run build && node scripts/generate-textmate.mjs --check && node scripts/check-parity.mjs && node scripts/check-textmate.mjs && node scripts/smoke-language-support.mjs",
     "prepack": "pnpm run build"
   },
   "dependencies": {

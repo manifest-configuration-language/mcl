@@ -86,11 +86,11 @@
       "patterns": [
         {
           "name": "keyword.control.mcl",
-          "match": "\\b(?:import|as|export|let|type|fn|rule|emit|validate|require|message|using|for|in|if|else|each|descendants|where|select|bySchema|minMatches|requireEach|requireDescendants|node|with|without|schema|key)\\b"
+          "match": "\\b(?:as|bySchema|descendants|each|else|emit|export|fn|for|if|import|key|let|message|minMatches|node|require|requireDescendants|requireEach|rule|schema|select|type|using|validate|where|with|without)\\b"
         },
         {
           "name": "keyword.operator.mcl",
-          "match": "\\b(?:and|or|not)\\b"
+          "match": "\\b(?:and|in|not|or)\\b"
         }
       ]
     },
@@ -98,7 +98,7 @@
       "patterns": [
         {
           "name": "constant.language.mcl",
-          "match": "\\b(?:true|false|null|output)\\b"
+          "match": "\\b(?:false|null|output|true)\\b"
         }
       ]
     },
@@ -106,7 +106,7 @@
       "patterns": [
         {
           "name": "storage.type.mcl",
-          "match": "\\b(?:Any|Null|Bool|Int|Decimal|String|List|Map|Function|Node|Schema)\\b"
+          "match": "\\b(?:Any|Bool|Decimal|Function|Int|List|Map|Node|Null|Schema|String)\\b"
         }
       ]
     },
@@ -138,7 +138,7 @@
       "patterns": [
         {
           "name": "keyword.operator.mcl",
-          "match": "(?:==|!=|<=|>=|\\?\\?|=>|->|\\+|-|\\*|/|%|=|\\||<|>)"
+          "match": "(?:->|!=|\\?\\?|<=|==|=>|>=|-|\\*|/|%|\\+|<|=|>|\\|)"
         }
       ]
     },
