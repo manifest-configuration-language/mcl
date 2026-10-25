@@ -39,7 +39,9 @@ type Artifact = engine.Artifact
 type Lifecycle = engine.Lifecycle
 
 type Diagnostic = engine.Diagnostic
+
 type DiagnosticAction = engine.DiagnosticAction
+
 type DiagnosticTextEdit = engine.DiagnosticTextEdit
 
 const DiagnosticActionRemoveUnreachableDefinition = engine.DiagnosticActionRemoveUnreachableDefinition
