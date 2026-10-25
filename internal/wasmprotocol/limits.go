@@ -2,7 +2,8 @@
 
 package wasmprotocol
 
-const RequestOperationNames = "parse, " +
+const RequestOperationNames =
+	"parse, " +
 	"lint, " +
 	"format, " +
 	"check, " +
