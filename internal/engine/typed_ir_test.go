@@ -149,6 +149,54 @@ emit newNodeConfig()
 	}
 }
 
+func TestFunctionLocalBindingsAreAvailableDuringTypedLowering(t *testing.T) {
+	t.Parallel()
+
+	const source = `export fn doublePlusOne(x: Int) -> Int:
+  let y = x + 1
+  y * 2
+
+emit doublePlusOne(3)
+`
+	bundle, err := EvaluateSource("main.mcl", source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want function-local bindings to be available while lowering expressions", err)
+	}
+	output, err := Render(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(output); !strings.Contains(got, "8") {
+		t.Fatalf("Render() = %s, want the function result 8", output)
+	}
+}
+
+func TestImportedFunctionLocalAnnotationUsesDefiningTypeScope(t *testing.T) {
+	t.Parallel()
+
+	files := fstest.MapFS{
+		"lib.mcl": &fstest.MapFile{Data: []byte(`type Local = { value: String }
+export fn read() -> String:
+  let item: Local = { value: "ok" }
+  item.value
+`)},
+	}
+	const source = `import "./lib.mcl" as lib
+emit lib.read()
+`
+	bundle, err := EvaluateProjectSourceContext(t.Context(), "/virtual-project", "main.mcl", source, files, nil)
+	if err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want imported local annotations to use their defining type scope", err)
+	}
+	output, err := Render(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), `"ok"`) {
+		t.Fatalf("Render() = %s, want the imported function result", output)
+	}
+}
+
 func TestTypePrimitiveMapWithDynamicKeysFallbackBoundaries(t *testing.T) {
 	t.Parallel()
 

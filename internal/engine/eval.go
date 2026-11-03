@@ -529,6 +529,9 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 					if err != nil {
 						return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Annotation.Span, err)
 					}
+					typeScope := TypeScopeID(declaration.SourcePath)
+					resolved = inheritStaticTypeScope(resolved, typeScope)
+					state.Module.Analysis.registerScope(typeScope, state.Types)
 					annotation = &resolved
 				}
 				analysis, known, err := inferStaticExprAnalysisWithExpected(local.Expression, annotation, bindings, state.Types)
@@ -538,7 +541,7 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 				if !known {
 					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("cannot infer local variable %q", local.Name))
 				}
-				typed, supported, err := typedExpressionFromKnownAnalysis(local.Expression, state, analysis, true)
+				typed, supported, err := typedExpressionFromKnownAnalysisWithStaticTypes(local.Expression, state, analysis, true, bindings)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1047,6 +1050,9 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 			if err != nil {
 				return TypeAnalysis{}, fmt.Errorf("local %q: %w", local.Name, err)
 			}
+			typeScope := TypeScopeID(state.SourcePath)
+			resolved = inheritStaticTypeScope(resolved, typeScope)
+			state.Module.Analysis.registerScope(typeScope, types)
 			expected = &resolved
 		}
 		analysis, known, err := inferStaticExprAnalysisWithExpected(local.Expression, expected, bindings, types)

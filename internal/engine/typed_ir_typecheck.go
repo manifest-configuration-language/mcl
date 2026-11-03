@@ -25,7 +25,15 @@ func typedExpressionFromKnownAnalysis(expression Expr, state *EvaluationState, a
 	if state == nil {
 		return typedExpression{}, false, errors.New("evaluation state is nil")
 	}
+	return typedExpressionFromKnownAnalysisWithStaticTypes(expression, state, analysis, known, state.StaticTypes)
+}
+
+func typedExpressionFromKnownAnalysisWithStaticTypes(expression Expr, state *EvaluationState, analysis TypeAnalysis, known bool, staticTypes map[string]TypeAnalysis) (typedExpression, bool, error) {
+	if state == nil {
+		return typedExpression{}, false, errors.New("evaluation state is nil")
+	}
 	context := typedEvaluationContextFromState(state)
+	context.staticTypes = staticTypes
 	context.analysis.results[expression] = typedAnalysisResult{analysis: cloneTypeAnalysis(analysis), known: known}
 
 	return typedExpressionFromAnalysis(expression, analysis, known, state, context)
@@ -53,7 +61,7 @@ func typedExpressionFromAnalysis(expression Expr, analysis TypeAnalysis, known b
 		if lambda, ok := expression.(*LambdaExpr); ok {
 			inference := result.analysisFacts.FunctionInference
 			if inference == nil {
-				inference = &FunctionInference{Body: lambda.Body, Bindings: maps.Clone(state.StaticTypes)}
+				inference = &FunctionInference{Body: lambda.Body, Bindings: maps.Clone(context.staticTypes)}
 			} else {
 				clonedInference := *inference
 				clonedInference.Bindings = maps.Clone(inference.Bindings)
