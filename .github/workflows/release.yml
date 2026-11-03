@@ -1,13 +1,22 @@
 name: Release
-run-name: Release ${{ inputs.release_tag || 'next patch' }}
+run-name: Release ${{ inputs.version || format('next {0} ({1})', inputs.bump, inputs.release_type) }}
 
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: "リリースタグ(v1.2.3など)。未指定の場合は、最新の安定版vX.Y.Zタグの次のパッチバージョンを使用します。"
+      version:
+        description: "リリースバージョン(v1.2.3など)。未指定の場合はGitタグから自動決定します。"
         required: false
         type: string
+      bump:
+        description: "version未指定時に最新の安定版タグから上げる桁"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       release_type:
         description: GitHub Releaseの公開種別
         required: true
@@ -51,25 +60,23 @@ jobs:
             exit 1
           fi
 
-      - name: Validate release target
+      - name: Determine release version
         id: target
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUMP: ${{ inputs.bump }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
         run: |
           set -euo pipefail
-          release_tag="$RELEASE_TAG"
-          if [ -z "$release_tag" ]; then
-            latest_tag="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
-            if [ -z "$latest_tag" ]; then
-              printf 'A release tag is required because no stable vX.Y.Z tag exists.\n' >&2
-              exit 1
-            fi
-            version="${latest_tag#v}"
-            IFS=. read -r major minor patch <<< "$version"
-            release_tag="v${major}.${minor}.$((patch + 1))"
+          arguments=(--release-type "$RELEASE_TYPE" --bump "$RELEASE_BUMP")
+          if [ -n "$RELEASE_VERSION" ]; then
+            arguments+=(--version "$RELEASE_VERSION")
           fi
-          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            printf 'Invalid release tag: %s\n' "$release_tag" >&2
+          plan="$(node scripts/release-version.mjs "${arguments[@]}")"
+          version="$(jq -r '.version' <<< "$plan")"
+          release_tag="$(jq -r '.tag' <<< "$plan")"
+          if [ -z "$version" ] || [ "$version" = null ]; then
+            printf 'Could not determine a release version.\n' >&2
             exit 1
           fi
           if git show-ref --verify --quiet "refs/tags/$release_tag"; then
@@ -79,15 +86,13 @@ jobs:
               exit 1
             fi
           fi
-          for package in browser language; do
-            package_version="$(node -p "require('./packages/${package}/package.json').version")"
-            if [ "v$package_version" != "$release_tag" ]; then
-              printf 'Release tag %s does not match %s package version %s\n' "$release_tag" "$package" "$package_version" >&2
-              exit 1
-            fi
-          done
-          echo "version=${release_tag#v}" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Apply release version
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: node scripts/set-package-version.mjs "$VERSION"
 
       - name: Create local release tag
         env:
@@ -95,9 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            git -c user.name="github-actions[bot]" \
-              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
+            git tag "$RELEASE_TAG"
           fi
 
       - name: Set up mise
@@ -140,6 +143,9 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           overwrite: true
+
+      - name: Restore package manifests
+        run: git restore packages/browser/package.json packages/language/package.json
 
       - name: Build release assets
         env:
@@ -272,5 +278,6 @@ jobs:
       - name: Publish packages with provenance
         env:
           MCL_VERSION: ${{ needs.release.outputs.version }}
+          NPM_DIST_TAG: ${{ inputs.release_type == 'pre-release' && 'next' || 'latest' }}
         run: |
-          node scripts/publish-npm-packages.mjs "$RUNNER_TEMP/mcl-npm-packages" "$MCL_VERSION"
+          node scripts/publish-npm-packages.mjs "$RUNNER_TEMP/mcl-npm-packages" "$MCL_VERSION" "$NPM_DIST_TAG"

@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
+import { compareVersions, isVersion } from "./semver.mjs";
 
-const [packageDirectoryArgument, version] = process.argv.slice(2);
-if (!packageDirectoryArgument || !version) {
-  throw new Error("Usage: node scripts/publish-npm-packages.mjs <package-directory> <version>");
+const [packageDirectoryArgument, version, distTag] = process.argv.slice(2);
+if (!packageDirectoryArgument || !version || !distTag) {
+  throw new Error(
+    "Usage: node scripts/publish-npm-packages.mjs <package-directory> <version> <dist-tag>",
+  );
+}
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(distTag)) {
+  throw new Error(`Invalid npm dist-tag: ${distTag}`);
 }
 
 const packageDirectory = resolve(packageDirectoryArgument);
@@ -49,7 +55,7 @@ for (const [index, packageName] of packages.entries()) {
   } catch (error) {
     const details = `${error.stderr ?? ""}\n${error.stdout ?? ""}`;
     if (/\bE404\b|404 Not Found/.test(details)) {
-      packagesToPublish.push(tarballPath);
+      packagesToPublish.push({ packageName, tarballPath });
       continue;
     }
     throw new Error(`Could not verify npm package ${packageSpec}: ${details.trim()}`, { cause: error });
@@ -61,7 +67,25 @@ for (const [index, packageName] of packages.entries()) {
   process.stdout.write(`Verified existing ${packageSpec} against this run tarball.\n`);
 }
 
-for (const tarballPath of packagesToPublish) {
-  process.stdout.write(`Publishing ${basename(tarballPath)} with provenance.\n`);
-  execFileSync("npm", ["publish", tarballPath, "--access", "public", "--provenance"], { stdio: "inherit" });
+for (const { packageName, tarballPath } of packagesToPublish) {
+  if (distTag === "latest") {
+    let currentLatest;
+    try {
+      currentLatest = execFileSync(
+        "npm",
+        ["view", `@manifest-configuration-language/${packageName}`, "version"],
+        { encoding: "utf8" },
+      ).trim();
+    } catch (error) {
+      const details = `${error.stderr ?? ""}\n${error.stdout ?? ""}`;
+      if (!/\bE404\b|404 Not Found/.test(details)) {
+        throw new Error(`Could not read the current latest version of @manifest-configuration-language/${packageName}: ${details.trim()}`, { cause: error });
+      }
+    }
+    if (currentLatest && isVersion(currentLatest) && compareVersions(version, currentLatest) < 0) {
+      throw new Error(`Refusing to move npm latest backwards: ${packageName} ${version} is older than ${currentLatest}.`);
+    }
+  }
+  process.stdout.write(`Publishing ${basename(tarballPath)} with provenance under the ${distTag} tag.\n`);
+  execFileSync("npm", ["publish", tarballPath, "--access", "public", "--provenance", "--tag", distTag], { stdio: "inherit" });
 }

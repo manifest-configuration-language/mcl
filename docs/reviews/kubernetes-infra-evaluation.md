@@ -2,7 +2,7 @@
 
 ## 対象
 
-この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、アプリケーションのplacement record、ApplicationSet Plugin Generatorの設計、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
+この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、`app.json5`のcluster metadataに保存するprofile selector、既存Git file generatorとConfig Management Pluginの連携、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
 
 各項目では、評価で確認した挙動と未解決の改善候補を記載します。MCLの実装状況が変わり課題が解消した場合は、この文書から該当項目を削除します。
 
@@ -33,6 +33,10 @@ infraではExternalSecretが参照するremote値を公開せず、ローカル�
 ### module間の型参照
 
 `import "./types.mcl" as types`で読み込んだmoduleがexportする型を、別moduleの型定義から`types.Power`のように参照すると、現行MCLはunknown typeとして拒否します。複数clusterのTart Power Unionを共有できず、同じ型定義を複数moduleに重複しています。qualified type importを実装するか、共有型を展開できる機能が必要です。
+
+### module export境界でのnested node評価
+
+MCL 0.3.21では、module内でexportしたSecurityPolicy nodeの`spec.oidc.clientIDRef.name`と`spec.oidc.clientSecret.name`を同時に定義し、同じ`spec`へ`jwt.providers`を加えると、import元entrypointのrenderで`expected expression`診断が発生します。OIDC referenceの一方だけとJWT providerの組み合わせ、またはJWT provider単独では再現しません。nodeをimport元moduleから直接emitするとrenderに成功し、Secret名をliteralへ置き換えても失敗するため、hash計算は原因ではありません。複雑なnested nodeをmoduleからexportしても同じ評価結果になるよう、module export境界のnode expression評価を改善する必要があります。infraでは該当SecurityPolicyだけを`main.mcl`で生成し、他resourceはmoduleへ分割しています。
 
 ### 空のMapとListの型推論
 

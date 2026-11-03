@@ -34,4 +34,8 @@ miseをインストールしてから、次のコマンドで品質チェック�
 mise run quality:check
 ```
 
-CLIの配布バイナリは`mise run release:cli`で生成します。
+CLIのバイナリは`go build -o ./mcl ./cmd/mcl`で生成します。
+
+## リリース
+
+リリースはGitHub Actionsの`Release`ワークフローを`main`から実行します。`version`を省略した場合は、最新の安定版タグから`patch`、`minor`、`major`のいずれかで次のバージョンを計算します。`pre-release`はnpmの`next`タグ、`latest`はnpmの`latest`タグとして公開されます。
