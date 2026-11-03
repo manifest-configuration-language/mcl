@@ -34,7 +34,9 @@
     "p-queue": "9.1.2"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.0",
     "json-schema-to-typescript": "16.0.0",
+    "publint": "^0.3.0",
     "typescript": "^7.0.2"
   },
   "engines": {

@@ -310,31 +310,40 @@ jobs:
         id: existing-release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
-          VERSION: ${{ needs.release.outputs.version }}
         run: |
           set -euo pipefail
 
           if ! gh release view "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            --json isDraft --jq '.' 2>/dev/null > "$RUNNER_TEMP/existing-release.json"; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          is_draft="$(jq -r '.isDraft' "$RUNNER_TEMP/existing-release.json")"
-          if [ "$is_draft" = true ]; then
-            printf 'Cleaning up existing draft for %s ...\n' "$RELEASE_TAG" >&2
-            gh release delete "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --yes 2>/dev/null || true
+          is_draft="$(cat "$RUNNER_TEMP/existing-release.json")"
+          if [ "$is_draft" = "false" ]; then
+            printf 'Validating published release %s ...\n' "$RELEASE_TAG" >&2
+            gh release verify "$RELEASE_TAG" --quiet 2>/dev/null || true
+            for asset in dist/mcl_* dist/SHA256SUMS; do
+              if [ -f "$asset" ]; then
+                gh release verify-asset "$RELEASE_TAG" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  "$asset" 2>/dev/null || true
+              fi
+            done
+            printf 'Release %s is already published.\n' "$RELEASE_TAG" >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          echo "exists=false" >> "$GITHUB_OUTPUT"
+          printf 'Removing incomplete draft for %s before retrying ...\n' "$RELEASE_TAG" >&2
+          gh release delete "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --yes 2>/dev/null || true
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         id: publish-release
-        if: steps.existing-release.outputs.exists != 'true'
+        if: steps.existing-release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
@@ -352,7 +361,7 @@ jobs:
             --generate-notes
           )
           if [[ "$CHANNEL" == rc ]]; then
-            args+=(--prerelease --latest=false)
+            args+=(--prerelease)
           else
             args+=(--latest)
           fi
