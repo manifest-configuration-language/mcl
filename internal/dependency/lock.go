@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -16,11 +17,14 @@ import (
 	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/netpolicy"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
+	"gopkg.in/yaml.v3"
 )
 
 const maxRemoteManifestSize = 16 << 20
 
 const maxRemoteChartArchiveSize = 64 << 20
+
+const maxRemoteHelmRepositoryIndexSize = 64 << 20
 
 const maxRemoteGitTreeSize = 32 << 20
 
@@ -41,16 +45,18 @@ var ErrRemoteDependencyUnavailable = errors.New("remote dependency is unavailabl
 type Lock struct {
 	identity ToolchainIdentity
 	//nolint:containedctx // Lockは同一の依存更新処理で使う取得Contextを共有します。
-	ctx        context.Context
-	root       string
-	update     bool
-	manifests  map[string]string
-	schemas    map[string]string
-	charts     map[string]string
-	ociCharts  map[string]map[string]ociChartLock
-	gitSources map[string]gitSourceLock
-	fetched    map[string][]byte
-	filesystem *rootFilesystem
+	ctx               context.Context
+	root              string
+	update            bool
+	manifests         map[string]string
+	schemas           map[string]string
+	charts            map[string]string
+	chartDependencies map[string]map[string]chartDependencyLock
+	repositoryIndexes map[string][]byte
+	ociCharts         map[string]map[string]ociChartLock
+	gitSources        map[string]gitSourceLock
+	fetched           map[string][]byte
+	filesystem        *rootFilesystem
 }
 
 type ociChartLock struct {
@@ -69,13 +75,19 @@ type gitSourceLock struct {
 }
 
 type lockFile struct {
-	Version    int                                `json:"version"`
-	Toolchain  toolchainLock                      `json:"toolchain"`
-	Manifests  map[string]string                  `json:"manifests"`
-	Schemas    map[string]string                  `json:"schemas"`
-	Charts     map[string]string                  `json:"charts"`
-	OCICharts  map[string]map[string]ociChartLock `json:"ociCharts"`
-	GitSources map[string]gitSourceLock           `json:"gitSources"`
+	Version           int                                       `json:"version"`
+	Toolchain         toolchainLock                             `json:"toolchain"`
+	Manifests         map[string]string                         `json:"manifests"`
+	Schemas           map[string]string                         `json:"schemas"`
+	Charts            map[string]string                         `json:"charts"`
+	ChartDependencies map[string]map[string]chartDependencyLock `json:"chartDependencies,omitempty"`
+	OCICharts         map[string]map[string]ociChartLock        `json:"ociCharts"`
+	GitSources        map[string]gitSourceLock                  `json:"gitSources"`
+}
+
+type chartDependencyLock struct {
+	Source  string `json:"source"`
+	Version string `json:"version"`
 }
 
 type toolchainLock struct {
@@ -125,7 +137,7 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 	}
 	lock := &Lock{
 		ctx: ctx, root: root, update: update, identity: identity,
-		manifests: make(map[string]string), schemas: make(map[string]string), charts: make(map[string]string),
+		manifests: make(map[string]string), schemas: make(map[string]string), charts: make(map[string]string), chartDependencies: make(map[string]map[string]chartDependencyLock), repositoryIndexes: make(map[string][]byte),
 		ociCharts: make(map[string]map[string]ociChartLock), gitSources: make(map[string]gitSourceLock),
 		fetched: make(map[string][]byte), filesystem: files,
 	}
@@ -147,13 +159,13 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 	if err := json.Unmarshal(data, &content, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("decode dependency lock: %w", err)
 	}
-	if content.Version < 1 || content.Version > 3 {
+	if content.Version < 1 || content.Version > 4 {
 		return nil, fmt.Errorf("unsupported dependency lock version %d", content.Version)
 	}
 	if content.Version < 3 && !update {
 		return nil, errors.New("dependency lock does not record the complete toolchain identity; run mcl update")
 	}
-	if content.Version == 3 && !lock.identity.compatibleWith(content.Toolchain) && !update {
+	if content.Version >= 3 && !lock.identity.compatibleWith(content.Toolchain) && !update {
 		return nil, errors.New("dependency lock toolchain does not match this mcl build; run mcl update")
 	}
 	for source, digest := range content.Manifests {
@@ -184,6 +196,18 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 		}
 		lock.charts[source] = digest
 	}
+	for parentDigest, dependencies := range content.ChartDependencies {
+		if !contentutil.IsSHA256(parentDigest) {
+			return nil, fmt.Errorf("invalid parent digest for Helm Chart dependencies %q", parentDigest)
+		}
+		lock.chartDependencies[parentDigest] = make(map[string]chartDependencyLock, len(dependencies))
+		for alias, entry := range dependencies {
+			if alias == "" || entry.Version == "" || validateChartDependencySource(entry.Source) != nil {
+				return nil, fmt.Errorf("invalid Helm Chart dependency lock for alias %q", alias)
+			}
+			lock.chartDependencies[parentDigest][alias] = entry
+		}
+	}
 	for source, versions := range content.OCICharts {
 		if err := ValidateOCIChartSource(source); err != nil {
 			return nil, fmt.Errorf("invalid OCI Helm Chart source in dependency lock: %w", err)
@@ -194,6 +218,17 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 				return nil, fmt.Errorf("invalid OCI Helm Chart lock for %q version %q", source, version)
 			}
 			lock.ociCharts[source][version] = entry
+		}
+	}
+	for _, dependencies := range lock.chartDependencies {
+		for alias, entry := range dependencies {
+			if strings.HasPrefix(entry.Source, "oci://") {
+				if _, exists := lock.ociCharts[entry.Source][entry.Version]; !exists {
+					return nil, fmt.Errorf("helm Chart dependency %q is missing its OCI archive lock", alias)
+				}
+			} else if _, exists := lock.charts[entry.Source]; !exists {
+				return nil, fmt.Errorf("helm Chart dependency %q is missing its archive lock", alias)
+			}
 		}
 	}
 	for key, entry := range content.GitSources {
@@ -229,6 +264,135 @@ func (lock *Lock) LoadChart(source string) ([]byte, error) {
 	}
 
 	return lock.loadRemote(source, "chart", lock.charts)
+}
+
+// ResolveChartDependency resolves a repository-pinned Helm dependency during update.
+func (lock *Lock) ResolveChartDependency(repository, name, version string) (string, []byte, error) {
+	if !lock.update {
+		return "", nil, errors.New("helm Chart dependencies can only be resolved during update")
+	}
+	if version == "" || name == "" {
+		return "", nil, errors.New("helm Chart dependency name and version are required")
+	}
+	if strings.HasPrefix(repository, "oci://") {
+		reference, err := url.JoinPath(repository, name)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve OCI Helm Chart dependency: %w", err)
+		}
+		archive, err := lock.LoadOCIChart(reference, version)
+		if err != nil {
+			return "", nil, err
+		}
+
+		return reference, archive, nil
+	}
+	repositoryURL, err := ValidatedManifestURL(repository)
+	if err != nil || repositoryURL.RawQuery != "" {
+		return "", nil, errors.New("helm Chart dependency repository must be an HTTPS repository URL without query or fragment")
+	}
+	indexURL, err := resolveRepositoryURL(repository, "index.yaml")
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve Helm Chart repository index: %w", err)
+	}
+	indexData, found := lock.repositoryIndexes[indexURL]
+	if !found {
+		indexData, err = fetchRemote(lock.ctx, indexURL, "chart-index")
+		if err != nil {
+			return "", nil, fmt.Errorf("fetch Helm Chart repository index: %w", err)
+		}
+		lock.repositoryIndexes[indexURL] = indexData
+	}
+	archiveURL, err := chartArchiveURL(indexData, repository, name, version)
+	if err != nil {
+		return "", nil, err
+	}
+	archive, err := lock.LoadChart(archiveURL)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return archiveURL, archive, nil
+}
+
+func chartArchiveURL(indexData []byte, repository, name, version string) (string, error) {
+	var index struct {
+		Entries map[string][]struct {
+			Version string   `yaml:"version"`
+			URLs    []string `yaml:"urls"`
+		} `yaml:"entries"`
+	}
+	if err := yaml.Unmarshal(indexData, &index); err != nil {
+		return "", fmt.Errorf("decode Helm Chart repository index: %w", err)
+	}
+	var chartArchiveURL string
+	for _, chartVersion := range index.Entries[name] {
+		if chartVersion.Version == version && len(chartVersion.URLs) > 0 {
+			chartArchiveURL = chartVersion.URLs[0]
+
+			break
+		}
+	}
+	if chartArchiveURL == "" {
+		return "", fmt.Errorf("helm Chart dependency %q version %q has no archive URL", name, version)
+	}
+	archiveURL, err := resolveRepositoryURL(repository, chartArchiveURL)
+	if err != nil {
+		return "", fmt.Errorf("resolve Helm Chart dependency archive URL: %w", err)
+	}
+	if _, err := ValidatedManifestURL(archiveURL); err != nil {
+		return "", fmt.Errorf("helm Chart dependency archive URL: %w", err)
+	}
+
+	return archiveURL, nil
+}
+
+func resolveRepositoryURL(repository, reference string) (string, error) {
+	base, err := url.Parse(repository)
+	if err != nil {
+		return "", err
+	}
+	ref, err := url.Parse(reference)
+	if err != nil {
+		return "", err
+	}
+	if ref.IsAbs() {
+		return ref.String(), nil
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/"
+
+	return base.ResolveReference(ref).String(), nil
+}
+
+// LoadChartDependency returns the locked archive source for one alias.
+func (lock *Lock) LoadChartDependency(parentDigest, alias string) (string, string, bool) {
+	entry, found := lock.chartDependencies[parentDigest][alias]
+
+	return entry.Source, entry.Version, found
+}
+
+// SaveChartDependency records a resolved dependency source by its parent archive digest and alias.
+func (lock *Lock) SaveChartDependency(parentDigest, alias, source, version string) error {
+	if !lock.update {
+		return errors.New("helm Chart dependencies can only be saved during update")
+	}
+	if !contentutil.IsSHA256(parentDigest) || alias == "" || version == "" || validateChartDependencySource(source) != nil {
+		return errors.New("invalid Helm Chart dependency lock entry")
+	}
+	if lock.chartDependencies[parentDigest] == nil {
+		lock.chartDependencies[parentDigest] = make(map[string]chartDependencyLock)
+	}
+	lock.chartDependencies[parentDigest][alias] = chartDependencyLock{Source: source, Version: version}
+
+	return nil
+}
+
+func validateChartDependencySource(source string) error {
+	if strings.HasPrefix(source, "oci://") {
+		return ValidateOCIChartSource(source)
+	}
+	_, err := ValidatedManifestURL(source)
+
+	return err
 }
 
 func (lock *Lock) LoadOCIChart(source, version string) ([]byte, error) {
@@ -363,7 +527,7 @@ func (lock *Lock) Save() error {
 	if lock.filesystem == nil {
 		return errors.New("dependency filesystem is required")
 	}
-	content := lockFile{Version: 3, Toolchain: lock.identity.lock(), Manifests: lock.manifests, Schemas: lock.schemas, Charts: lock.charts, OCICharts: lock.ociCharts, GitSources: lock.gitSources}
+	content := lockFile{Version: 4, Toolchain: lock.identity.lock(), Manifests: lock.manifests, Schemas: lock.schemas, Charts: lock.charts, ChartDependencies: lock.chartDependencies, OCICharts: lock.ociCharts, GitSources: lock.gitSources}
 	data, err := json.Marshal(content, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode dependency lock: %w", err)
@@ -474,13 +638,29 @@ func fetchRemote(ctx context.Context, source, category string) ([]byte, error) {
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch %s %q: unexpected HTTP status %s", category, source, response.Status)
 	}
-	maximumSize := int64(maxRemoteManifestSize)
-	if category == "chart" {
-		maximumSize = maxRemoteChartArchiveSize
-	}
-	data, exceeded, err := contentutil.ReadAllLimited(response.Body, maximumSize)
+	data, err := readRemoteResponse(response.Body, category, remoteResponseLimit(category))
 	if err != nil {
-		return nil, fmt.Errorf("read Manifest response: %w", err)
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func remoteResponseLimit(category string) int64 {
+	switch category {
+	case "chart":
+		return maxRemoteChartArchiveSize
+	case "chart-index":
+		return maxRemoteHelmRepositoryIndexSize
+	default:
+		return maxRemoteManifestSize
+	}
+}
+
+func readRemoteResponse(reader io.Reader, category string, maximumSize int64) ([]byte, error) {
+	data, exceeded, err := contentutil.ReadAllLimited(reader, maximumSize)
+	if err != nil {
+		return nil, fmt.Errorf("read %s response: %w", category, err)
 	}
 	if exceeded {
 		return nil, fmt.Errorf("%s response exceeds %d bytes", category, maximumSize)

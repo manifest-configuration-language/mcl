@@ -35,11 +35,11 @@ func TestEvaluateProjectSourceUsesRootRelativeFilesystem(t *testing.T) {
 func TestEvaluateProjectSourceReadsDependencyLockFromFilesystem(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{
-		"mcl.lock": &fstest.MapFile{Data: []byte(`{"version":4}`)},
+		"mcl.lock": &fstest.MapFile{Data: []byte(`{"version":5}`)},
 	}
 
 	_, err := EvaluateProjectSourceContext(t.Context(), filepath.Join(string(filepath.Separator), "virtual-project"), projectFileEntrypoint, "", files, nil)
-	if err == nil || !strings.Contains(err.Error(), "unsupported dependency lock version 4") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported dependency lock version 5") {
 		t.Fatalf("evaluate with virtual lock: got %v, want unsupported lock version", err)
 	}
 }
@@ -182,11 +182,11 @@ func TestEvaluateProjectFileReadsDependencyLockFromFilesystem(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{
 		projectFileEntrypoint: &fstest.MapFile{Data: []byte("emit \"ok\"\n")},
-		"mcl.lock":            &fstest.MapFile{Data: []byte(`{"version":4}`)},
+		"mcl.lock":            &fstest.MapFile{Data: []byte(`{"version":5}`)},
 	}
 
 	_, err := EvaluateProjectFileContext(t.Context(), filepath.Join(string(filepath.Separator), "virtual-project"), projectFileEntrypoint, files)
-	if err == nil || !strings.Contains(err.Error(), "unsupported dependency lock version 4") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported dependency lock version 5") {
 		t.Fatalf("evaluate project file with virtual lock: got %v, want unsupported lock version", err)
 	}
 }

@@ -1,6 +1,8 @@
 package helmrender
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,15 +11,555 @@ import (
 	"time"
 
 	"github.com/manifest-configuration-language/mcl/internal/content"
+	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"helm.sh/helm/v4/pkg/chart/common"
 	v2 "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
+	"helm.sh/helm/v4/pkg/provenance"
 )
 
+func TestLoadUsesLockedHelmDependenciesForAliasesOffline(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL        = "https://example.test/cortex.tgz"
+		childURL         = "https://example.test/memcached-6.14.0.tgz"
+		memcachedName    = "memcached"
+		memcachedVersion = "6.14.0"
+	)
+	child := &v2.Chart{Metadata: &v2.Metadata{Name: memcachedName, Version: memcachedVersion, APIVersion: v2.APIVersionV2}}
+	childArchive := testChartArchive(t, child)
+	aliases := []string{"memcached-frontend", "memcached-blocks-index", "memcached-blocks", "memcached-blocks-metadata", "memcached-parquet-labels"}
+	requirements := make([]*v2.Dependency, 0, len(aliases))
+	lockedRequirements := make([]*v2.Dependency, 0, len(aliases))
+	for _, alias := range aliases {
+		requirements = append(requirements, &v2.Dependency{
+			Name: memcachedName, Alias: alias, Version: memcachedVersion, Repository: "https://charts.example.test/bitnami",
+		})
+		lockedRequirements = append(lockedRequirements, &v2.Dependency{
+			Name: memcachedName, Version: memcachedVersion, Repository: "https://charts.example.test/bitnami",
+		})
+	}
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{Name: "cortex", Version: "3.3.8", APIVersion: v2.APIVersionV2, Dependencies: requirements},
+		Lock:     &v2.Lock{Digest: chartLockDigest(t, requirements, lockedRequirements), Dependencies: lockedRequirements},
+	}
+	parent.SetDependencies(child)
+	parentArchive := testChartArchive(t, parent)
+	parentDigest := content.SHA256(parentArchive)
+	childDigest := content.SHA256(childArchive)
+	chartDependencies := make(map[string]map[string]testChartDependencyLock, 1)
+	chartDependencies[parentDigest] = make(map[string]testChartDependencyLock, len(aliases))
+	for _, alias := range aliases {
+		chartDependencies[parentDigest][alias] = testChartDependencyLock{Source: childURL, Version: memcachedVersion}
+	}
+	lockData, err := json.Marshal(testDependencyLock{
+		Version:           4,
+		Toolchain:         testDependencyToolchainLock{},
+		Charts:            map[string]string{parentURL: parentDigest, childURL: childDigest},
+		ChartDependencies: chartDependencies,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:          {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest: {Data: parentArchive},
+		".mcl/cache/sha256/" + childDigest:  {Data: childArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: "3.3.8", ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	loadedChart := loaded.source.(*v2.Chart)
+	if loaded.ContentDigest == loaded.RemoteDigest {
+		t.Fatal("Load() content digest does not include the locked dependencies")
+	}
+	if got := len(loadedChart.Dependencies()); got != len(aliases) {
+		t.Fatalf("Load() dependencies = %d, want %d aliases", got, len(aliases))
+	}
+	for _, child := range loadedChart.Dependencies() {
+		if child.Metadata.Name != memcachedName || child.Metadata.Version != memcachedVersion {
+			t.Fatalf("loaded dependency metadata = %#v", child.Metadata)
+		}
+	}
+}
+
+func TestLoadPreservesLockedGrandchildFromBundledChart(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL = "https://example.test/bundled-parent.tgz"
+		grandURL  = "https://example.test/grandchild-1.2.0.tgz"
+	)
+	grandchild := &v2.Chart{Metadata: &v2.Metadata{Name: testGrandchildName, Version: testChildVersion, APIVersion: v2.APIVersionV2}}
+	grandchildArchive := testChartArchive(t, grandchild)
+	grandRequirement := &v2.Dependency{Name: testGrandchildName, Version: "^1.0.0", Repository: testChartRepository}
+	lockedGrandchild := &v2.Dependency{Name: testGrandchildName, Version: testChildVersion, Repository: testChartRepository}
+	child := &v2.Chart{
+		Metadata: &v2.Metadata{
+			Name: testChildChartName, Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2,
+			Dependencies: []*v2.Dependency{grandRequirement},
+		},
+		Lock: &v2.Lock{
+			Digest:       chartLockDigest(t, []*v2.Dependency{grandRequirement}, []*v2.Dependency{lockedGrandchild}),
+			Dependencies: []*v2.Dependency{lockedGrandchild},
+		},
+	}
+	parentRequirement := &v2.Dependency{Name: testChildChartName, Version: testExactDependencyVersion}
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{
+			Name: testParentChartName, Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2,
+			Dependencies: []*v2.Dependency{parentRequirement},
+		},
+	}
+	parent.SetDependencies(child)
+	parentArchive := testChartArchive(t, parent)
+	parentDigest := content.SHA256(parentArchive)
+	loadedParent, err := loader.LoadArchive(bytes.NewReader(parentArchive))
+	if err != nil {
+		t.Fatalf("load fixture parent archive: %v", err)
+	}
+	bundledChildDigest := chartRawDigest(loadedParent.Dependencies()[0])
+	grandchildDigest := content.SHA256(grandchildArchive)
+	lockData, err := json.Marshal(testDependencyLock{
+		Version: 4, Toolchain: testDependencyToolchainLock{},
+		Charts: map[string]string{parentURL: parentDigest, grandURL: grandchildDigest},
+		ChartDependencies: map[string]map[string]testChartDependencyLock{
+			bundledChildDigest: {testGrandchildName: {Source: grandURL, Version: testChildVersion}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:              {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest:     {Data: parentArchive},
+		".mcl/cache/sha256/" + grandchildDigest: {Data: grandchildArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	children := loaded.source.(*v2.Chart).Dependencies()
+	if len(children) != 1 || len(children[0].Dependencies()) != 1 || children[0].Dependencies()[0].Metadata.Name != testGrandchildName {
+		t.Fatalf("loaded dependency tree = %#v, want bundled child with locked grandchild", children)
+	}
+}
+
+func TestLoadRejectsInconsistentHelmChartLock(t *testing.T) {
+	t.Parallel()
+
+	requirement := &v2.Dependency{Name: testChildChartName, Version: testExactDependencyVersion, Repository: testChartRepository}
+	chart := &v2.Chart{
+		Metadata: &v2.Metadata{Name: testParentChartName, Version: testExactDependencyVersion, Dependencies: []*v2.Dependency{requirement}},
+		Lock:     &v2.Lock{Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Dependencies: []*v2.Dependency{{Name: testChildChartName, Version: testExactDependencyVersion, Repository: testChartRepository}}},
+	}
+	_, err := loadLockedDependencies(chart, content.SHA256([]byte(testParentChartName)), &dependency.Lock{})
+	if err == nil || !strings.Contains(err.Error(), "chart.lock digest does not match") {
+		t.Fatalf("loadLockedDependencies() error = %v, want inconsistent Chart.lock error", err)
+	}
+}
+
+func TestLoadUsesCompleteBundleWhenChartLockDigestIsStale(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL  = "https://example.test/stale-lock-parent.tgz"
+		firstName  = "first-child"
+		secondName = "second-child"
+	)
+	firstRequirement := &v2.Dependency{Name: firstName, Version: "^1.0.0", Repository: "https://charts.example.test/first"}
+	secondRequirement := &v2.Dependency{Name: secondName, Version: "^2.0.0", Repository: "https://charts.example.test/second"}
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{
+			Name: testParentChartName, Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2,
+			Dependencies: []*v2.Dependency{firstRequirement, secondRequirement},
+		},
+		Lock: &v2.Lock{
+			Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Dependencies: []*v2.Dependency{
+				{Name: firstName, Version: testChildVersion, Repository: firstRequirement.Repository},
+				{Name: secondName, Version: "2.3.0", Repository: secondRequirement.Repository},
+			},
+		},
+	}
+	parent.SetDependencies(
+		&v2.Chart{Metadata: &v2.Metadata{Name: firstName, Version: testChildVersion, APIVersion: v2.APIVersionV2}},
+		&v2.Chart{Metadata: &v2.Metadata{Name: secondName, Version: "2.3.0", APIVersion: v2.APIVersionV2}},
+	)
+	parentArchive := testChartArchive(t, parent)
+	parentDigest := content.SHA256(parentArchive)
+	lockData, err := json.Marshal(testDependencyLock{
+		Version:   4,
+		Toolchain: testDependencyToolchainLock{},
+		Charts:    map[string]string{parentURL: parentDigest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:          {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest: {Data: parentArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() rejected complete archive with stale Chart.lock: %v", err)
+	}
+	if len(loaded.source.(*v2.Chart).Dependencies()) != 2 || loaded.ContentDigest != loaded.RemoteDigest {
+		t.Fatal("Load() did not preserve the archive-pinned bundled dependencies")
+	}
+}
+
+func TestValidateHelmChartLockAcceptsLegacyV1DigestOnly(t *testing.T) {
+	t.Parallel()
+
+	requirements := []*v2.Dependency{{Name: testChildChartName, Version: testExactDependencyVersion, Repository: testChartRepository}}
+	legacyDigest := legacyChartLockDigest(t, requirements)
+	chartLock := &v2.Lock{Digest: legacyDigest, Dependencies: []*v2.Dependency{{Name: testChildChartName, Version: testExactDependencyVersion, Repository: testChartRepository}}}
+	if err := validateHelmChartLock(&v2.Metadata{APIVersion: v2.APIVersionV1, Dependencies: requirements}, requirements, chartLock); err != nil {
+		t.Fatalf("validateHelmChartLock() rejected legacy v1 digest: %v", err)
+	}
+	if err := validateHelmChartLock(&v2.Metadata{APIVersion: v2.APIVersionV2, Dependencies: requirements}, requirements, chartLock); err == nil {
+		t.Fatal("validateHelmChartLock() accepted legacy digest for apiVersion v2")
+	}
+}
+
+func TestLoadAllowsOnlyFullyBundledDependenciesWithoutChartLock(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL = "https://example.test/parent.tgz"
+		childName = testChildChartName
+	)
+	child := &v2.Chart{Metadata: &v2.Metadata{Name: childName, Version: testBundledChildVersion, APIVersion: v2.APIVersionV2}}
+	dependencyRequirement := &v2.Dependency{Name: childName, Version: testExactDependencyVersion, Repository: testChartRepository}
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{Name: testParentChartName, Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2, Dependencies: []*v2.Dependency{dependencyRequirement}},
+	}
+	parent.SetDependencies(child)
+	parentArchive := testChartArchive(t, parent)
+	parentDigest := content.SHA256(parentArchive)
+	lockData, err := json.Marshal(testDependencyLock{
+		Version:   4,
+		Toolchain: testDependencyToolchainLock{},
+		Charts:    map[string]string{parentURL: parentDigest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:          {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest: {Data: parentArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() rejected fully bundled dependency without Chart.lock: %v", err)
+	}
+	if len(loaded.source.(*v2.Chart).Dependencies()) != 1 || loaded.ContentDigest != loaded.RemoteDigest {
+		t.Fatal("Load() did not preserve the archive-pinned bundled dependency tree")
+	}
+
+	parent.SetDependencies()
+	unresolvedArchive := testChartArchive(t, parent)
+	unresolvedDigest := content.SHA256(unresolvedArchive)
+	files[".mcl/cache/sha256/"+unresolvedDigest] = &fstest.MapFile{Data: unresolvedArchive}
+	lockData, err = json.Marshal(testDependencyLock{
+		Version:   4,
+		Toolchain: testDependencyToolchainLock{},
+		Charts:    map[string]string{parentURL: unresolvedDigest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files[testDependencyLockFileName] = &fstest.MapFile{Data: lockData}
+	lock, err = dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open lock for unresolved dependency: %v", err)
+	}
+	if _, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	}); err == nil || !strings.Contains(err.Error(), "no matching bundled subchart and no Chart.lock") {
+		t.Fatalf("Load() error = %v, want unresolved dependency error", err)
+	}
+}
+
+func TestLoadKeepsBundledFileDependencyWithVersionMismatch(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL = "https://example.test/scylla-manager.tgz"
+		childName = "scylla"
+	)
+	child := &v2.Chart{Metadata: &v2.Metadata{Name: childName, Version: testBundledChildVersion, APIVersion: v2.APIVersionV2}}
+	requirement := &v2.Dependency{Name: childName, Version: testExactDependencyVersion, Repository: "file://../scylla"}
+	locked := &v2.Dependency{Name: childName, Version: testExactDependencyVersion, Repository: "file://../scylla"}
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{Name: "scylla-manager", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2, Dependencies: []*v2.Dependency{requirement}},
+		Lock:     &v2.Lock{Digest: chartLockDigest(t, []*v2.Dependency{requirement}, []*v2.Dependency{locked}), Dependencies: []*v2.Dependency{locked}},
+	}
+	parent.SetDependencies(child)
+	parentArchive := testChartArchive(t, parent)
+	parentDigest := content.SHA256(parentArchive)
+	lockData, err := json.Marshal(testDependencyLock{
+		Version:   4,
+		Toolchain: testDependencyToolchainLock{},
+		Charts:    map[string]string{parentURL: parentDigest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:          {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest: {Data: parentArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() rejected archive-pinned file dependency: %v", err)
+	}
+	if children := loaded.source.(*v2.Chart).Dependencies(); len(children) != 1 || children[0].Metadata.Version != testBundledChildVersion {
+		t.Fatalf("loaded file dependency = %#v, want the archive-bundled chart", children)
+	}
+}
+
+func TestLoadKeepsBundledDependencyWithEmptyRepository(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL = "https://example.test/empty-repository-parent.tgz"
+		childName = "scylla"
+	)
+	child := &v2.Chart{Metadata: &v2.Metadata{Name: childName, Version: testBundledChildVersion, APIVersion: v2.APIVersionV2}}
+	requirement := &v2.Dependency{Name: childName, Version: testExactDependencyVersion}
+	locked := &v2.Dependency{Name: childName, Version: testExactDependencyVersion}
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{Name: testParentChartName, Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2, Dependencies: []*v2.Dependency{requirement}},
+		Lock:     &v2.Lock{Digest: chartLockDigest(t, []*v2.Dependency{requirement}, []*v2.Dependency{locked}), Dependencies: []*v2.Dependency{locked}},
+	}
+	parent.SetDependencies(child)
+	parentArchive := testChartArchive(t, parent)
+	parentDigest := content.SHA256(parentArchive)
+	lockData, err := json.Marshal(testDependencyLock{
+		Version:   4,
+		Toolchain: testDependencyToolchainLock{},
+		Charts:    map[string]string{parentURL: parentDigest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:          {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest: {Data: parentArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() rejected archive-bundled empty-repository dependency: %v", err)
+	}
+	if children := loaded.source.(*v2.Chart).Dependencies(); len(children) != 1 || children[0].Metadata.Name != childName {
+		t.Fatalf("loaded dependency = %#v, want the local bundled subchart", children)
+	}
+}
+
+func TestLoadResolvesHelmRepositoryAliasFromChartLock(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentURL = "https://example.test/alias-parent.tgz"
+		childURL  = "https://example.test/child-1.2.0.tgz"
+	)
+	requirement := &v2.Dependency{Name: testChildChartName, Alias: "childAlias", Version: "^1.0.0", Repository: "@bitnami"}
+	locked := &v2.Dependency{Name: testChildChartName, Version: testChildVersion, Repository: testChartRepository}
+	resolvedRequirement := *requirement
+	resolvedRequirement.Repository = testChartRepository
+	parent := &v2.Chart{
+		Metadata: &v2.Metadata{Name: testParentChartName, Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2, Dependencies: []*v2.Dependency{requirement}},
+		Lock:     &v2.Lock{Digest: chartLockDigest(t, []*v2.Dependency{&resolvedRequirement}, []*v2.Dependency{locked}), Dependencies: []*v2.Dependency{locked}},
+	}
+	parentArchive := testChartArchive(t, parent)
+	childArchive := testChartArchive(t, &v2.Chart{Metadata: &v2.Metadata{Name: testChildChartName, Version: testChildVersion, APIVersion: v2.APIVersionV2}})
+	parentDigest := content.SHA256(parentArchive)
+	childDigest := content.SHA256(childArchive)
+	lockData, err := json.Marshal(testDependencyLock{
+		Version:   4,
+		Toolchain: testDependencyToolchainLock{},
+		Charts:    map[string]string{parentURL: parentDigest, childURL: childDigest},
+		ChartDependencies: map[string]map[string]testChartDependencyLock{
+			parentDigest: {"childAlias": {Source: childURL, Version: testChildVersion}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{
+		testDependencyLockFileName:          {Data: lockData},
+		".mcl/cache/sha256/" + parentDigest: {Data: parentArchive},
+		".mcl/cache/sha256/" + childDigest:  {Data: childArchive},
+	}
+	lock, err := dependency.OpenWithFS(t.Context(), projectRoot, false, dependency.ToolchainIdentity{}, files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	loaded, err := Load(LoadRequest{
+		Source: parentURL, Version: testExactDependencyVersion, ProjectRoot: projectRoot,
+		SourcePath: filepath.Join(projectRoot, "main.mcl"), Lock: lock,
+	})
+	if err != nil {
+		t.Fatalf("Load() rejected Helm repository alias resolved by Chart.lock: %v", err)
+	}
+	if children := loaded.source.(*v2.Chart).Dependencies(); len(children) != 1 || children[0].Metadata.Version != testChildVersion {
+		t.Fatalf("loaded alias dependency = %#v, want locked package version", children)
+	}
+}
+
+type testChartDependencyLock struct {
+	Source  string `json:"source"`
+	Version string `json:"version"`
+}
+
+type testDependencyToolchainLock struct {
+	MCL            string `json:"mcl"`
+	Revision       string `json:"revision"`
+	Modified       string `json:"modified"`
+	Go             string `json:"go"`
+	Helm           string `json:"helm"`
+	KustomizeAPI   string `json:"kustomizeAPI"`
+	KustomizeKYAML string `json:"kustomizeKYAML"`
+}
+
+type testDependencyLock struct {
+	Version           int                                           `json:"version"`
+	Toolchain         testDependencyToolchainLock                   `json:"toolchain"`
+	Charts            map[string]string                             `json:"charts"`
+	ChartDependencies map[string]map[string]testChartDependencyLock `json:"chartDependencies"`
+}
+
+func testChartArchive(t *testing.T, chart *v2.Chart) []byte {
+	t.Helper()
+	archivePath, err := chartutil.Save(chart, t.TempDir())
+	if err != nil {
+		t.Fatalf("save chart archive: %v", err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read chart archive: %v", err)
+	}
+
+	return archive
+}
+
+func chartLockDigest(t *testing.T, requirements, locked []*v2.Dependency) string {
+	t.Helper()
+	data, err := json.Marshal([2][]*v2.Dependency{requirements, locked})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := provenance.Digest(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return "sha256:" + digest
+}
+
+func legacyChartLockDigest(t *testing.T, requirements []*v2.Dependency) string {
+	t.Helper()
+	data, err := json.Marshal(map[string][]*v2.Dependency{"dependencies": requirements})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := provenance.Digest(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return "sha256:" + digest
+}
+
 const (
-	localTestTemplatePath = "templates/configmap.yaml"
-	testChartName         = "example"
-	testChartVersion      = "0.1.0"
-	testKubeVersion       = "1.36.0"
+	localTestTemplatePath      = "templates/configmap.yaml"
+	testDependencyLockFileName = "mcl.lock"
+	testParentChartName        = "parent"
+	testBundledChildVersion    = "0.0.0"
+	testChildVersion           = "1.2.0"
+	testChartName              = "example"
+	testChildChartName         = "child"
+	testGrandchildName         = "grandchild"
+	testChartRepository        = "https://charts.example.test"
+	testChartVersion           = "0.1.0"
+	testExactDependencyVersion = "1.0.0"
+	testKubeVersion            = "1.36.0"
 )
 
 func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
@@ -231,7 +773,7 @@ func TestPrepareProcessesDependencyConditionsWithoutMutatingLoadedChart(t *testi
 	t.Parallel()
 
 	const (
-		childChartName   = "child"
+		childChartName   = testChildChartName
 		grafanaChartName = "grafana"
 		enabledField     = "enabled"
 	)
@@ -252,7 +794,7 @@ func TestPrepareProcessesDependencyConditionsWithoutMutatingLoadedChart(t *testi
 	}
 	loadedChart := &v2.Chart{
 		Metadata: &v2.Metadata{
-			Name:       "parent",
+			Name:       testParentChartName,
 			Version:    testChartVersion,
 			APIVersion: v2.APIVersionV2,
 			Dependencies: []*v2.Dependency{

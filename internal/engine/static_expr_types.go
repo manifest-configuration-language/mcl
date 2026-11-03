@@ -262,6 +262,7 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 				return ResolvedType{}, bodyKnown, bodyErr
 			}
 			inferred.Arguments = []ResolvedType{bodyType}
+
 			return inferred, true, nil
 		}
 	}
@@ -284,6 +285,7 @@ func staticMapElement(typeExpr ResolvedType, types map[string]ResolvedType) (Res
 		if resolved.AdditionalProperties != nil {
 			return *resolved.AdditionalProperties, true
 		}
+
 		return ResolvedType{}, false
 	}
 

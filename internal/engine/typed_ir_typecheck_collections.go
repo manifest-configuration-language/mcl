@@ -1,5 +1,7 @@
 package engine
 
+import "slices"
+
 func typePrimitiveListExpression(expression Expr, inferred ResolvedType, contexts ...typedEvaluationContext) (typedExpression, bool) {
 	context := typedContext(contexts)
 	if _, ok := expression.(*EmptyListExpr); ok {
@@ -119,6 +121,7 @@ func staticExpressionAssignableWithEmptyCollections(expression Expr, actual, exp
 	switch node := expression.(type) {
 	case *EmptyListExpr:
 		_, isList := staticListElement(expected, context.types)
+
 		return isList
 	case *EmptyMapExpr:
 		return isStaticMapType(expected, context.types)
@@ -133,6 +136,7 @@ func staticExpressionAssignableWithEmptyCollections(expression Expr, actual, exp
 				return false
 			}
 		}
+
 		return true
 	case *MapExpr:
 		if !isStaticMapType(expected, context.types) {
@@ -160,6 +164,7 @@ func staticExpressionAssignableWithEmptyCollections(expression Expr, actual, exp
 			for _, entry := range node.Entries {
 				if entry.KeyExpr == nil && entry.Key == field.Name {
 					found = true
+
 					break
 				}
 			}
@@ -167,6 +172,7 @@ func staticExpressionAssignableWithEmptyCollections(expression Expr, actual, exp
 				return false
 			}
 		}
+
 		return true
 	case *ConditionalExpr:
 		return staticExpressionAssignableWithEmptyCollections(node.Then, actual, expected, context) && staticExpressionAssignableWithEmptyCollections(node.Else, actual, expected, context)
@@ -180,11 +186,7 @@ func containsEmptyCollectionLiteral(expression Expr) bool {
 	case *EmptyListExpr, *EmptyMapExpr:
 		return true
 	case *ListExpr:
-		for _, item := range node.Items {
-			if containsEmptyCollectionLiteral(item) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(node.Items, containsEmptyCollectionLiteral)
 	case *MapExpr:
 		for _, entry := range node.Entries {
 			if containsEmptyCollectionLiteral(entry.Value) {

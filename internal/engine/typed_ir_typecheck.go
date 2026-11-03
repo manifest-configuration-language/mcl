@@ -701,6 +701,7 @@ func typePrimitiveConditionalExpression(expression Expr, inferred ResolvedType, 
 			if !staticExpressionAssignableWithEmptyCollections(branch, branchType, inferred, context) {
 				return typedExpression{}, false
 			}
+
 			continue
 		}
 		if !staticTypeCompatibility(branchType, inferred, context.types).isAssignable() {

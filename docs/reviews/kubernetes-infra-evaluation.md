@@ -20,6 +20,12 @@ Helm templateの`lookup`は、クラスタ状態を暗黙に読み込むと同�
 
 Helmは親chartのdependency version constraintと一致しない同梱subchartを`ProcessDependencies`で除外してrenderします。Scylla Manager chart v1.21.1は親chartで`scylla` version `1.0.0`を要求し、同梱subchartは`0.0.0`を宣言しています。MCLの事前検証は同梱subchartの存在だけを確認し、version constraintの適用はHelmに委ねるよう変更しました。同じchart archiveからHelmとMCLが7 resourceをrenderすることを確認しました。
 
+### remote Helm Chartのlocked dependency
+
+infraの`iwashi-cortex`が使うCortex chart v3.3.8は、Chart.yamlとChart.lockでmemcachedを5つのaliasとして宣言しますが、配布archiveにはaliasのないmemcached chartが1つしか含まれません。MCLはrequirementsごとにsubchartの存在を検証するため、`no matching subchart is bundled`で`mcl update`とcheckが失敗していました。MCLはmissing dependencyがあるremote chartのChart.lockを検証し、HTTPS repository indexまたはOCI referenceから固定versionのdependency archiveを取得して、MCL lock/cacheへ各archiveのSHA-256を記録します。HTTPS repository indexは最大64MiBまで読み込みます。複数aliasは固定された同じpackage archiveから個別のchart instanceとして再構築します。通常のrenderとcheckはChart.lockの再解決やnetwork accessを行わず、mcl.lockとcacheのみを使います。Chart.lockとChart.yamlのdependency digestが一致しない場合や、固定versionと一致しないarchiveは拒否します。
+
+Chart.lockを持たないchartとstaleなChart.lockを持つchartは、requirementsに対応するsubchartを親archive内に全て同梱する場合に限り、親archiveのSHA-256で固定して読み込みます。完全同梱chartではChart.lockを使わず、requirementsを満たすarchive内のsubchartを利用します。`repository: ""`と`file://` dependencyは親archiveに同梱されたsubchartを使い、同梱がない場合は失敗します。missing remote dependencyはChart.lockのrepository URLから解決します。Helmと同じくsubchartのversion constraintはrender時に適用します。外部packageを取得するときはChart.lockのdigestと固定versionを検証します。`@repo`または`alias:repo`のrepository aliasはChart.lockに記録されたrepository URLへ解決し、`apiVersion: v1` chartはHelm互換の旧dependency hashも受け入れます。
+
 ### 決定的な非暗号学的hash
 
 infraではExternalSecretが参照するremote値を公開せず、ローカルのdata mappingやtemplateが変わったときにSecret名を変えてPod更新を促す必要があります。この用途にSHA-256は不要な暗号学的強度を持ち、既存の6桁suffixは衝突しやすいため、MCLに`std:hash.fnv1a64(value)`を追加しました。この関数は決定的なJSON bytesへ変換してFNV-1a 64-bitの全16桁を返し、秘密保護や攻撃者入力の耐衝突性には使いません。immutable resourceのcontent-addressingなど暗号学的hashを必要とする用途では`std:crypto.sha256`を引き続き使います。infra側のExternalSecret suffixの適用条件はinfraリポジトリの設計文書に記録します。

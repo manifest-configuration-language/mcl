@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -51,10 +52,59 @@ func TestCheckRemoteRedirect(t *testing.T) {
 	}
 }
 
+func TestChartArchiveURLUsesExactLockedVersionAndHTTPS(t *testing.T) {
+	t.Parallel()
+
+	index := []byte("entries:\n  memcached:\n    - version: 6.14.0\n      urls:\n        - memcached-6.14.0.tgz\n    - version: 6.15.0\n      urls:\n        - memcached-6.15.0.tgz\n")
+	archiveURL, err := chartArchiveURL(index, "https://charts.example.test/bitnami", "memcached", "6.14.0")
+	if err != nil {
+		t.Fatalf("chartArchiveURL() error = %v", err)
+	}
+	if archiveURL != "https://charts.example.test/bitnami/memcached-6.14.0.tgz" {
+		t.Fatalf("chartArchiveURL() = %q, want exact-version archive URL", archiveURL)
+	}
+
+	index = []byte("entries:\n  memcached:\n    - version: 6.14.0\n      urls:\n        - http://charts.example.test/memcached-6.14.0.tgz\n")
+	if _, err := chartArchiveURL(index, "https://charts.example.test/bitnami", "memcached", "6.14.0"); err == nil {
+		t.Fatal("chartArchiveURL() accepted an HTTP archive URL")
+	}
+}
+
+func TestChartRepositoryIndexUsesBoundedLargerResponseLimit(t *testing.T) {
+	t.Parallel()
+
+	if got := remoteResponseLimit("chart-index"); got != 64<<20 {
+		t.Fatalf("Helm repository index limit = %d, want 64 MiB", got)
+	}
+	if _, err := readRemoteResponse(strings.NewReader("index"), "chart-index", 4); err == nil || !strings.Contains(err.Error(), "chart-index response exceeds 4 bytes") {
+		t.Fatalf("readRemoteResponse() error = %v, want bounded chart index error", err)
+	}
+}
+
 func testToolchainIdentity() ToolchainIdentity {
 	return ToolchainIdentity{
 		MCL: "1.0.0", Go: "go1.27.3", Helm: "4.0.0",
 		KustomizeAPI: "api-1", KustomizeKYAML: "kyaml-1",
+	}
+}
+
+func TestOpenRejectsMismatchedToolchainForCurrentLockVersions(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []int{3, 4} {
+		t.Run(fmt.Sprintf("version-%d", version), func(t *testing.T) {
+			t.Parallel()
+			lockData, err := json.Marshal(lockFile{Version: version, Toolchain: toolchainLock{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = OpenWithFS(t.Context(), "/virtual/project", false, testToolchainIdentity(), fstest.MapFS{
+				"mcl.lock": {Data: lockData},
+			})
+			if err == nil || !strings.Contains(err.Error(), "toolchain does not match") {
+				t.Fatalf("OpenWithFS() error = %v, want toolchain mismatch", err)
+			}
+		})
 	}
 }
 
