@@ -7,7 +7,7 @@ MCLは、YAMLに近いインデント構文でKubernetes Manifestを組み立て
 miseの`github:`バックエンドで、GitHub Releaseから最新の安定版をインストールします。
 
 ```sh
-mise use -g github:manifest-configuration-language/mcl@latest
+mise use -g github:manifest-configuration-language/mcl
 
 mcl version
 ```
