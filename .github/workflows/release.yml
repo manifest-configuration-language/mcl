@@ -88,7 +88,6 @@ jobs:
           done
 
       - name: Wait for main CI to finish
-        needs: ci-run
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.ci-run.outputs.run_id }}
@@ -171,9 +170,11 @@ jobs:
       - name: Get Go cache paths
         id: go-cache-paths
         run: |
-          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-          echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+          {
+            echo "build=$(go env GOCACHE)"
+            echo "modules=$(go env GOMODCACHE)"
+            echo "version=$(go env GOVERSION)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Restore Go cache
         # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
@@ -340,7 +341,6 @@ jobs:
           cmp dist/SHA256SUMS "$existing_assets/SHA256SUMS"
           (cd "$existing_assets" && sha256sum --check SHA256SUMS)
 
-          tag_sha=""
           if [ -n "$(git ls-remote --tags --refs --exit-code origin "$tag" 2>/dev/null)" ]; then
             read -r _local _remote <<< "$(git ls-remote --tags --refs origin "$tag")"
             if [ "$_remote" != "$(git rev-parse "v${VERSION}")" ]; then
@@ -354,20 +354,29 @@ jobs:
 
       - name: Publish GitHub Release
         id: publish-release
-        uses: ncipollo/release-action@v1.21.0
         if: steps.existing-release.outputs.exists != 'true'
-        with:
-          tag: ${{ needs.release.outputs.release_tag }}
-          commit: ${{ github.sha }}
-          name: MCL ${{ needs.release.outputs.version }}
-          artifacts: dist/mcl_*,dist/SHA256SUMS
-          artifactErrorsFailBuild: true
-          allowUpdates: true
-          generateReleaseNotes: true
-          prerelease: ${{ inputs.channel == 'rc' }}
-          makeLatest: ${{ inputs.channel == 'stable' && 'true' || 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          RELEASE_TITLE: MCL ${{ needs.release.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          args=(
+            "$RELEASE_TAG"
+            dist/mcl_*
+            dist/SHA256SUMS
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "$RELEASE_TITLE"
+            --generate-notes
+          )
+          if [[ "$CHANNEL" == rc ]]; then
+            args+=(--prerelease --latest=false)
+          else
+            args+=(--latest)
+          fi
+          gh release create "${args[@]}"
 
   publish_npm:
     needs: [release, publish_release]
