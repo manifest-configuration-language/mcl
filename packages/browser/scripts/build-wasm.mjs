@@ -24,8 +24,12 @@ if (usePrebuiltWasm) {
   const optimizedWasm = resolve(outputDirectory, ".mcl-optimized.wasm");
 
   await mkdir(outputDirectory, { recursive: true });
+  const ldflags = ["-s", "-w"];
+  if (process.env.MCL_VERSION) {
+    ldflags.push(`-X=github.com/manifest-configuration-language/mcl/internal/engine.ToolchainVersion=${process.env.MCL_VERSION}`);
+  }
   try {
-    await execFileAsync("go", ["build", "-trimpath", "-ldflags=-s -w", "-o", rawWasm, "./cmd/mcl-wasm"], {
+    await execFileAsync("go", ["build", "-trimpath", `-ldflags=${ldflags.join(" ")}`, "-o", rawWasm, "./cmd/mcl-wasm"], {
       cwd: repositoryRoot,
       env: { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" },
       maxBuffer: 16 * 1024 * 1024,

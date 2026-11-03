@@ -7,7 +7,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
 
-var ToolchainVersion = "0.1.0-dev"
+var ToolchainVersion = "main"
 
 var toolchainVersionProvider = func() string { return ToolchainVersion }
 

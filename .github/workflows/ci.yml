@@ -64,6 +64,8 @@ jobs:
         run: pnpm --filter @manifest-configuration-language/browser run test:unit
       - name: Check language grammar parity
         run: pnpm --filter @manifest-configuration-language/language run check:parity
+      - name: Check generated language parser
+        run: git diff --exit-code -- packages/language/src/parser.js packages/language/src/parser.terms.js
       - name: Generate package reference contents
         env:
           MCL_VERSION: ${{ steps.package-version.outputs.version }}

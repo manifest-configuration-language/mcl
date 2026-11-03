@@ -4,19 +4,15 @@ MCLは、YAMLに近いインデント構文でKubernetes Manifestを組み立て
 
 ## インストール
 
-Go 1.27.2以降でCLIをビルドできます。
+miseの`github:`バックエンドで、GitHub Releaseから最新の安定版をインストールします。
 
 ```sh
-go install github.com/manifest-configuration-language/mcl/cmd/mcl@latest
+mise use -g github:manifest-configuration-language/mcl@latest
+
 mcl version
 ```
 
-プロジェクトからビルドする場合は次のコマンドを使います。
-
-```sh
-go build -o ./mcl ./cmd/mcl
-./mcl help
-```
+miseはGitHub Releaseの添付ファイルからOSとアーキテクチャに合うアーカイブを選択して展開します。`latest`はprereleaseを除外します。
 
 CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`などのコマンドを提供します。使い方は`mcl help`で確認できます。
 
@@ -34,7 +30,12 @@ miseをインストールしてから、次のコマンドで品質チェック�
 mise run quality:check
 ```
 
-CLIのバイナリは`go build -o ./mcl ./cmd/mcl`で生成します。
+ソースからビルドする場合は次のコマンドを使います。開発ビルドのバージョンは`main`です。
+
+```sh
+go build -o ./mcl ./cmd/mcl
+./mcl version
+```
 
 ## リリース
 
