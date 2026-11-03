@@ -3,6 +3,7 @@ package helmrender
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -687,6 +688,72 @@ func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 		return nil, nil
 	}); err != nil {
 		t.Fatalf("instrumentation failed for valid block template: %v", err)
+	}
+}
+
+func TestCloneChartWithoutNotesDoesNotMutateSource(t *testing.T) {
+	t.Parallel()
+	notes := &common.File{Name: "templates/NOTES.txt", Data: []byte("notes")}
+	manifest := &common.File{Name: "templates/configmap.yaml", Data: []byte("{{ .message }}")}
+	chart := &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{notes, manifest},
+	}
+	source := Chart{source: chart}
+
+	first, err := Render(t.Context(), source, map[string]any{"message": "stable"})
+	if err != nil {
+		t.Fatalf("first render: %v", err)
+	}
+	second, err := Render(t.Context(), source, map[string]any{"message": "stable"})
+	if err != nil {
+		t.Fatalf("second render: %v", err)
+	}
+	if !maps.Equal(first, second) {
+		t.Fatalf("consecutive renders differ: first=%v second=%v", first, second)
+	}
+	if len(chart.Templates) != 2 || chart.Templates[0] != notes || chart.Templates[1] != manifest {
+		t.Fatalf("source templates changed after render: %#v", chart.Templates)
+	}
+}
+
+func TestHelmLookupMatchesNamespaceAndScope(t *testing.T) {
+	t.Parallel()
+	resources := []map[string]any{
+		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "team-a", "name": "settings"}},
+		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "team-b", "name": "settings"}},
+		{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "team-a"}},
+	}
+	lookupContext := WithLookupResources(t.Context(), resources,
+		LookupResourceDescriptor{Kind: "ConfigMap", Scope: LookupResourceScopeNamespaced},
+		LookupResourceDescriptor{Kind: "Namespace", Scope: LookupResourceScopeCluster},
+	)
+	lookup := hermeticFunctions(lookupContext)["lookup"].(func(string, string, string, string) (map[string]any, error))
+
+	teamA, err := lookup("v1", "ConfigMap", "team-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := teamA["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("team-a list returned %d items, want one duplicate-free match", len(items))
+	}
+
+	allNamespaces, err := lookup("v1", "ConfigMap", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = allNamespaces["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("all-namespaces list returned %d items, want two distinct ConfigMaps", len(items))
+	}
+
+	cluster, err := lookup("v1", "Namespace", "team-a", "team-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if helmLookupName(cluster) != "team-a" {
+		t.Fatalf("cluster-scoped lookup returned %#v, want the matching Namespace", cluster)
 	}
 }
 

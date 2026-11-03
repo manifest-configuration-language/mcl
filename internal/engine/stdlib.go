@@ -534,6 +534,7 @@ func evaluateListCombinationBuiltin(name string, arguments []RuntimeValue, dedup
 				for _, existing := range seen[fingerprint] {
 					if equalRuntimeValues(existing, item) {
 						duplicate = true
+
 						break
 					}
 				}

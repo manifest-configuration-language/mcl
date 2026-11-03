@@ -49,7 +49,7 @@ const OpenAPIElements = "[]"
 
 var loadSchemaCatalog = sync.OnceValues(buildSchemaCatalog)
 
-// BuiltinOpenAPIは現行Schemaを優先し、未収録GVKではlegacy Schemaを返します。
+// BuiltinOpenAPIは対象KubernetesバージョンのSchemaを返します。
 func BuiltinOpenAPI(apiVersion, kind string) (*OpenAPISchema, bool, error) {
 	catalog, err := loadSchemaCatalog()
 	if err != nil {
@@ -105,13 +105,10 @@ func resolveOpenAPIReference(schema *spec.Schema, definitions spec.Definitions) 
 }
 
 func buildSchemaCatalog() (*schemaCatalog, error) {
-	legacy := openapi.Schema()
 	catalog := &schemaCatalog{
-		definitions: make(spec.Definitions, len(legacy.Definitions)),
+		definitions: make(spec.Definitions),
 		resources:   make(map[schemaGVK]*spec.Schema),
 	}
-	maps.Copy(catalog.definitions, legacy.Definitions)
-	indexDefinitions(catalog, legacy.Definitions)
 
 	data, err := decompressKubernetesSchema(kubernetesSchemaArtifact)
 	if err != nil {

@@ -951,6 +951,7 @@ func hasStaticMissingExprMergeKey(base, overrides Expr, key string) bool {
 			}
 			baseKeys = append(baseKeys, value)
 			found = true
+
 			break
 		}
 		if !found {
@@ -975,6 +976,7 @@ func hasStaticMissingExprMergeKey(base, overrides Expr, key string) bool {
 				return true
 			}
 			found = true
+
 			break
 		}
 		if !found {

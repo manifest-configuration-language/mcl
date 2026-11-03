@@ -7,21 +7,18 @@ const (
 	metadataField   = "metadata"
 )
 
-func TestBuiltinOpenAPICombinesCurrentAndLegacyGVKs(t *testing.T) {
+func TestBuiltinOpenAPILimitsResourcesToSupportedKubernetesVersion(t *testing.T) {
 	t.Parallel()
 
-	for _, resource := range []struct {
-		apiVersion string
-		kind       string
-	}{
-		{apiVersion: "admissionregistration.k8s.io/v1", kind: "MutatingAdmissionPolicy"},
-		{apiVersion: "extensions/v1beta1", kind: "Ingress"},
-	} {
-		if _, exists, err := BuiltinOpenAPI(resource.apiVersion, resource.kind); err != nil {
-			t.Fatalf("load schema for %s %s: %v", resource.apiVersion, resource.kind, err)
-		} else if !exists {
-			t.Errorf("schema for %s %s is not available", resource.apiVersion, resource.kind)
-		}
+	if _, exists, err := BuiltinOpenAPI("admissionregistration.k8s.io/v1", "MutatingAdmissionPolicy"); err != nil {
+		t.Fatalf("load current schema: %v", err)
+	} else if !exists {
+		t.Fatal("schema for admissionregistration.k8s.io/v1 MutatingAdmissionPolicy is not available")
+	}
+	if _, exists, err := BuiltinOpenAPI("extensions/v1beta1", "Ingress"); err != nil {
+		t.Fatalf("load removed schema: %v", err)
+	} else if exists {
+		t.Fatal("removed extensions/v1beta1 Ingress schema is available")
 	}
 }
 
@@ -80,18 +77,5 @@ func TestValidateBuiltinTreatsNullObjectFieldsAsOmitted(t *testing.T) {
 	}
 	if errors := ValidateBuiltin("v1", "Pod", pod); len(errors) == 0 {
 		t.Fatal("Pod with a null required field passed validation")
-	}
-}
-
-func TestValidateBuiltinRetainsLegacyGVK(t *testing.T) {
-	t.Parallel()
-
-	value := map[string]any{
-		apiVersionField: "extensions/v1beta1",
-		"kind":          "Ingress",
-		metadataField:   map[string]any{"name": 42},
-	}
-	if errors := ValidateBuiltin("extensions/v1beta1", "Ingress", value); len(errors) == 0 {
-		t.Fatal("legacy Ingress schema did not validate the metadata name type")
 	}
 }

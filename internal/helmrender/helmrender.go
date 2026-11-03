@@ -33,6 +33,7 @@ import (
 	"helm.sh/helm/v4/pkg/engine"
 	"helm.sh/helm/v4/pkg/ignore"
 	"helm.sh/helm/v4/pkg/provenance"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const maxChartBytes = 16 << 20
@@ -796,8 +797,31 @@ type deterministicNowContextKey struct{}
 type lookupResourcesContextKey struct{}
 
 type lookupResourcesContext struct {
-	resources []map[string]any
+	resources   []map[string]any
+	resourceMap map[lookupResourceType]LookupResourceDescriptor
 }
+
+type lookupResourceType struct {
+	group string
+	kind  string
+}
+
+// LookupResourceDescriptor provides the Kubernetes scope needed to match and
+// deduplicate lookup results using resource identity.
+type LookupResourceDescriptor struct {
+	APIGroup string
+	Kind     string
+	Scope    LookupResourceScope
+}
+
+// LookupResourceScope describes the namespace scope of a Kubernetes resource.
+type LookupResourceScope string
+
+const (
+	LookupResourceScopeUnknown    LookupResourceScope = "Unknown"
+	LookupResourceScopeNamespaced LookupResourceScope = "Namespaced"
+	LookupResourceScopeCluster    LookupResourceScope = "Cluster"
+)
 
 // WithNow supplies the fixed time used by Helm templates during a hermetic render.
 func WithNow(ctx context.Context, now time.Time) context.Context {
@@ -805,8 +829,13 @@ func WithNow(ctx context.Context, now time.Time) context.Context {
 }
 
 // WithLookupResources supplies the deterministic Kubernetes object snapshot used by Helm lookup.
-func WithLookupResources(ctx context.Context, resources []map[string]any) context.Context {
-	return context.WithValue(ctx, lookupResourcesContextKey{}, lookupResourcesContext{resources: resources})
+func WithLookupResources(ctx context.Context, resources []map[string]any, descriptors ...LookupResourceDescriptor) context.Context {
+	resourceMap := make(map[lookupResourceType]LookupResourceDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		resourceMap[lookupResourceType{group: descriptor.APIGroup, kind: descriptor.Kind}] = descriptor
+	}
+
+	return context.WithValue(ctx, lookupResourcesContextKey{}, lookupResourcesContext{resources: resources, resourceMap: resourceMap})
 }
 
 func hermeticFunctions(ctx context.Context) template.FuncMap {
@@ -829,7 +858,7 @@ func hermeticFunctions(ctx context.Context) template.FuncMap {
 		if name == "" {
 			items := make([]any, 0)
 			for _, resource := range snapshot.resources {
-				if helmLookupMatches(resource, apiVersion, kind, namespace, true) {
+				if helmLookupMatches(resource, apiVersion, kind, namespace, snapshot.resourceMap) {
 					items = append(items, cloneLookupResource(resource))
 				}
 			}
@@ -837,7 +866,7 @@ func hermeticFunctions(ctx context.Context) template.FuncMap {
 			return map[string]any{"apiVersion": apiVersion, "kind": kind + "List", "items": items}, nil
 		}
 		for _, resource := range snapshot.resources {
-			if helmLookupMatches(resource, apiVersion, kind, namespace, false) && helmLookupName(resource) == name {
+			if helmLookupMatches(resource, apiVersion, kind, namespace, snapshot.resourceMap) && helmLookupName(resource) == name {
 				return cloneLookupResource(resource), nil
 			}
 		}
@@ -864,20 +893,41 @@ func hermeticFunctions(ctx context.Context) template.FuncMap {
 	}
 }
 
-func helmLookupMatches(resource map[string]any, apiVersion, kind, namespace string, list bool) bool {
+func helmLookupMatches(resource map[string]any, apiVersion, kind, namespace string, descriptors map[lookupResourceType]LookupResourceDescriptor) bool {
 	if resource["apiVersion"] != apiVersion || resource["kind"] != kind {
 		return false
 	}
-	metadata, ok := resource["metadata"].(map[string]any)
-	if !ok {
-		return namespace == ""
-	}
-	resourceNamespace, _ := metadata["namespace"].(string)
-	if list && namespace == "" {
+	descriptor, known := descriptors[lookupResourceGroupKind(apiVersion, kind)]
+	if known && descriptor.Scope == LookupResourceScopeCluster {
 		return true
+	}
+	if namespace == "" {
+		return true
+	}
+	resourceNamespace := helmLookupNamespace(resource)
+	if known && descriptor.Scope == LookupResourceScopeNamespaced && resourceNamespace == "" {
+		resourceNamespace = defaultLookupNamespace
 	}
 
 	return resourceNamespace == namespace
+}
+
+const defaultLookupNamespace = "default"
+
+func helmLookupNamespace(resource map[string]any) string {
+	metadata, ok := resource["metadata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	namespace, _ := metadata["namespace"].(string)
+
+	return namespace
+}
+
+func lookupResourceGroupKind(apiVersion, kind string) lookupResourceType {
+	groupVersionKind := schema.FromAPIVersionAndKind(apiVersion, kind)
+
+	return lookupResourceType{group: groupVersionKind.Group, kind: groupVersionKind.Kind}
 }
 
 func helmLookupName(resource map[string]any) string {

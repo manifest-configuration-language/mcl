@@ -159,7 +159,7 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 		ctx = helmrender.WithNow(ctx, *options.now)
 	}
 	if options.lookupResourcesSet {
-		ctx = helmrender.WithLookupResources(ctx, options.lookupResources)
+		ctx = helmrender.WithLookupResources(ctx, options.lookupResources, options.lookupResourceDescriptors...)
 	}
 	allocations := runtimeAllocationBudgetOf(state)
 	rendered, err := renderHelmTemplates(ctx, prepared, allocations, files)
@@ -539,18 +539,19 @@ func helmCleanupPolicy(policy string) (string, bool) {
 }
 
 type helmRenderOptions struct {
-	values             map[string]any
-	lookupResources    []map[string]any
-	lookupResourcesSet bool
-	valuesSource       RuntimeValue
-	now                *time.Time
-	releaseName        string
-	namespace          string
-	operation          string
-	revision           int
-	kubeVersion        string
-	apiVersions        []string
-	version            string
+	values                    map[string]any
+	lookupResources           []map[string]any
+	lookupResourceDescriptors []helmrender.LookupResourceDescriptor
+	lookupResourcesSet        bool
+	valuesSource              RuntimeValue
+	now                       *time.Time
+	releaseName               string
+	namespace                 string
+	operation                 string
+	revision                  int
+	kubeVersion               string
+	apiVersions               []string
+	version                   string
 }
 
 func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
@@ -623,6 +624,7 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 				return options, errors.New("helm.render option lookupResources must be a List of resource Maps")
 			}
 			options.lookupResources = make([]map[string]any, len(entry.Value.ListItems()))
+			artifacts := make([]Artifact, len(entry.Value.ListItems()))
 			for index, resource := range entry.Value.ListItems() {
 				if resource.Kind() != Map {
 					return options, errors.New("helm.render option lookupResources must contain only Maps")
@@ -636,7 +638,17 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 					return options, errors.New("helm.render lookupResources entries must be Maps")
 				}
 				options.lookupResources[index] = object
+				value, err := runtimeValueToValue(resource)
+				if err != nil {
+					return options, fmt.Errorf("convert Helm lookup resource identity: %w", err)
+				}
+				artifacts[index] = Artifact{Value: value}
 			}
+			descriptors, err := helmLookupResourceDescriptors(artifacts)
+			if err != nil {
+				return options, err
+			}
+			options.lookupResourceDescriptors = descriptors
 			options.lookupResourcesSet = true
 		default:
 			return options, fmt.Errorf("helm.render has no option named %q", entry.Key)
@@ -644,6 +656,51 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 	}
 
 	return options, nil
+}
+
+func helmLookupResourceDescriptors(artifacts []Artifact) ([]helmrender.LookupResourceDescriptor, error) {
+	scopes, err := newKubernetesResourceScopeIndex(artifacts)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Helm lookup resource scopes: %w", err)
+	}
+	if err := rejectDuplicateKubernetesResources(artifacts, scopes); err != nil {
+		return nil, fmt.Errorf("helm.render lookupResources: %w", err)
+	}
+	descriptors := make(map[kubernetesResourceKey]helmrender.LookupResourceDescriptor, len(artifacts))
+	for index, artifact := range artifacts {
+		identity, isResource, err := validatedKubernetesResourceIdentityOf(artifact.Value)
+		if err != nil {
+			return nil, fmt.Errorf("helm.render lookupResources entry %d: invalid Kubernetes resource identity: %w", index+1, err)
+		}
+		if !isResource {
+			return nil, fmt.Errorf("helm.render lookupResources entry %d must be a Kubernetes resource", index+1)
+		}
+		key := kubernetesResourceKey{group: identity.group, kind: identity.kind}
+		descriptor := scopes[key]
+		if descriptor.scope == kubernetesResourceCluster && identity.rawNamespace != "" {
+			return nil, fmt.Errorf("helm.render lookupResources entry %d is cluster-scoped and must not set metadata.namespace", index+1)
+		}
+		if descriptor.scope == kubernetesResourceUnknown && identity.rawNamespace == "" {
+			return nil, fmt.Errorf("helm.render lookupResources entry %d has unknown namespace scope and must set metadata.namespace", index+1)
+		}
+		publicScope := helmrender.LookupResourceScopeUnknown
+		switch descriptor.scope {
+		case kubernetesResourceNamespaced:
+			publicScope = helmrender.LookupResourceScopeNamespaced
+		case kubernetesResourceCluster:
+			publicScope = helmrender.LookupResourceScopeCluster
+		case kubernetesResourceUnknown:
+			// The namespace provided by the resource is used for unknown scopes.
+		}
+		descriptors[key] = helmrender.LookupResourceDescriptor{APIGroup: identity.group, Kind: identity.kind, Scope: publicScope}
+	}
+
+	result := make([]helmrender.LookupResourceDescriptor, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		result = append(result, descriptor)
+	}
+
+	return result, nil
 }
 
 func helmValue(value RuntimeValue) (any, error) {

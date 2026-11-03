@@ -5,7 +5,11 @@ import (
 	"testing"
 )
 
-const metadataFieldName = "metadata"
+const (
+	metadataFieldName  = "metadata"
+	namespaceFieldName = "namespace"
+	testNamespace      = "production"
+)
 
 func TestRejectDuplicateKubernetesResourcesPreservesClusterNamespaceInput(t *testing.T) {
 	t.Parallel()
@@ -14,8 +18,8 @@ func TestRejectDuplicateKubernetesResourcesPreservesClusterNamespaceInput(t *tes
 		{Key: "apiVersion", Value: Value{Kind: String, Text: "v1"}},
 		{Key: "kind", Value: Value{Kind: String, Text: "Namespace"}},
 		{Key: metadataFieldName, Value: Value{Kind: Map, Map: []Entry{
-			{Key: "name", Value: Value{Kind: String, Text: "production"}},
-			{Key: "namespace", Value: Value{Kind: String, Text: "incorrect"}},
+			{Key: "name", Value: Value{Kind: String, Text: testNamespace}},
+			{Key: namespaceFieldName, Value: Value{Kind: String, Text: "incorrect"}},
 		}}},
 	}}
 
@@ -52,7 +56,7 @@ func TestNormalizeKubernetesResourceIdentityAfterValidation(t *testing.T) {
 	explicitDefault := resource
 	explicitDefault.Map = append([]Entry(nil), resource.Map...)
 	explicitDefault.Map[2].Value.Map = append([]Entry(nil), resource.Map[2].Value.Map...)
-	explicitDefault.Map[2].Value.Map = append(explicitDefault.Map[2].Value.Map, Entry{Key: "namespace", Value: Value{Kind: String, Text: defaultKubernetesNamespace}})
+	explicitDefault.Map[2].Value.Map = append(explicitDefault.Map[2].Value.Map, Entry{Key: namespaceFieldName, Value: Value{Kind: String, Text: defaultKubernetesNamespace}})
 	err := rejectDuplicateKubernetesResources([]Artifact{{Value: resource}, {Value: explicitDefault}}, builtinKubernetesResourceDescriptors)
 	if err == nil || !strings.Contains(err.Error(), "duplicate Kubernetes resource") {
 		t.Fatalf("rejectDuplicateKubernetesResources() error = %v, want duplicate after namespace normalization", err)

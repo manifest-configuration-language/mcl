@@ -1,6 +1,7 @@
 package k8sschema
 
 import (
+	"encoding/json/v2"
 	"fmt"
 
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
@@ -9,12 +10,92 @@ import (
 )
 
 func validateBuiltinUnknownFields(schema *spec.Schema, definitions spec.Definitions, value any) []error {
-	return validateUnknownFields([]*spec.Schema{schema}, definitions, value, field.NewPath("resource"), 0)
+	validator := &builtinValidator{}
+
+	return validateBuiltinUnknownFieldsWithBranchValidator(schema, definitions, value, func(branch *spec.Schema, value any) bool {
+		return validator.validateBranch(branch, definitions, value)
+	})
 }
 
-func validateUnknownFields(schemas []*spec.Schema, definitions spec.Definitions, value any, path *field.Path, depth int) []error {
+func validateBuiltinUnknownFieldsWithBranchValidator(schema *spec.Schema, definitions spec.Definitions, value any, validateBranch func(*spec.Schema, any) bool) []error {
+	return validateUnknownFields([]*spec.Schema{schema}, definitions, value, field.NewPath("resource"), 0, validateBranch)
+}
+
+func (validator *builtinValidator) validateBranch(schema *spec.Schema, definitions spec.Definitions, value any) bool {
+	keyBytes, err := json.Marshal(schema)
+	if err != nil {
+		return false
+	}
+	key := string(keyBytes)
+	compiled, exists := validator.branchValidators.Load(key)
+	if !exists {
+		created, err := compileBuiltinValidator(schema, definitions)
+		if err != nil {
+			return false
+		}
+		stored, _ := validator.branchValidators.LoadOrStore(key, created)
+		compiled = stored
+	}
+
+	return compiled.(*builtinValidator).schema.Validate(value) == nil
+}
+
+func validateUnknownFields(schemas []*spec.Schema, definitions spec.Definitions, value any, path *field.Path, depth int, validateBranch func(*spec.Schema, any) bool) []error {
 	if depth > maxDepth {
 		return nil
+	}
+	if values, ok := value.([]any); ok {
+		itemSchemas := make([]*spec.Schema, 0)
+		visited := make(map[*spec.Schema]struct{})
+		var visit func(*spec.Schema)
+		visit = func(schema *spec.Schema) {
+			if schema == nil {
+				return
+			}
+			if _, exists := visited[schema]; exists {
+				return
+			}
+			visited[schema] = struct{}{}
+			if schema.Ref.String() != "" {
+				visit(resolveOpenAPIReference(schema, definitions))
+			}
+			if schema.Items != nil {
+				if schema.Items.Schema != nil {
+					itemSchemas = append(itemSchemas, schema.Items.Schema)
+				}
+				for index := range schema.Items.Schemas {
+					itemSchemas = append(itemSchemas, &schema.Items.Schemas[index])
+				}
+			}
+			for index := range schema.AllOf {
+				visit(&schema.AllOf[index])
+			}
+			for index := range schema.AnyOf {
+				if validateBranch(&schema.AnyOf[index], value) {
+					visit(&schema.AnyOf[index])
+				}
+			}
+			matchingOneOf := -1
+			oneOfMatches := 0
+			for index := range schema.OneOf {
+				if validateBranch(&schema.OneOf[index], value) {
+					matchingOneOf = index
+					oneOfMatches++
+				}
+			}
+			if oneOfMatches == 1 {
+				visit(&schema.OneOf[matchingOneOf])
+			}
+		}
+		for _, schema := range schemas {
+			visit(schema)
+		}
+		var validationErrors []error
+		for index, item := range values {
+			validationErrors = append(validationErrors, validateUnknownFields(itemSchemas, definitions, item, path.Index(index), depth+1, validateBranch)...)
+		}
+
+		return validationErrors
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -61,10 +142,20 @@ func validateUnknownFields(schemas []*spec.Schema, definitions spec.Definitions,
 			visit(&schema.AllOf[index])
 		}
 		for index := range schema.AnyOf {
-			visit(&schema.AnyOf[index])
+			if validateBranch(&schema.AnyOf[index], value) {
+				visit(&schema.AnyOf[index])
+			}
 		}
+		matchingOneOf := -1
+		oneOfMatches := 0
 		for index := range schema.OneOf {
-			visit(&schema.OneOf[index])
+			if validateBranch(&schema.OneOf[index], value) {
+				matchingOneOf = index
+				oneOfMatches++
+			}
+		}
+		if oneOfMatches == 1 {
+			visit(&schema.OneOf[matchingOneOf])
 		}
 	}
 	for _, schema := range schemas {
@@ -78,11 +169,13 @@ func validateUnknownFields(schemas []*spec.Schema, definitions spec.Definitions,
 	for name, childValue := range object {
 		childPath := path.Child(name)
 		if childSchemas := properties[name]; len(childSchemas) > 0 {
-			validationErrors = append(validationErrors, validateUnknownFields(childSchemas, definitions, childValue, childPath, depth+1)...)
+			validationErrors = append(validationErrors, validateUnknownFields(childSchemas, definitions, childValue, childPath, depth+1, validateBranch)...)
+
 			continue
 		}
 		if len(additionalSchemas) > 0 {
-			validationErrors = append(validationErrors, validateUnknownFields(additionalSchemas, definitions, childValue, childPath, depth+1)...)
+			validationErrors = append(validationErrors, validateUnknownFields(additionalSchemas, definitions, childValue, childPath, depth+1, validateBranch)...)
+
 			continue
 		}
 		if allowAdditional || allowUnknown {
@@ -172,6 +265,7 @@ func stringSlice(value any) []string {
 				result = append(result, item)
 			}
 		}
+
 		return result
 	default:
 		return nil

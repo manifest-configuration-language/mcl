@@ -18,15 +18,17 @@ import (
 )
 
 const (
-	maxDepth  = 128
-	kindNever = "Never"
+	maxDepth         = 128
+	kindNever        = "Never"
+	schemaTypeObject = "object"
 )
 
 var builtinValidators sync.Map //nolint:gochecknoglobals
 
 type builtinValidator struct {
-	schema     *jsonschema.Schema
-	structural *structuralschema.Structural
+	schema           *jsonschema.Schema
+	structural       *structuralschema.Structural
+	branchValidators sync.Map
 }
 
 type Type struct {
@@ -62,7 +64,9 @@ func ValidateBuiltin(apiVersion, kind string, value any) []error {
 	if err := validator.schema.Validate(value); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
-	validationErrors = append(validationErrors, validateBuiltinUnknownFields(resource.Schema, resource.Definitions, value)...)
+	validationErrors = append(validationErrors, validateBuiltinUnknownFieldsWithBranchValidator(resource.Schema, resource.Definitions, value, func(branch *spec.Schema, value any) bool {
+		return validator.validateBranch(branch, resource.Definitions, value)
+	})...)
 	if object, ok := value.(map[string]any); ok {
 		for _, err := range listtype.ValidateListSetsAndMaps(field.NewPath("resource"), validator.structural, object) {
 			validationErrors = append(validationErrors, err)
@@ -144,6 +148,7 @@ func normalizeKubernetesSchemaExtensions(value any) {
 		}
 	}
 }
+
 // normalizeToNullable treats object fields as nullable so that null values
 // are accepted (matching Kubernetes "null means omitted" semantics).
 // Only leaf objects without sub-schemas are made nullable to avoid
@@ -153,11 +158,12 @@ func normalizeToNullable(value any) {
 	visit = func(v any) bool {
 		switch m := v.(type) {
 		case map[string]any:
-			if t, ok := m["type"]; ok && (t == "object" || t == "array") {
+			if t, ok := m["type"]; ok && (t == schemaTypeObject || t == "array") {
 				hasSubSchema := false
 				for k := range m {
 					if k == "properties" || k == "items" || k == "allOf" || k == "anyOf" || k == "oneOf" || k == "$ref" {
 						hasSubSchema = true
+
 						break
 					}
 				}
@@ -166,6 +172,7 @@ func normalizeToNullable(value any) {
 					delete(m, "properties")
 					delete(m, "items")
 					m["anyOf"] = []any{map[string]any{"type": t}, map[string]any{"type": "null"}}
+
 					break
 				}
 			}
@@ -181,6 +188,7 @@ func normalizeToNullable(value any) {
 				}
 			}
 		}
+
 		return true
 	}
 	visit(value)
@@ -274,7 +282,7 @@ func openAPISchema(schema *spec.Schema, definitions spec.Definitions, refs map[s
 	}
 	types := []string(schema.Type)
 	if len(types) == 0 && len(schema.Properties) > 0 {
-		types = []string{"object"}
+		types = []string{schemaTypeObject}
 	}
 	var inferred Type
 	set := false
@@ -342,7 +350,7 @@ func openAPISchemaKind(kind string, schema *spec.Schema, definitions spec.Defini
 		}
 
 		return Type{Kind: "List", Element: &element}
-	case "object":
+	case schemaTypeObject:
 		required := make(map[string]bool, len(schema.Required))
 		for _, name := range schema.Required {
 			required[name] = true
@@ -389,7 +397,7 @@ func structuralSchema(schema *structuralschema.Structural, depth int) Type {
 	case "array":
 		element := structuralSchema(schema.Items, depth+1)
 		inferred = Type{Kind: "List", Element: &element}
-	case "object":
+	case schemaTypeObject:
 		required := make(map[string]bool)
 		if schema.ValueValidation != nil {
 			for _, name := range schema.ValueValidation.Required {
