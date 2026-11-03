@@ -67,7 +67,7 @@ func EvaluateProjectFileContext(ctx context.Context, projectRoot, entryPath stri
 	root := filepath.Clean(projectRoot)
 	entry := filepath.Join(root, filepath.FromSlash(entryPath))
 
-	return evaluateFileWithFilesystem(ctx, entry, false, "", newProjectFilesystem(root, files))
+	return evaluateFileWithFilesystem(ctx, entry, false, "", nil, newProjectFilesystem(root, files))
 }
 
 func validProjectPath(name string) bool {

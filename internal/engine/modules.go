@@ -49,6 +49,7 @@ type moduleLoader struct {
 	runtimeTypes  map[string]map[string]ResolvedType
 	dependencies  *dependency.Lock
 	operation     string
+	parameters    map[string]string
 	overlays      map[string]string
 	loadedModules map[string]struct{}
 	textImports   map[string]string
@@ -77,7 +78,12 @@ func EvaluateFile(path string) (Bundle, error) {
 
 // EvaluateFileContextは呼び出し元のContextを使ってMCLファイルを評価します。
 func EvaluateFileContext(ctx context.Context, path string) (Bundle, error) {
-	return evaluateFile(ctx, path, false, "")
+	return EvaluateFileWithParametersContext(ctx, path, nil)
+}
+
+// EvaluateFileWithParametersContext evaluates an MCL file with explicit runtime parameters.
+func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) (Bundle, error) {
+	return evaluateFileWithParameters(ctx, path, false, "", parameters)
 }
 
 // EvaluateFileForOperation は指定した操作向けにMCLファイルを評価します。
@@ -87,11 +93,16 @@ func EvaluateFileForOperation(path, operation string) (Bundle, error) {
 
 // EvaluateFileForOperationContextは呼び出し元のContextを使って指定した操作向けにMCLファイルを評価します。
 func EvaluateFileForOperationContext(ctx context.Context, path, operation string) (Bundle, error) {
+	return EvaluateFileForOperationWithParametersContext(ctx, path, operation, nil)
+}
+
+// EvaluateFileForOperationWithParametersContext evaluates an MCL file for an operation with explicit runtime parameters.
+func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, operation string, parameters map[string]string) (Bundle, error) {
 	if !validOperation(operation) {
 		return Bundle{}, fmt.Errorf("unknown operation %q", operation)
 	}
 
-	return evaluateFile(ctx, path, false, operation)
+	return evaluateFileWithParameters(ctx, path, false, operation, parameters)
 }
 
 func UpdateFile(path string) error {
@@ -100,7 +111,12 @@ func UpdateFile(path string) error {
 
 // UpdateFileContextは呼び出し元のContextを使って依存ロックを更新します。
 func UpdateFileContext(ctx context.Context, path string) error {
-	_, err := evaluateFile(ctx, path, true, "")
+	return UpdateFileWithParametersContext(ctx, path, nil)
+}
+
+// UpdateFileWithParametersContext updates dependencies after evaluating an MCL file with explicit runtime parameters.
+func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) error {
+	_, err := evaluateFileWithParameters(ctx, path, true, "", parameters)
 
 	return err
 }
@@ -1015,10 +1031,14 @@ func dependentModuleSourcesWithContext(ctx context.Context, target string, sourc
 }
 
 func evaluateFile(ctx context.Context, path string, update bool, operation string) (Bundle, error) {
-	return evaluateFileWithFilesystem(ctx, path, update, operation, nil)
+	return evaluateFileWithParameters(ctx, path, update, operation, nil)
 }
 
-func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, files *projectFilesystem) (Bundle, error) {
+func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]string) (Bundle, error) {
+	return evaluateFileWithFilesystem(ctx, path, update, operation, parameters, nil)
+}
+
+func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, parameters map[string]string, files *projectFilesystem) (Bundle, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
 	}
@@ -1062,7 +1082,7 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		ctx:  ctx,
 		root: root, files: files, entry: canonical, entryText: string(source),
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
-		dependencies: dependencies, operation: operation, loadedModules: make(map[string]struct{}), budget: &functionBudget{},
+		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
 		analysis: &TypeAnalysisContext{},
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(canonical, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
@@ -1283,7 +1303,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Parameters: maps.Clone(loader.parameters), Analysis: loader.analysis}
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)

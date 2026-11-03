@@ -264,6 +264,21 @@ func inferStaticLifecycleAttachBuiltin(_ []Expr, argumentTypes []ResolvedType, k
 	return argumentTypes[0], true, nil
 }
 
+func inferStaticContextParameter(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 1 || len(known) != 1 {
+		return ResolvedType{}, false, nil
+	}
+	if known[0] {
+		stringType := ResolvedType{Name: typeString}
+		matches, compatible := staticTypeAssignable(argumentTypes[0], stringType, types)
+		if compatible && !matches {
+			return ResolvedType{}, false, errors.New("context.parameter name must be a String")
+		}
+	}
+
+	return ResolvedType{Name: typeString}, true, nil
+}
+
 func inferStaticKeyOfBuiltin(arguments []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	return inferStaticKeyOfBuiltinWithAnalysis(arguments, argumentTypes, known, types)
 }

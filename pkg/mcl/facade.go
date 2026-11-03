@@ -77,6 +77,11 @@ func EvaluateFileContext(ctx context.Context, path string) (Bundle, error) {
 	return engine.EvaluateFileContext(ctx, path)
 }
 
+// EvaluateFileWithParametersContext evaluates an MCL file with explicit runtime parameters.
+func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) (Bundle, error) {
+	return engine.EvaluateFileWithParametersContext(ctx, path, parameters)
+}
+
 // EvaluateFileForOperation は指定した操作向けにMCLファイルを評価します。
 func EvaluateFileForOperation(path, operation string) (Bundle, error) {
 	return engine.EvaluateFileForOperation(path, operation)
@@ -87,11 +92,21 @@ func EvaluateFileForOperationContext(ctx context.Context, path, operation string
 	return engine.EvaluateFileForOperationContext(ctx, path, operation)
 }
 
+// EvaluateFileForOperationWithParametersContext evaluates an MCL file for an operation with explicit runtime parameters.
+func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, operation string, parameters map[string]string) (Bundle, error) {
+	return engine.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
+}
+
 func UpdateFile(path string) error { return engine.UpdateFile(path) }
 
 // UpdateFileContextは呼び出し元のContextを使って依存ロックを更新します。
 func UpdateFileContext(ctx context.Context, path string) error {
 	return engine.UpdateFileContext(ctx, path)
+}
+
+// UpdateFileWithParametersContext updates dependencies after evaluating an MCL file with explicit runtime parameters.
+func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) error {
+	return engine.UpdateFileWithParametersContext(ctx, path, parameters)
 }
 
 func EvaluateSource(path, source string) (Bundle, error) {

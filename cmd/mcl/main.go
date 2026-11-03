@@ -244,14 +244,20 @@ func newRenderCommand() *cobra.Command {
 			operation, _ := command.Flags().GetString("operation")
 			outputDir, _ := command.Flags().GetString("output-dir")
 			format, _ := command.Flags().GetString("format")
+			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameters, err := parseParameters(parameterValues)
+			if err != nil {
+				return err
+			}
 
-			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format)
+			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters)
 		},
 	}
 	command.Flags().String("phase", "", "lifecycle phase to render")
 	command.Flags().String("operation", "", "operation to render")
 	command.Flags().String("output-dir", "", "directory for operation output files")
 	command.Flags().String("format", "yaml", "output format (yaml or json)")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
 
 	return command
 }
@@ -263,11 +269,17 @@ func newCheckCommand() *cobra.Command {
 		Args:  exactArgs(1, "check requires one input file"),
 		RunE: func(command *cobra.Command, args []string) error {
 			operation, _ := command.Flags().GetString("operation")
+			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameters, err := parseParameters(parameterValues)
+			if err != nil {
+				return err
+			}
 
-			return checkCommand(command.Context(), args[0], operation)
+			return checkCommand(command.Context(), args[0], operation, parameters)
 		},
 	}
 	command.Flags().String("operation", "", "operation to check")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
 
 	return command
 }
@@ -351,7 +363,7 @@ func newFormatCommand() *cobra.Command {
 }
 
 func newUpdateCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "update [file]",
 		Short: "Update external dependencies and lock data",
 		Args:  maximumArgs(1, "update accepts at most one input file"),
@@ -360,10 +372,18 @@ func newUpdateCommand() *cobra.Command {
 			if len(args) == 1 {
 				path = args[0]
 			}
+			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameters, err := parseParameters(parameterValues)
+			if err != nil {
+				return err
+			}
 
-			return mcl.UpdateFileContext(command.Context(), path)
+			return mcl.UpdateFileWithParametersContext(command.Context(), path, parameters)
 		},
 	}
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
+
+	return command
 }
 
 func newLSPCommand() *cobra.Command {
@@ -425,6 +445,22 @@ func maximumArgs(count int, message string) cobra.PositionalArgs {
 
 		return nil
 	}
+}
+
+func parseParameters(values []string) (map[string]string, error) {
+	parameters := make(map[string]string, len(values))
+	for _, value := range values {
+		name, parameterValue, found := strings.Cut(value, "=")
+		if !found || name == "" {
+			return nil, fmt.Errorf("invalid parameter %q; expected name=value", value)
+		}
+		if _, exists := parameters[name]; exists {
+			return nil, fmt.Errorf("parameter %q was provided more than once", name)
+		}
+		parameters[name] = parameterValue
+	}
+
+	return parameters, nil
 }
 
 func lintFiles(denyWarnings bool, paths []string) error {
@@ -522,13 +558,13 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string) e
 	return nil
 }
 
-func checkCommand(ctx context.Context, path, operation string) error {
+func checkCommand(ctx context.Context, path, operation string, parameters map[string]string) error {
 	var bundle mcl.Bundle
 	var err error
 	if operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationContext(ctx, path, operation)
+		bundle, err = mcl.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
 	} else {
-		bundle, err = mcl.EvaluateFileContext(ctx, path)
+		bundle, err = mcl.EvaluateFileWithParametersContext(ctx, path, parameters)
 	}
 	if err != nil {
 		return err
@@ -537,7 +573,7 @@ func checkCommand(ctx context.Context, path, operation string) error {
 	return mcl.ValidateBundleOutput(bundle)
 }
 
-func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string) error {
+func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]string) error {
 	if operation != "" && phase != "" {
 		return errors.New("--operation and --phase cannot be used together")
 	}
@@ -553,9 +589,9 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	var bundle mcl.Bundle
 	var err error
 	if operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationContext(ctx, path, operation)
+		bundle, err = mcl.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
 	} else {
-		bundle, err = mcl.EvaluateFileContext(ctx, path)
+		bundle, err = mcl.EvaluateFileWithParametersContext(ctx, path, parameters)
 	}
 	if err != nil {
 		return err

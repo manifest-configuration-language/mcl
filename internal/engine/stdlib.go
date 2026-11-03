@@ -10,16 +10,17 @@ import (
 )
 
 type builtin struct {
-	name            string
-	module          string
-	exportName      string
-	parameters      []string
-	documentation   string
-	inference       builtinInference
-	evaluation      builtinEvaluation
-	staticInference func([]Expr, []ResolvedType, []bool, map[string]ResolvedType) (ResolvedType, bool, error)
-	pureEvaluation  func([]RuntimeValue) (RuntimeValue, error)
-	deferred        builtinDeferredEvaluation
+	name              string
+	module            string
+	exportName        string
+	parameters        []string
+	documentation     string
+	inference         builtinInference
+	evaluation        builtinEvaluation
+	staticInference   func([]Expr, []ResolvedType, []bool, map[string]ResolvedType) (ResolvedType, bool, error)
+	pureEvaluation    func([]RuntimeValue) (RuntimeValue, error)
+	contextEvaluation func([]RuntimeValue, *EvaluationState) (RuntimeValue, error)
+	deferred          builtinDeferredEvaluation
 }
 
 // StandardLibraryFunction describes the exported names registered for a standard-library function.
@@ -59,6 +60,9 @@ func LookupStandardLibraryFunction(module, name string) (StandardLibraryFunction
 }
 
 const stdlibListModule = "std:list"
+const stdlibContextModule = "std:context"
+
+const fnParameter = "parameter"
 
 type builtinInference uint8
 
@@ -102,6 +106,7 @@ var builtinRegistry = []builtin{
 	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, documentation: "指定したソースからManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, documentation: "指定したHelmチャートをレンダリングします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, documentation: "値にLifecycleイベントを関連付けます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
+	{name: fnParameter, module: stdlibContextModule, exportName: fnParameter, parameters: []string{"name"}, documentation: "明示的に指定された実行parameterを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContextParameter, contextEvaluation: evaluateContextParameter},
 }
 
 var standardFunctions = func() map[string]struct{} {
@@ -197,6 +202,9 @@ func callRuntimeStandard(name string, arguments []RuntimeValue, names []string, 
 	if err != nil {
 		return RuntimeValue{}, err
 	}
+	if item.contextEvaluation != nil {
+		return item.contextEvaluation(ordered, state)
+	}
 	if item.pureEvaluation != nil {
 		if name == fnClone {
 			if len(ordered) != 1 {
@@ -225,6 +233,22 @@ func callRuntimeStandard(name string, arguments []RuntimeValue, names []string, 
 	}
 
 	return value, err
+}
+
+func evaluateContextParameter(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
+	if len(arguments) != 1 || arguments[0].Kind() != String {
+		return RuntimeValue{}, errors.New("context.parameter expects a String name")
+	}
+	if state == nil || state.Module == nil {
+		return RuntimeValue{}, errors.New("context.parameter requires module context")
+	}
+	name := arguments[0].Value.Text
+	value, exists := state.Module.Parameters[name]
+	if !exists {
+		return RuntimeValue{}, fmt.Errorf("parameter %q is not set; pass --parameter %s=<value>", name, name)
+	}
+
+	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: value}}, nil
 }
 
 func runtimeAllocationBudgetOf(state *EvaluationState) *runtimeAllocationBudget {
