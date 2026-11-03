@@ -97,6 +97,7 @@ func compileBuiltinValidator(resource *spec.Schema, definitions spec.Definitions
 		return nil, fmt.Errorf("decode built-in Kubernetes schema: %w", err)
 	}
 	normalizeKubernetesSchemaExtensions(schemaDocument)
+	normalizeToNullable(schemaDocument)
 	document, err = json.Marshal(schemaDocument)
 	if err != nil {
 		return nil, fmt.Errorf("encode normalized Kubernetes schema: %w", err)
@@ -142,6 +143,47 @@ func normalizeKubernetesSchemaExtensions(value any) {
 			normalizeKubernetesSchemaExtensions(child)
 		}
 	}
+}
+// normalizeToNullable treats object fields as nullable so that null values
+// are accepted (matching Kubernetes "null means omitted" semantics).
+// Only leaf objects without sub-schemas are made nullable to avoid
+// over-permissive validation of nested structure.
+func normalizeToNullable(value any) {
+	var visit func(any) bool
+	visit = func(v any) bool {
+		switch m := v.(type) {
+		case map[string]any:
+			if t, ok := m["type"]; ok && (t == "object" || t == "array") {
+				hasSubSchema := false
+				for k := range m {
+					if k == "properties" || k == "items" || k == "allOf" || k == "anyOf" || k == "oneOf" || k == "$ref" {
+						hasSubSchema = true
+						break
+					}
+				}
+				if !hasSubSchema {
+					delete(m, "type")
+					delete(m, "properties")
+					delete(m, "items")
+					m["anyOf"] = []any{map[string]any{"type": t}, map[string]any{"type": "null"}}
+					break
+				}
+			}
+			for _, child := range m {
+				if !visit(child) {
+					return false
+				}
+			}
+		case []any:
+			for _, child := range m {
+				if !visit(child) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	visit(value)
 }
 
 type Field struct {

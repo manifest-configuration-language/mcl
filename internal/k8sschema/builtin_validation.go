@@ -98,43 +98,57 @@ func builtinStructuralSchema(schema *spec.Schema, definitions spec.Definitions, 
 	if schema == nil || depth > maxDepth {
 		return nil
 	}
-	original := schema
-	if schema.Ref.String() != "" {
-		resolved := resolveOpenAPIReference(schema, definitions)
-		if resolved == nil {
+	visited := make(map[*spec.Schema]struct{})
+	var visit func(*spec.Schema, int) *structuralschema.Structural
+	visit = func(schema *spec.Schema, depth int) *structuralschema.Structural {
+		if schema == nil || depth > maxDepth {
 			return nil
 		}
-		schema = resolved
-	}
-	structural := &structuralschema.Structural{}
-	if len(schema.Type) > 0 {
-		structural.Type = schema.Type[0]
-	}
-	structural.XPreserveUnknownFields = schemaExtension(schema, original, "x-kubernetes-preserve-unknown-fields") == true
-	if listType, ok := schemaExtension(schema, original, "x-kubernetes-list-type").(string); ok {
-		structural.XListType = &listType
-	}
-	structural.XListMapKeys = stringSlice(schemaExtension(schema, original, "x-kubernetes-list-map-keys"))
-	if schema.Items != nil && schema.Items.Schema != nil {
-		structural.Items = builtinStructuralSchema(schema.Items.Schema, definitions, depth+1)
-	}
-	if len(schema.Properties) > 0 {
-		structural.Properties = make(map[string]structuralschema.Structural, len(schema.Properties))
-		for name, property := range schema.Properties {
-			child := builtinStructuralSchema(&property, definitions, depth+1)
-			if child != nil {
-				structural.Properties[name] = *child
+		if _, exists := visited[schema]; exists {
+			return nil
+		}
+		visited[schema] = struct{}{}
+
+		original := schema
+		if schema.Ref.String() != "" {
+			resolved := resolveOpenAPIReference(schema, definitions)
+			if resolved == nil {
+				return nil
+			}
+			schema = resolved
+		}
+		structural := &structuralschema.Structural{}
+		if len(schema.Type) > 0 {
+			structural.Type = schema.Type[0]
+		}
+		structural.XPreserveUnknownFields = schemaExtension(schema, original, "x-kubernetes-preserve-unknown-fields") == true
+		if listType, ok := schemaExtension(schema, original, "x-kubernetes-list-type").(string); ok {
+			structural.XListType = &listType
+		}
+		structural.XListMapKeys = stringSlice(schemaExtension(schema, original, "x-kubernetes-list-map-keys"))
+		if schema.Items != nil && schema.Items.Schema != nil {
+			structural.Items = visit(schema.Items.Schema, depth+1)
+		}
+		if len(schema.Properties) > 0 {
+			structural.Properties = make(map[string]structuralschema.Structural, len(schema.Properties))
+			for name, property := range schema.Properties {
+				child := visit(&property, depth+1)
+				if child != nil {
+					structural.Properties[name] = *child
+				}
 			}
 		}
-	}
-	if additional := schema.AdditionalProperties; additional != nil {
-		structural.AdditionalProperties = &structuralschema.StructuralOrBool{Bool: additional.Allows}
-		if additional.Schema != nil {
-			structural.AdditionalProperties.Structural = builtinStructuralSchema(additional.Schema, definitions, depth+1)
+		if additional := schema.AdditionalProperties; additional != nil {
+			structural.AdditionalProperties = &structuralschema.StructuralOrBool{Bool: additional.Allows}
+			if additional.Schema != nil {
+				structural.AdditionalProperties.Structural = visit(additional.Schema, depth+1)
+			}
 		}
+
+		return structural
 	}
 
-	return structural
+	return visit(schema, depth)
 }
 
 func schemaExtension(schema, original *spec.Schema, name string) any {
