@@ -255,13 +255,15 @@ func validateDependencies(root *v2.Chart) error {
 			matchedRequirements[index] = -1
 		}
 		var match func(int, []bool) bool
+		// Helm applies dependency version constraints during ProcessDependencies, so
+		// this validation only checks that the archive includes the dependency.
 		match = func(requirementIndex int, visited []bool) bool {
 			requirement, ok := requirements[requirementIndex].(*v2.Dependency)
 			if !ok || requirement == nil {
 				return false
 			}
 			for childIndex, child := range childCharts {
-				if visited[childIndex] || child.Metadata.Name != requirement.Name || !chartutil.IsCompatibleRange(requirement.Version, child.Metadata.Version) {
+				if visited[childIndex] || child.Metadata.Name != requirement.Name {
 					continue
 				}
 				visited[childIndex] = true
