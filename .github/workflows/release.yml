@@ -158,18 +158,6 @@ jobs:
             previous="$(git tag --list "v${version}-rc.*" | sort -V | tail -n 1)"
             number=1
             if [[ -n "$previous" ]]; then
-              if [[ "$(git rev-list -n 1 "$previous")" == "$GITHUB_SHA" ]]; then
-                existing_release_tag="$(gh release view "$previous" --json tagName --jq '.tagName' 2>/dev/null || true)"
-                if [[ "$existing_release_tag" == "$previous" ]]; then
-                  version="${previous#v}"
-                  printf 'Commit %s already has release %s; resuming publication.\n' "$GITHUB_SHA" "$previous" >&2
-                  echo "version=$version" >> "$GITHUB_OUTPUT"
-                  echo "tag=$previous" >> "$GITHUB_OUTPUT"
-                  exit 0
-                fi
-                printf 'Tag %s already points to commit %s but has no release.\n' "$previous" "$GITHUB_SHA" >&2
-                exit 1
-              fi
               number=$((${previous##*.} + 1))
             fi
             version="${version}-rc.${number}"
@@ -512,7 +500,7 @@ jobs:
           package: ${{ runner.temp }}/mcl-npm-packages/manifest-configuration-language-browser-${{ needs.prepare.outputs.version }}.tgz
           access: public
           provenance: true
-          strategy: all
+          strategy: upgrade
           tag: ${{ inputs.channel == 'rc' && 'next' || 'latest' }}
 
       - name: Publish Language Package to npm
@@ -521,5 +509,5 @@ jobs:
           package: ${{ runner.temp }}/mcl-npm-packages/manifest-configuration-language-language-${{ needs.prepare.outputs.version }}.tgz
           access: public
           provenance: true
-          strategy: all
+          strategy: upgrade
           tag: ${{ inputs.channel == 'rc' && 'next' || 'latest' }}
