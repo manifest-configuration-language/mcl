@@ -113,7 +113,7 @@ jobs:
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
 
       - name: Restore Go cache
-        # キャッシュは信頼できるデフォルトブランチのCI実行でのみ作成されます。
+        # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
         # jactionlint ignore=cache-poisoning
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

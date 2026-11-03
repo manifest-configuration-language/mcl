@@ -5,7 +5,7 @@ runs:
   steps:
     - name: Restore browser WASM cache
       id: wasm-cache
-      # Release restores the cache created by the trusted default-branch CI run.
+      # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
       # jactionlint ignore=cache-poisoning
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
