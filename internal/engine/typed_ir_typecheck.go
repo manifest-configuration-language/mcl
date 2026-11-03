@@ -685,7 +685,16 @@ func typePrimitiveConditionalExpression(expression Expr, inferred ResolvedType, 
 			branchTypes = []ResolvedType{activeType}
 		}
 	}
-	for _, branchType := range branchTypes {
+	for index, branchType := range branchTypes {
+		branch := node.Then
+		if index == 1 {
+			branch = node.Else
+		}
+		if _, empty := branch.(*EmptyListExpr); empty {
+			if _, isList := staticListElement(inferred, context.types); isList {
+				continue
+			}
+		}
 		if !staticTypeCompatibility(branchType, inferred, context.types).isAssignable() {
 			return typedExpression{}, false
 		}

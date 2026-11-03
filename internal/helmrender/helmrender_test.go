@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/manifest-configuration-language/mcl/internal/content"
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -16,6 +17,7 @@ const (
 	localTestTemplatePath = "templates/configmap.yaml"
 	testChartName         = "example"
 	testChartVersion      = "0.1.0"
+	testKubeVersion       = "1.36.0"
 )
 
 func TestLoadReadsRootRelativeProjectFS(t *testing.T) {
@@ -152,13 +154,53 @@ func TestPrepareRequiresExplicitKubernetesCapabilities(t *testing.T) {
 	if _, err := Prepare(loaded, RenderOptions{}, t.TempDir()); err == nil || !strings.Contains(err.Error(), "requires kubeVersion") {
 		t.Fatalf("Prepare() error = %v, want missing kubeVersion error", err)
 	}
-	options := RenderOptions{KubeVersion: "1.36.0"}
+	options := RenderOptions{KubeVersion: testKubeVersion}
 	if _, err := Prepare(loaded, options, t.TempDir()); err == nil || !strings.Contains(err.Error(), "requires apiVersions") {
 		t.Fatalf("Prepare() error = %v, want missing apiVersions error", err)
 	}
 	options.APIVersions = []string{}
 	if _, err := Prepare(loaded, options, t.TempDir()); err != nil {
 		t.Fatalf("Prepare() with explicit empty apiVersions: %v", err)
+	}
+}
+
+func TestPrepareCacheKeyIncludesNormalizedNow(t *testing.T) {
+	t.Parallel()
+
+	loaded := Chart{
+		source:        &v2.Chart{Metadata: &v2.Metadata{Name: testChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2}},
+		ContentDigest: content.SHA256([]byte("chart")),
+	}
+	baseOptions := RenderOptions{KubeVersion: testKubeVersion, APIVersions: []string{}}
+	withOffset := time.Date(2025, time.January, 2, 3, 4, 5, 0, time.FixedZone("plus-nine", 9*60*60))
+	equivalentUTC := withOffset.UTC()
+	differentUTC := equivalentUTC.Add(time.Second)
+	prepare := func(now *time.Time) Prepared {
+		t.Helper()
+		options := baseOptions
+		options.Now = now
+		prepared, err := Prepare(loaded, options, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !prepared.CacheKeyAvailable {
+			t.Fatal("Prepare() did not create a cache key")
+		}
+
+		return prepared
+	}
+	first := prepare(&withOffset)
+	second := prepare(&equivalentUTC)
+	different := prepare(&differentUTC)
+	if first.CacheKey != second.CacheKey {
+		t.Fatal("Prepare() cache key differs for equivalent timestamps with different offsets")
+	}
+	if first.CacheKey == different.CacheKey {
+		t.Fatal("Prepare() cache key does not include the fixed render time")
+	}
+	withoutNow := prepare(nil)
+	if first.CacheKey == withoutNow.CacheKey {
+		t.Fatal("Prepare() cache key does not distinguish an omitted fixed render time")
 	}
 }
 
@@ -172,7 +214,7 @@ func TestPrepareKeepsRemoteChartSourcesInMemory(t *testing.T) {
 	}
 	loaded := Chart{source: chart, RemoteDigest: content.SHA256([]byte("archive"))}
 	prepared, err := Prepare(loaded, RenderOptions{
-		KubeVersion: "1.36.0", APIVersions: []string{},
+		KubeVersion: testKubeVersion, APIVersions: []string{},
 	}, root)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -230,7 +272,7 @@ func TestPrepareProcessesDependencyConditionsWithoutMutatingLoadedChart(t *testi
 			childChartName:   map[string]any{enabledField: false},
 			grafanaChartName: map[string]any{enabledField: false},
 		},
-		KubeVersion: "1.36.0", APIVersions: []string{},
+		KubeVersion: testKubeVersion, APIVersions: []string{},
 	}, t.TempDir())
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)

@@ -6,6 +6,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strconv"
 	"strings"
@@ -99,6 +100,7 @@ var builtinRegistry = []builtin{
 	{name: fnClone, module: "std:core", exportName: fnClone, parameters: []string{paramValue}, documentation: "値のディープコピーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCloneBuiltin, pureEvaluation: evaluateCloneBuiltin, deferred: builtinDeferredEvaluationClone},
 	{name: fnContains, module: stdlibListModule, exportName: fnContains, parameters: []string{paramValues, paramValue}, documentation: "リスト内の値、または文字列内の部分文字列を検索します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContainsBuiltin, pureEvaluation: evaluateContainsBuiltin},
 	{name: fnCryptoSHA256, module: "std:crypto", exportName: "sha256", parameters: []string{paramValue, "hexLength"}, documentation: "値を決定的なJSON bytesへ変換し、指定した16進文字数の小文字SHA-256 digestを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCryptoSHA256, pureEvaluation: evaluateCryptoSHA256},
+	{name: fnHashFNV1a64, module: "std:hash", exportName: "fnv1a64", parameters: []string{paramValue}, documentation: "値を決定的なJSON bytesへ変換し、非暗号学的なFNV-1a 64-bit digestを小文字16進数で返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticFNV1a64, pureEvaluation: evaluateFNV1a64},
 	{name: fnConcat, module: stdlibListModule, exportName: fnConcat, parameters: []string{"first", "second"}, documentation: "2つのリストを連結します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticConcatBuiltin, pureEvaluation: evaluateConcatBuiltin},
 	{name: fnUnion, module: stdlibListModule, exportName: fnUnion, parameters: []string{"first", "second"}, documentation: "重複を除きながら2つのリストを結合します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticUnionBuiltin, pureEvaluation: evaluateUnionBuiltin},
 	{name: fnReplaceAt, module: stdlibListModule, exportName: fnReplaceAt, parameters: []string{paramValues, paramIndex, paramValue}, documentation: "リストの指定位置にある要素を置き換えます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceAtBuiltin, pureEvaluation: evaluateReplaceAtBuiltin},
@@ -279,6 +281,26 @@ func evaluateCryptoSHA256(arguments []RuntimeValue) (RuntimeValue, error) {
 	digest := sha256.Sum256(encoded)
 
 	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: hex.EncodeToString(digest[:])[:length]}}, nil
+}
+
+func evaluateFNV1a64(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 1 {
+		return RuntimeValue{}, errors.New("hash.fnv1a64 expects a value")
+	}
+	value, err := runtimeValueAsJSON(arguments[0])
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("hash.fnv1a64 value: %w", err)
+	}
+	encoded, err := jsonv2.Marshal(value, jsonv2.Deterministic(true))
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("encode hash.fnv1a64 value: %w", err)
+	}
+	hasher := fnv.New64a()
+	if _, err := hasher.Write(encoded); err != nil {
+		return RuntimeValue{}, fmt.Errorf("hash.fnv1a64 value: %w", err)
+	}
+
+	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: fmt.Sprintf("%016x", hasher.Sum64())}}, nil
 }
 
 func runtimeAllocationBudgetOf(state *EvaluationState) *runtimeAllocationBudget {

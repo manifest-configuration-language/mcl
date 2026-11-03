@@ -5,6 +5,12 @@ import (
 	"testing"
 )
 
+const (
+	falseLiteral    = "false"
+	emptyListBranch = "    []"
+	secretListItem  = "    - secret"
+)
+
 func TestTypedBuiltinCallUsesBuiltinIDOutsideSchemaPath(t *testing.T) {
 	t.Parallel()
 	module, err := ParseAST("let result = len(\"x\")\n")
@@ -169,7 +175,7 @@ func TestTypePrimitiveConditionalExpressionWithDifferentScalarBranches(t *testin
 		wantText  string
 	}{
 		{name: "then integer", condition: "true", wantKind: Integer, wantText: "42"},
-		{name: "else string", condition: "false", wantKind: String, wantText: "worker"},
+		{name: "else string", condition: falseLiteral, wantKind: String, wantText: "worker"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,6 +214,51 @@ func TestTypePrimitiveConditionalExpressionWithDifferentScalarBranches(t *testin
 			}
 			if got.Kind != test.wantKind || got.Text != test.wantText {
 				t.Fatalf("typed conditional result = (%v, %q), want (%v, %q)", got.Kind, got.Text, test.wantKind, test.wantText)
+			}
+		})
+	}
+}
+
+func TestEvaluateConditionalListWithEmptyBranch(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		enabled     string
+		thenBranch  string
+		elseBranch  string
+		wantEmitted int
+	}{
+		{name: "then-resource", enabled: "true", thenBranch: secretListItem, elseBranch: emptyListBranch, wantEmitted: 1},
+		{name: "else-empty", enabled: falseLiteral, thenBranch: secretListItem, elseBranch: emptyListBranch},
+		{name: "then-empty", enabled: "true", thenBranch: emptyListBranch, elseBranch: secretListItem},
+		{name: "else-resource", enabled: falseLiteral, thenBranch: emptyListBranch, elseBranch: secretListItem, wantEmitted: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			source := "let profile =\n  cloudflareOriginCert: " + test.enabled + "\n" +
+				"let secret = node:\n  apiVersion: \"v1\"\n  kind: \"Secret\"\n  metadata:\n    name: \"cloudflare-origin-cert\"\n" +
+				"let extraResources =\n  if profile.cloudflareOriginCert:\n" + test.thenBranch + "\n  else:\n" + test.elseBranch + "\n" +
+				"emit each extraResources\n"
+			bundle, err := EvaluateSourceContext(t.Context(), "main.mcl", source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(bundle.Artifacts); got != test.wantEmitted {
+				t.Fatalf("conditional resource count = %d, want %d", got, test.wantEmitted)
+			}
+			if test.wantEmitted == 1 {
+				kind := ""
+				resource := nodeContents(bundle.Artifacts[0].Value)
+				for _, entry := range resource.Map {
+					if entry.Key == "kind" {
+						kind = entry.Value.Text
+					}
+				}
+				if kind != "Secret" {
+					t.Fatalf("conditional resource kind = %q, want Secret", kind)
+				}
 			}
 		})
 	}

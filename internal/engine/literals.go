@@ -36,6 +36,7 @@ const (
 	fnExactlyOne      = "exactlyOne"
 	fnFilter          = "filter"
 	fnFold            = "fold"
+	fnHashFNV1a64     = "hash.fnv1a64"
 	fnHelmRender      = "helm.render"
 	fnKeyOf           = "keyOf"
 	fnKustomizeBuild  = "kustomize.build"

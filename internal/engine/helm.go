@@ -155,6 +155,9 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 	}
 	ctx, cancel := context.WithTimeout(parentContext, 30*time.Second)
 	defer cancel()
+	if options.now != nil {
+		ctx = helmrender.WithNow(ctx, *options.now)
+	}
 	allocations := runtimeAllocationBudgetOf(state)
 	rendered, err := renderHelmTemplates(ctx, prepared, allocations, files)
 	if err != nil {
@@ -174,7 +177,7 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 	prepared, err := helmrender.Prepare(loaded, helmrender.RenderOptions{
 		Values: options.values, ReleaseName: options.releaseName, Namespace: options.namespace,
 		Operation: options.operation, Revision: options.revision, KubeVersion: options.kubeVersion,
-		APIVersions: options.apiVersions,
+		APIVersions: options.apiVersions, Now: options.now,
 	}, projectRoot)
 	if err != nil {
 		if helmrender.IsValuesError(err) {
@@ -531,6 +534,7 @@ func helmCleanupPolicy(policy string) (string, bool) {
 type helmRenderOptions struct {
 	values       map[string]any
 	valuesSource RuntimeValue
+	now          *time.Time
 	releaseName  string
 	namespace    string
 	operation    string
@@ -567,7 +571,7 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 				return options, errors.New("helm.render option revision must be a positive Int")
 			}
 			options.revision = revision
-		case "releaseName", "namespace", "operation", "kubeVersion", "version":
+		case "releaseName", "namespace", "operation", "kubeVersion", "version", "now":
 			if entry.Value.Kind() != String {
 				return options, fmt.Errorf("helm.render option %s must be a String", entry.Key)
 			}
@@ -587,6 +591,12 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 				options.kubeVersion = entry.Value.TextValue()
 			case "version":
 				options.version = entry.Value.TextValue()
+			case "now":
+				now, err := time.Parse(time.RFC3339, entry.Value.TextValue())
+				if err != nil {
+					return options, fmt.Errorf("helm.render option now must be an RFC3339 timestamp: %w", err)
+				}
+				options.now = new(now.UTC())
 			}
 		case "apiVersions":
 			if entry.Value.Kind() != List && entry.Value.Kind() != AdapterBundle {
@@ -631,9 +641,13 @@ func helmValue(value RuntimeValue) (any, error) {
 		if err := validateRuntimeDecimal(parsed); err != nil {
 			return nil, err
 		}
-		number, exact := parsed.Float64()
-		if !exact || math.IsInf(number, 0) || math.IsNaN(number) {
-			return nil, fmt.Errorf("decimal %q cannot be represented exactly as a Helm value", value.TextValue())
+		number, _ := parsed.Float64()
+		if math.IsInf(number, 0) || math.IsNaN(number) {
+			return nil, fmt.Errorf("decimal %q cannot be represented without precision loss as a Helm value", value.TextValue())
+		}
+		roundTrip, err := parseRuntimeDecimal(strconv.FormatFloat(number, 'g', -1, 64))
+		if err != nil || roundTrip.Cmp(parsed) != 0 {
+			return nil, fmt.Errorf("decimal %q cannot be represented without precision loss as a Helm value", value.TextValue())
 		}
 
 		return number, nil

@@ -783,7 +783,7 @@ emit removed
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"false", `"second"`, "2", `added: "added"`, `keep: "kept"`} {
+	for _, expected := range []string{falseLiteral, `"second"`, "2", `added: "added"`, `keep: "kept"`} {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("rendered output does not contain %q:\n%s", expected, output)
 		}
@@ -958,6 +958,7 @@ func TestListTransformationsReturnOrdinaryListsForAdapterBundles(t *testing.T) {
 func TestStandardFunctionsOperateOnGenericValues(t *testing.T) {
 	t.Parallel()
 	source := `import "std:crypto" as crypto
+import "std:hash" as hash
 import "std:map" as maps
 import "std:list" as lists
 let config =
@@ -976,6 +977,8 @@ let reorderedIdentity =
   name: "api"
 let orderedHash = crypto.sha256(identity, 12)
 let reorderedHash = crypto.sha256(reorderedIdentity, 12)
+let orderedFNVHash = hash.fnv1a64(identity)
+let reorderedFNVHash = hash.fnv1a64(reorderedIdentity)
 let result =
   key: maps.keyOf(config.data, "APP_MODE")
   hasWorker: lists.contains(names, "worker")
@@ -984,7 +987,10 @@ let result =
   digest: crypto.sha256("hello", 12)
   digest64: crypto.sha256(identity, 64)
   digest1: crypto.sha256("hello", 1)
+  fastDigest: hash.fnv1a64("hello")
+  fnvMapDigest: orderedFNVHash
   mapKeysAreDeterministic: orderedHash == reorderedHash
+  fnvMapKeysAreDeterministic: orderedFNVHash == reorderedFNVHash
 emit result
 `
 	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
@@ -995,7 +1001,7 @@ emit result
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`key: "APP_MODE"`, "hasWorker: true", "count: 2", `- "proxy"`, `digest: "5aa762ae383f"`, `digest64: "5056774b028a193daeed54cbc98d728f2385133deced2d7ceba21ada6f0f2733"`, `digest1: "5"`, "mapKeysAreDeterministic: true"} {
+	for _, expected := range []string{`key: "APP_MODE"`, "hasWorker: true", "count: 2", `- "proxy"`, `digest: "5aa762ae383f"`, `digest64: "5056774b028a193daeed54cbc98d728f2385133deced2d7ceba21ada6f0f2733"`, `digest1: "5"`, `fastDigest: "dcdd4ba1ec7623eb"`, `fnvMapDigest: "f409225e17ac823b"`, "mapKeysAreDeterministic: true", "fnvMapKeysAreDeterministic: true"} {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("standard library output does not contain %q:\n%s", expected, output)
 		}

@@ -563,6 +563,16 @@ func inferStaticExprTypeImpl(expression Expr, bindings map[string]TypeAnalysis, 
 		if !thenKnown || !elseKnown {
 			return ResolvedType{}, false, nil
 		}
+		if _, empty := node.Then.(*EmptyListExpr); empty {
+			if _, isList := staticListElement(elseType, types); isList {
+				return elseType, true, nil
+			}
+		}
+		if _, empty := node.Else.(*EmptyListExpr); empty {
+			if _, isList := staticListElement(thenType, types); isList {
+				return thenType, true, nil
+			}
+		}
 
 		return joinStaticTypes(thenType, elseType), true, nil
 	case *ForExpr:

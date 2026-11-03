@@ -294,6 +294,14 @@ func inferStaticCryptoSHA256(_ []Expr, argumentTypes []ResolvedType, known []boo
 	return ResolvedType{Name: typeString}, true, nil
 }
 
+func inferStaticFNV1a64(_ []Expr, argumentTypes []ResolvedType, known []bool, _ map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 1 || len(known) != 1 {
+		return ResolvedType{}, false, nil
+	}
+
+	return ResolvedType{Name: typeString}, true, nil
+}
+
 func inferStaticKeyOfBuiltin(arguments []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	return inferStaticKeyOfBuiltinWithAnalysis(arguments, argumentTypes, known, types)
 }

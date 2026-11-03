@@ -65,6 +65,7 @@ type RenderOptions struct {
 	Revision    int
 	KubeVersion string
 	APIVersions []string
+	Now         *time.Time
 }
 
 // Preparedは描画用に統合した値とsource pathを保持します。
@@ -344,6 +345,9 @@ func LoadSchemaArchive(lock *dependency.Lock, source, version string) (SchemaArc
 // PrepareはvaluesとRelease capabilitiesを統合し、可能な場合はcache keyを設定します。
 func Prepare(loaded Chart, options RenderOptions, projectRoot string) (Prepared, error) {
 	prepared := Prepared{Chart: loaded}
+	if options.Now != nil {
+		options.Now = new(options.Now.UTC())
+	}
 	if options.KubeVersion == "" {
 		return Prepared{}, errors.New("helm.render requires kubeVersion")
 	}
@@ -416,11 +420,12 @@ func Prepare(loaded Chart, options RenderOptions, projectRoot string) (Prepared,
 			Revision     int
 			KubeVersion  string
 			APIVersions  []string
+			Now          *time.Time
 			RenderValues map[string]any
 		}{
-			Format: "helm-render-v1", ChartDigest: loaded.ContentDigest, Operation: options.Operation,
+			Format: "helm-render-v2", ChartDigest: loaded.ContentDigest, Operation: options.Operation,
 			ReleaseName: options.ReleaseName, Namespace: options.Namespace, Revision: options.Revision,
-			KubeVersion: options.KubeVersion, APIVersions: options.APIVersions, RenderValues: values,
+			KubeVersion: options.KubeVersion, APIVersions: options.APIVersions, Now: options.Now, RenderValues: values,
 		})
 		if err == nil {
 			prepared.CacheKey = key
@@ -451,13 +456,27 @@ func renderSource(ctx context.Context, source chart.Charter, values map[string]a
 	}
 
 	return (engine.Engine{
-		Strict: false, EnableDNS: false, CustomTemplateFuncs: hermeticFunctions(),
+		Strict: false, EnableDNS: false, CustomTemplateFuncs: hermeticFunctions(ctx),
 	}).RenderWithContext(ctx, source, values)
 }
 
-func hermeticFunctions() template.FuncMap {
+type deterministicNowContextKey struct{}
+
+// WithNow supplies the fixed time used by Helm templates during a hermetic render.
+func WithNow(ctx context.Context, now time.Time) context.Context {
+	return context.WithValue(ctx, deterministicNowContextKey{}, now.UTC())
+}
+
+func hermeticFunctions(ctx context.Context) template.FuncMap {
 	blocked := func() (string, error) {
 		return "", errors.New("template function is disabled in hermetic Helm rendering")
+	}
+	now := func() (time.Time, error) {
+		if fixed, ok := ctx.Value(deterministicNowContextKey{}).(time.Time); ok {
+			return fixed, nil
+		}
+
+		return time.Time{}, errors.New("helm now is disabled in hermetic rendering")
 	}
 
 	return template.FuncMap{
@@ -465,10 +484,8 @@ func hermeticFunctions() template.FuncMap {
 			return nil, errors.New("helm lookup is disabled in hermetic rendering")
 		},
 		"getHostByName": func(string) (string, error) { return blocked() },
-		"now": func() (time.Time, error) {
-			return time.Time{}, errors.New("helm now is disabled in hermetic rendering")
-		},
-		"uuidv4": blocked, "randAlphaNum": func(int) (string, error) { return blocked() },
+		"now":           now,
+		"uuidv4":        blocked, "randAlphaNum": func(int) (string, error) { return blocked() },
 		"randAlpha": func(int) (string, error) { return blocked() }, "randNumeric": func(int) (string, error) { return blocked() },
 		"randAscii": func(int) (string, error) { return blocked() }, "randBytes": func(int) (string, error) { return blocked() },
 		"shuffle":       func(string) (string, error) { return blocked() },

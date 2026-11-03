@@ -53,6 +53,115 @@ func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 	}
 }
 
+func TestHelmValueDecimalRoundTripsWithoutPrecisionLoss(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		input     string
+		want      float64
+		wantError bool
+	}{
+		{input: "0.0483", want: 0.0483},
+		{input: "1.0000000000000001", wantError: true},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			t.Parallel()
+
+			value := RuntimeValue{Value: runtimeValueData{Kind: Decimal, Text: test.input}}
+			got, err := helmValue(value)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("helmValue(%q) = %v, want precision-loss error", test.input, got)
+				}
+
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if number, ok := got.(float64); !ok || number != test.want {
+				t.Fatalf("helmValue(%q) = %#v, want %v", test.input, got, test.want)
+			}
+		})
+	}
+}
+
+func TestHelmRenderUsesDeterministicNow(t *testing.T) {
+	t.Parallel()
+
+	const (
+		entryPath      = "main.mcl"
+		chartTemplate  = "{{- if now }}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: deterministic-now\ndata:\n  timestamp: {{ now.Format \"2006-01-02T15:04:05Z07:00\" | quote }}\n{{- end }}\n"
+		fixedTimeOne   = "2025-01-02T03:04:05+09:00"
+		fixedTimeTwo   = "2025-01-01T18:04:06Z"
+		formattedTime1 = "2025-01-01T18:04:05Z"
+		formattedTime2 = "2025-01-01T18:04:06Z"
+	)
+	root := filepath.Join(t.TempDir(), "project")
+	files := fstest.MapFS{
+		"chart/Chart.yaml":               &fstest.MapFile{Data: []byte("apiVersion: v2\nname: sample\nversion: 1.0.0\n")},
+		"chart/templates/configmap.yaml": &fstest.MapFile{Data: []byte(chartTemplate)},
+	}
+	baseSource := `import "std:helm" as helm
+let apiVersions: List<String> = []
+let options =
+  releaseName: "sample"
+  namespace: "default"
+  kubeVersion: "1.36.0"
+  apiVersions: apiVersions
+`
+	render := func(nowOption string) (Bundle, error) {
+		source := baseSource + nowOption + `let resources = helm.render("chart", options)
+emit each resources
+`
+
+		return EvaluateProjectSourceContext(t.Context(), root, entryPath, source, files, nil)
+	}
+	for _, test := range []struct {
+		name      string
+		nowOption string
+		wantTime  string
+	}{
+		{name: "offset-normalized-to-utc", nowOption: "  now: \"" + fixedTimeOne + "\"\n", wantTime: formattedTime1},
+		{name: "cache-distinguishes-time", nowOption: "  now: \"" + fixedTimeTwo + "\"\n", wantTime: formattedTime2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			bundle, err := render(test.nowOption)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, sourceMap, err := RenderWithSourceMap(bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(output), `timestamp: "`+test.wantTime+`"`) {
+				t.Fatalf("rendered timestamp is missing %q:\n%s", test.wantTime, output)
+			}
+			mappedTimestamp := false
+			for _, document := range sourceMap.Documents {
+				for _, entry := range document.Entries {
+					if entry.Path != "/data/timestamp" {
+						continue
+					}
+					for _, origin := range entry.Origins {
+						if (origin.Kind == SourceOriginHelmExpression || origin.Kind == SourceOriginHelmBranch) && strings.HasSuffix(origin.Path, "chart/templates/configmap.yaml") {
+							mappedTimestamp = true
+						}
+					}
+				}
+			}
+			if !mappedTimestamp {
+				t.Fatalf("Helm source map did not attribute /data/timestamp to its template: %#v", sourceMap)
+			}
+		})
+	}
+	if _, err := render(""); err == nil || !strings.Contains(err.Error(), "helm now is disabled in hermetic rendering") {
+		t.Fatalf("helm.render without now error = %v, want hermetic now error", err)
+	}
+}
+
 func TestHelmRemoteChartDiagnosticsReadInMemorySources(t *testing.T) {
 	t.Parallel()
 
