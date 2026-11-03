@@ -5,28 +5,23 @@ inputs:
     description: Directory for the packed npm package archives
     required: false
     default: ''
-  expected-version:
-    description: Expected version for the packed npm package archives
-    required: false
-    default: ''
-  reference-version:
-    description: Version to write into generated reference documents
-    required: false
-    default: ''
+  version:
+    description: Version for the generated reference documents and packed npm package archives
+    required: true
 runs:
   using: composite
   steps:
     - name: Generate reference package contents
       shell: bash
       env:
-        MCL_VERSION: ${{ inputs.reference-version || inputs.expected-version }}
+        MCL_VERSION: ${{ inputs.version }}
       run: mise run release:reference
 
     - name: Pack and verify npm packages
       shell: bash
       env:
         PACKAGE_OUTPUT_DIRECTORY: ${{ inputs.package-output-directory }}
-        MCL_VERSION: ${{ inputs.expected-version }}
+        MCL_VERSION: ${{ inputs.version }}
       run: |
         if [[ -n "$PACKAGE_OUTPUT_DIRECTORY" ]]; then
           scripts/verify-package-tarballs.sh "$PACKAGE_OUTPUT_DIRECTORY" --prebuilt-browser-wasm
