@@ -16,6 +16,10 @@
 
 Helm templateの`lookup`は、クラスタ状態を暗黙に読み込むと同じrevisionから異なるManifestを生成します。`std:helm.render`に`lookupResources`を追加し、呼び出し側が固定したKubernetes resource snapshotを渡せるようにしました。省略時は従来どおり失敗し、明示した空Listは空のクラスタ状態として扱います。Longhorn chart v1.12.1はコメント内のtemplate条件でも`lookup`を評価するため、infra側では空snapshotを明示して再現可能なrenderを行います。
 
+### Helmのbundled dependency version処理
+
+Helmは親chartのdependency version constraintと一致しない同梱subchartを`ProcessDependencies`で除外してrenderします。Scylla Manager chart v1.21.1は親chartで`scylla` version `1.0.0`を要求し、同梱subchartは`0.0.0`を宣言しています。MCLの事前検証は同梱subchartの存在だけを確認し、version constraintの適用はHelmに委ねるよう変更しました。同じchart archiveからHelmとMCLが7 resourceをrenderすることを確認しました。
+
 ### 決定的な非暗号学的hash
 
 infraではExternalSecretが参照するremote値を公開せず、ローカルのdata mappingやtemplateが変わったときにSecret名を変えてPod更新を促す必要があります。この用途にSHA-256は不要な暗号学的強度を持ち、既存の6桁suffixは衝突しやすいため、MCLに`std:hash.fnv1a64(value)`を追加しました。この関数は決定的なJSON bytesへ変換してFNV-1a 64-bitの全16桁を返し、秘密保護や攻撃者入力の耐衝突性には使いません。immutable resourceのcontent-addressingなど暗号学的hashを必要とする用途では`std:crypto.sha256`を引き続き使います。infra側のExternalSecret suffixの適用条件はinfraリポジトリの設計文書に記録します。
@@ -37,14 +41,6 @@ MCLは型注釈のない空MapやListの要素型を推論できない場合が�
 ### Helm出力の複数行文字列
 
 Velero chart v12.1.0のHelm出力では、ConfigMap `velero`の`data.global`にJSON文字列の末尾改行があります。`std:helm.render`のMCL出力では同じ文字列から末尾改行が失われ、Helm出力との比較でこの値だけが異なりました。出力上の改行を保持し、chartの通常resourceをHelm出力と構造的に同じ文字列にする必要があります。
-
-### Helm dependency metadataの不一致
-
-Scylla Manager chart v1.21.1の親chartは`scylla` dependencyのversion `1.0.0`を宣言しますが、同じarchiveに含まれる`scylla` subchartの`Chart.yaml`はversion `0.0.0`を記録しています。Helmはこのarchiveから7 resourceをrenderしますが、MCL 0.3.20の`mcl update`はdependency versionを照合し、matching subchartがないとして失敗します。確認したparent archiveのSHA-256は`2a2bdbda299dcb6314181fc285ec179a99d9b7009f23269be23cb24962981715`です。MCLがpackage内のsubchartをどのようにdependency constraintへ対応付けるかをHelmの挙動と照合し、親chart archiveのhash固定を保ったまま不一致を扱う選択肢を評価します。
-
-### Helm chart内の証明書生成
-
-rabbitmq-topology-operator 0.4.1は`useCertManager: true`を指定しても、`templates/validating-webhook-configuration.yaml`で`genCA`を呼び出します。MCLのhermetic Helm renderingは`genCA`を無効にしているため、`mcl update`が失敗します。random関数を無条件に許可せずにこのchartをrenderできるよう、chartが既存の証明書を受け取る設定、または決定的な証明書入力を扱う方法を確認する必要があります。
 
 ### 再現性と証明書生成
 
