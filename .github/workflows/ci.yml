@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+      - uses: jdx/mise-action@v5.2.6
         with:
           install: true
           cache: true
@@ -44,7 +44,7 @@ jobs:
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
       - name: Cache Go build and module data
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
@@ -56,7 +56,7 @@ jobs:
         # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
         # jactionlint ignore=cache-poisoning
         id: wasm-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v6.1.0
         with:
           path: packages/browser/dist/
           key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum', '**/*.go', 'internal/k8sschema/data/**', 'packages/browser/scripts/build-wasm.mjs') }}
