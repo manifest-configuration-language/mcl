@@ -24,7 +24,11 @@ infraではExternalSecretが参照するremote値を公開せず、ローカル�
 
 ### 空のMapとListの型推論
 
-MCLは空のMapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
+MCLは空のMapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。また、型注釈済みの空ListをMap literalのfield valueとして渡すと、typed evaluatorが`syntax.MapExpr`を未対応として拒否するケースを`iwashi-blackbox`のHelm optionsで確認しました。空Listをmoduleからimportしてfield valueへ設定した場合と、同じmodule内で`List<String>`として定義した場合の両方で再現します。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
+
+### Helm出力の複数行文字列
+
+Velero chart v12.1.0のHelm出力では、ConfigMap `velero`の`data.global`にJSON文字列の末尾改行があります。`std:helm.render`のMCL出力では同じ文字列から末尾改行が失われ、Helm出力との比較でこの値だけが異なりました。出力上の改行を保持し、chartの通常resourceをHelm出力と構造的に同じ文字列にする必要があります。
 
 ### Helm dependency metadataの不一致
 
