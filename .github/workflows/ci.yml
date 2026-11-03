@@ -24,6 +24,7 @@ jobs:
       - uses: jdx/mise-action@v5.2.6
         with:
           install: true
+          install_args: go golangci-lint
           cache: true
       - name: Get Go cache paths
         id: go-cache-paths
@@ -67,7 +68,7 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -75,6 +76,9 @@ jobs:
       - uses: jdx/mise-action@v5.2.6
         with:
           install: true
+          install_args: >-
+            go node
+            aqua:WebAssembly/binaryen
           cache: true
       - name: Cache browser WebAssembly output
         id: wasm-cache-restore
@@ -101,35 +105,10 @@ jobs:
           name: mcl-browser-dist
           path: packages/browser/dist/
           compression-level: 0
-
-  verify:
-    needs: browser
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@v5.2.6
-        with:
-          install: true
-          cache: true
-      - name: Download browser dist artifact
-        uses: actions/download-artifact@v8.0.2
-        with:
-          name: mcl-browser-dist
-          path: packages/browser/dist/
       - name: Set up pnpm
         run: corepack enable && pnpm --version
       - name: Install npm package workspace
         run: pnpm install --frozen-lockfile
-      - name: Set CI package versions
-        run: |
-          set -euo pipefail
-          version="0.0.0-ci.${GITHUB_SHA:0:12}"
-          echo "MCL_VERSION=$version" >> "$GITHUB_ENV"
-          npm --prefix packages/browser pkg set "version=$version"
-          npm --prefix packages/language pkg set "version=$version"
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
       - parallel:
@@ -145,10 +124,17 @@ jobs:
         - name: Generate package references
           timeout-minutes: 15
           run: mise run release:reference
-      - name: Pack and verify npm packages
-        run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
-      - name: Check generated protocol sources are current
+      - name: Check generated parser
         run: |
           go generate ./cmd/mcl-wasm
           pnpm --filter @manifest-configuration-language/browser run generate:protocol
           git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.ts packages/browser/src/limits.ts
+      - name: Set CI package versions
+        run: |
+          set -euo pipefail
+          version="0.0.0-ci.${GITHUB_SHA:0:12}"
+          echo "MCL_VERSION=$version" >> "$GITHUB_ENV"
+          npm --prefix packages/browser pkg set "version=$version"
+          npm --prefix packages/language pkg set "version=$version"
+      - name: Pack and verify npm packages
+        run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"

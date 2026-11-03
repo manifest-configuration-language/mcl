@@ -38,7 +38,7 @@ done
 for archive in "$output_directory"/*.tgz; do
   echo "Validating $archive ..."
   pnpm --dir "$root/packages/browser" exec publint --strict "$archive"
-  pnpm --dir "$root/packages/browser" exec attw --ignore-missing-peer "$archive"
+  pnpm --dir "$root/packages/browser" exec attw "$archive"
 done
 
 # Import each public entrypoint from the packed files. Keep the temporary
