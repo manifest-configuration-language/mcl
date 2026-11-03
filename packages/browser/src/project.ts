@@ -175,8 +175,13 @@ export function computeProjectDelta(
   next: ProjectSnapshot,
   previous: ProjectSnapshot | undefined,
   reset: boolean,
-): { delta: ProjectDelta; binaryFiles: Record<string, Uint8Array>; transferables: ArrayBuffer[] } | null {
-  const previousFiles = reset || !previous ? Object.create(null) as Record<string, ProjectFile> : previous.files;
+): {
+  delta: ProjectDelta;
+  binaryFiles: Record<string, Uint8Array>;
+  transferables: ArrayBuffer[];
+} | null {
+  const previousFiles =
+    reset || !previous ? (Object.create(null) as Record<string, ProjectFile>) : previous.files;
   const updates: Record<string, FileDelta> = Object.create(null);
   const binaryFiles: Record<string, Uint8Array> = Object.create(null);
   const transferables: ArrayBuffer[] = [];

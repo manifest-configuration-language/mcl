@@ -51,10 +51,11 @@ done
 
 browser_archive="$(sed -n '1p' "$temporary_directory/archives.txt")"
 language_archive="$(sed -n '2p' "$temporary_directory/archives.txt")"
+typescript_version="$(node -p "require('$root/packages/browser/package.json').devDependencies.typescript")"
 project_directory="$temporary_directory/project"
 mkdir -p "$project_directory"
 cat > "$project_directory/package.json" <<EOF
-{"private":true,"type":"module","dependencies":{"@manifest-configuration-language/browser":"file:$browser_archive","@manifest-configuration-language/language":"file:$language_archive"}}
+{"private":true,"type":"module","dependencies":{"@manifest-configuration-language/browser":"file:$browser_archive","@manifest-configuration-language/language":"file:$language_archive"},"devDependencies":{"typescript":"$typescript_version"}}
 EOF
 npm install --prefix "$project_directory" --ignore-scripts --no-audit --no-fund
 cp "$root/scripts/verify-installed-packages.mjs" "$project_directory/verify-installed-packages.mjs"

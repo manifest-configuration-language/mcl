@@ -153,17 +153,20 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
   const workerFactory =
     options.workerFactory ??
     (() => new Worker(new URL("./worker.js", import.meta.url), { type: "module" }));
-  const initializationTimeoutMs =
-    options.initializationTimeoutMs ?? defaultInitializationTimeoutMs;
+  const initializationTimeoutMs = options.initializationTimeoutMs ?? defaultInitializationTimeoutMs;
 
   let rawWorker: Worker | undefined;
   let workerApi: Comlink.Remote<WorkerApi> | undefined;
+  let cleanupWorkerListeners: (() => void) | undefined;
   let initializationPromise: Promise<void> | undefined;
   let disposed = false;
   const queue = new PQueue({ concurrency: 1 });
   queue.on("error", () => {});
   const queueSignals = new Set<AbortController>();
-  const latestPending = new Map<string, Map<number, { controller: AbortController; started: boolean }>>();
+  const latestPending = new Map<
+    string,
+    Map<number, { controller: AbortController; started: boolean }>
+  >();
   let sequence = 0;
   let workerGeneration = 0;
   // The snapshot currently synced inside the Worker session.
@@ -180,9 +183,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
 
   function emitStatus(status: RuntimeStatus, extra: Partial<RuntimeStatusEvent> = {}): void {
     try {
-      Promise.resolve(
-        options.onStatus?.({ status, workerGeneration, ...extra }),
-      ).catch(() => {});
+      Promise.resolve(options.onStatus?.({ status, workerGeneration, ...extra })).catch(() => {});
     } catch {
       // Observability callbacks must not affect runtime behavior.
     }
@@ -210,8 +211,12 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
               ? Math.max(0, details.executionStartedAt - startedAt)
               : durationMs,
           executionDurationMs: details.executionDurationMs ?? 0,
-          ...(details.wasmDurationMs === undefined ? {} : { wasmDurationMs: details.wasmDurationMs }),
-          ...(details.workerGeneration === undefined ? {} : { workerGeneration: details.workerGeneration }),
+          ...(details.wasmDurationMs === undefined
+            ? {}
+            : { wasmDurationMs: details.wasmDurationMs }),
+          ...(details.workerGeneration === undefined
+            ? {}
+            : { workerGeneration: details.workerGeneration }),
           outcome,
         }),
       ).catch(() => {});
@@ -306,7 +311,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
           if (latestOnlyOperations.has(operation)) removePending(priority, pending);
           timing.executionStartedAt = performance.now();
           try {
-            return await run() as T;
+            return (await run()) as T;
           } finally {
             timing.executionDurationMs = Math.max(
               0,
@@ -364,6 +369,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     // Status messages from the worker arrive via standard message events.
     // (Comlink forwards non-Comlink messages transparently.)
     const onStatusMessage = (event: MessageEvent<unknown>) => {
+      if (rawWorker !== currentRawWorker) return;
       const data = event.data as Record<string, unknown> | null;
       if (data?.type === "status" && typeof data.status === "string") {
         reportStatus(data.status as RuntimeStatus);
@@ -374,38 +380,48 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         if (initialized) {
           emitStatus("error");
           terminateWorker(error);
-        }
-        else fail(error);
+        } else fail(error);
       }
     };
     currentRawWorker.addEventListener("message", onStatusMessage);
 
     // Worker-level error (uncaught exception or load failure).
     const onWorkerError = (event: ErrorEvent) => {
+      if (rawWorker !== currentRawWorker) return;
       const error = new Error(event.message || "MCL worker failed");
       if (initialized) {
         emitStatus("error");
         terminateWorker(error);
-      }
-      else fail(error);
+      } else fail(error);
     };
     currentRawWorker.addEventListener("error", onWorkerError);
 
     // Malformed message from worker.
     const onMessageError = (event: MessageEvent<unknown>) => {
+      if (rawWorker !== currentRawWorker) return;
       const error = new Error("MCL worker sent a malformed message");
       if (initialized) {
         emitStatus("error");
         terminateWorker(error);
-      }
-      else fail(error);
+      } else fail(error);
     };
     currentRawWorker.addEventListener("messageerror", onMessageError);
+    cleanupWorkerListeners = () => {
+      currentRawWorker.removeEventListener("message", onStatusMessage);
+      currentRawWorker.removeEventListener("error", onWorkerError);
+      currentRawWorker.removeEventListener("messageerror", onMessageError);
+    };
 
     let initialized = false;
 
     const timer = setTimeout(
-      () => fail(new MclRuntimeError({ code: "MCL-WASM-TIMEOUT", message: "MCL WebAssembly initialization timed out" })),
+      () =>
+        fail(
+          new MclRuntimeError({
+            code: "MCL-WASM-TIMEOUT",
+            message: "MCL WebAssembly initialization timed out",
+          }),
+        ),
       initializationTimeoutMs,
     );
 
@@ -413,17 +429,8 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       if (rawWorker !== currentRawWorker) return;
       if (!initialized) reportStatus("error");
       clearTimeout(timer);
-      currentRawWorker.removeEventListener("message", onStatusMessage);
-      currentRawWorker.removeEventListener("error", onWorkerError);
-      currentRawWorker.removeEventListener("messageerror", onMessageError);
-      currentRawWorker.terminate();
-      currentApi[Comlink.releaseProxy]();
-      if (rawWorker === currentRawWorker) {
-        rawWorker = undefined;
-        workerApi = undefined;
-        initializationPromise = undefined;
-      }
       if (stopInitialization === fail) stopInitialization = undefined;
+      terminateWorker(error);
       rejectReady(error);
     }
 
@@ -433,6 +440,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     currentApi
       .initialize({ wasmURL, wasmExecURL })
       .then(() => {
+        if (rawWorker !== currentRawWorker) return;
         initialized = true;
         reportStatus("ready");
         clearTimeout(timer);
@@ -451,15 +459,49 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     const currentWorker = rawWorker;
     const currentApi = workerApi;
     const currentStop = stopCurrent;
+    const cleanup = cleanupWorkerListeners;
+    cleanupWorkerListeners = undefined;
     rawWorker = undefined;
     workerApi = undefined;
     initializationPromise = undefined;
     workerProjectId = undefined;
     workerSnapshot = undefined;
     stopCurrent = undefined;
+    cleanup?.();
     currentWorker?.terminate();
     currentApi?.[Comlink.releaseProxy]();
     currentStop?.(error);
+  }
+
+  function runWorkerCall<T>(signal: AbortSignal | undefined, call: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error, value?: T) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        if (stopCurrent === stop) stopCurrent = undefined;
+        if (error) reject(error);
+        else resolve(value as T);
+      };
+      const stop = (error: Error) => {
+        finish(error);
+        terminateWorker(error);
+      };
+      const onAbort = () => stop(new DOMException("The operation was aborted", "AbortError"));
+      stopCurrent = stop;
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      call().then(
+        (value) => finish(undefined, value),
+        (error: unknown) => {
+          stop(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
+    });
   }
 
   async function waitUntilReady(signal: AbortSignal | undefined): Promise<void> {
@@ -471,7 +513,9 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         startWorker(),
         new Promise<void>((_, reject) => {
           onAbort = () => {
-            stopInitialization?.(new DOMException("The operation was aborted", "AbortError") as unknown as Error);
+            stopInitialization?.(
+              new DOMException("The operation was aborted", "AbortError") as unknown as Error,
+            );
             reject(new DOMException("The operation was aborted", "AbortError"));
           };
           signal.addEventListener("abort", onAbort, { once: true });
@@ -491,6 +535,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     snapshot: ProjectSnapshot,
     requestOptions: RequestOptions,
   ): Promise<void> {
+    if (workerProjectId === projectId && workerSnapshot === snapshot) return;
     const api = workerApi!;
     const previousSnapshot = workerProjectId === projectId ? workerSnapshot : undefined;
     const reset = workerProjectId !== projectId;
@@ -506,57 +551,19 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       transferableBinaries[path] = bytes;
     }
 
-    // Wrap with abort / error handling.
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const finish = (ok: boolean, value?: unknown) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        if (stopCurrent === stop) stopCurrent = undefined;
-        if (ok) {
-          workerProjectId = projectId;
-          workerSnapshot = snapshot;
-          resolve();
-        } else {
-          reject(value);
-        }
-      };
-
-      const stop = (error: Error) => {
-        finish(false, error);
-        terminateWorker(error);
-      };
-
-      const onAbort = () =>
-        stop(new DOMException("The operation was aborted", "AbortError") as unknown as Error);
-
-      const cleanup = () => {
-        requestOptions.signal?.removeEventListener("abort", onAbort);
-        if (stopCurrent === stop) stopCurrent = undefined;
-      };
-
-      stopCurrent = stop;
-      requestOptions.signal?.addEventListener("abort", onAbort, { once: true });
-
-      if (requestOptions.signal?.aborted) {
-        onAbort();
-        return;
-      }
-
-      api
-        .updateProject(projectId, updateJSON, Comlink.transfer(transferableBinaries, transferables))
-        .then((response: import("./protocol.js").Response) => {
-          if (!response.ok) {
-            finish(false, new MclRuntimeError(response.error ?? { code: "MCL-WASM-PROJECT", message: "Project update failed" }));
-          } else {
-            finish(true);
-          }
-        })
-        .catch((error: unknown) => {
-          stop(error instanceof Error ? error : new Error(String(error)));
-        });
-    });
+    const response = await runWorkerCall(requestOptions.signal, () =>
+      api.updateProject(
+        projectId,
+        updateJSON,
+        Comlink.transfer(transferableBinaries, transferables),
+      ),
+    );
+    if (!response.ok)
+      throw new MclRuntimeError(
+        response.error ?? { code: "MCL-WASM-PROJECT", message: "Project update failed" },
+      );
+    workerProjectId = projectId;
+    workerSnapshot = snapshot;
   }
 
   // -------------------------------------------------------------------------
@@ -565,8 +572,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
 
   async function execute(
     operation: MclOperation,
-    source: string | undefined,
-    files: ProjectFiles | undefined,
+    source: string,
     requestOptions: RequestOptions & {
       entrypoint?: string;
       position?: { line: number; character: number };
@@ -575,7 +581,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       newPath?: string;
     },
     entrypoint: string,
-    project?: { id: string; snapshot: ProjectSnapshot },
+    project: { id: string; snapshot: ProjectSnapshot },
   ): Promise<MclResult> {
     // Validate renameFileImports paths eagerly so we never spin up a Worker.
     if (operation === "renameFileImports") {
@@ -595,7 +601,12 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 
     const startedAt = performance.now();
-    const timing: { executionStartedAt?: number; executionDurationMs?: number; wasmStartedAt?: number; wasmDurationMs?: number } = {};
+    const timing: {
+      executionStartedAt?: number;
+      executionDurationMs?: number;
+      wasmStartedAt?: number;
+      wasmDurationMs?: number;
+    } = {};
     let operationWorkerGeneration: number | undefined;
 
     const run = async (): Promise<MclResult> => {
@@ -635,93 +646,28 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
           revision: requestId,
           operation,
           entrypoint,
-          source: source ?? "",
+          source,
           ...(requestOptions.position ? { position: requestOptions.position } : {}),
           ...(requestOptions.newName ? { newName: requestOptions.newName } : {}),
           ...(requestOptions.oldPath ? { oldPath: requestOptions.oldPath } : {}),
           ...(requestOptions.newPath ? { newPath: requestOptions.newPath } : {}),
         };
 
-        // Prepare files for transfer (non-project mode).
-        const binaryFiles: Record<string, Uint8Array> = Object.create(null);
-        const transferables: ArrayBuffer[] = [];
-        if (!project) {
-          for (const [filePath, content] of Object.entries(files ?? {})) {
-            if (content instanceof Uint8Array) {
-              const copy = new Uint8Array(content);
-              binaryFiles[filePath] = copy;
-              transferables.push(copy.buffer as ArrayBuffer);
-            }
-          }
-          // Encode string files into the request object.
-          if (files) {
-            const encodedFiles: Record<string, { encoding: "utf8" | "binary"; content?: string }> = Object.create(null);
-            for (const [filePath, content] of Object.entries(files)) {
-              if (typeof content === "string") {
-                encodedFiles[filePath] = { encoding: "utf8", content };
-              } else {
-                encodedFiles[filePath] = { encoding: "binary" };
-              }
-            }
-            request.files = encodedFiles;
-          }
+        timing.wasmStartedAt = performance.now();
+        let response: import("./protocol.js").Response;
+        try {
+          response = await runWorkerCall(signal, () =>
+            currentApi.run(JSON.stringify(request), Comlink.transfer({}, []), project.id),
+          );
+        } finally {
+          timing.wasmDurationMs = Math.max(0, performance.now() - timing.wasmStartedAt!);
+          clearTimeout(timer);
         }
 
-        timing.wasmStartedAt = performance.now();
-        const response = await new Promise<import("./protocol.js").Response>((resolve, reject) => {
-          let settled = false;
-          const finish = (ok: boolean, value: unknown) => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            if (stopCurrent === stop) stopCurrent = undefined;
-            if (ok) resolve(value as import("./protocol.js").Response);
-            else reject(value);
-          };
-
-          const stop = (error: Error) => {
-            finish(false, error);
-            terminateWorker(error);
-          };
-
-          const onAbort = () =>
-            stop(new DOMException("The operation was aborted", "AbortError") as unknown as Error);
-
-          const cleanup = () => {
-            clearTimeout(timer);
-            signal?.removeEventListener("abort", onAbort);
-            if (stopCurrent === stop) stopCurrent = undefined;
-          };
-
-          stopCurrent = stop;
-          signal?.addEventListener("abort", onAbort, { once: true });
-
-          if (signal?.aborted) {
-            onAbort();
-            return;
-          }
-
-          const runPromise = project
-            ? currentApi.run(
-                JSON.stringify(request),
-                Comlink.transfer(binaryFiles, transferables),
-                project.id,
-              )
-            : currentApi.run(JSON.stringify(request), Comlink.transfer(binaryFiles, transferables));
-
-          runPromise
-            .then((result: import("./protocol.js").Response) => {
-              timing.wasmDurationMs = Math.max(0, performance.now() - timing.wasmStartedAt!);
-              finish(true, result);
-            })
-            .catch((error: unknown) => {
-              timing.wasmDurationMs = Math.max(0, performance.now() - timing.wasmStartedAt!);
-              stop(error instanceof Error ? error : new Error(String(error)));
-            });
-        });
-
         if (!response.ok) {
-          throw new MclRuntimeError(response.error ?? { code: "MCL-WASM-RESPONSE", message: "Operation failed" });
+          throw new MclRuntimeError(
+            response.error ?? { code: "MCL-WASM-RESPONSE", message: "Operation failed" },
+          );
         }
         if (operation === "lint") {
           return { operation, diagnostics: (response.result ?? []) as ProtocolLintDiagnostic[] };
@@ -738,7 +684,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         operation,
         run,
         signal,
-        project?.id ?? "runtime",
+        project.id,
         requestOptions.priority,
         timing,
       );
@@ -786,15 +732,16 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       const sourceBytes = new TextEncoder().encode(source).byteLength;
       if (sourceBytes > maxSourceBytes)
         throw new RangeError(`Source exceeds the ${maxSourceBytes}-byte limit`);
-      return execute(operation, source, undefined, requestOptions, entrypoint, { id, snapshot });
+      return execute(operation, source, requestOptions, entrypoint, { id, snapshot });
     };
 
     const projectApi: MclProject = Object.freeze({
       patch(changes: { set?: ProjectFiles; delete?: string[] }): MclProject {
         // Build new file set from current snapshot + changes.
         const merged: Record<string, string | Uint8Array> = Object.create(null);
+        const deleted = new Set(changes.delete);
         for (const [path, content] of Object.entries(snapshot.files)) {
-          if (!changes.delete?.includes(path)) merged[path] = content;
+          if (!deleted.has(path)) merged[path] = content;
         }
         if (changes.set) {
           for (const [path, content] of Object.entries(changes.set)) {
@@ -853,15 +800,11 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      for (const controller of queueSignals)
-        controller.abort(new Error("MCL runtime has been disposed"));
-      stopCurrent?.(new Error("MCL runtime has been disposed"));
-      stopInitialization?.(new Error("MCL runtime has been disposed"));
-      workerApi?.[Comlink.releaseProxy]();
-      rawWorker?.terminate();
-      rawWorker = undefined;
-      workerApi = undefined;
-      initializationPromise = undefined;
+      const error = new Error("MCL runtime has been disposed");
+      for (const controller of queueSignals) controller.abort(error);
+      stopCurrent?.(error);
+      stopInitialization?.(error);
+      terminateWorker(error);
     },
   };
 }

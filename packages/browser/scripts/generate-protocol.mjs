@@ -2,18 +2,26 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { compileFromFile } from "json-schema-to-typescript";
 
-const schema = fileURLToPath(new URL("../../../cmd/mcl-wasm/protocol.schema.json", import.meta.url));
-const output = fileURLToPath(new URL("../src/protocol.d.ts", import.meta.url));
-const goLimitsOutput = fileURLToPath(new URL("../../../internal/wasmprotocol/limits.go", import.meta.url));
-const jsLimitsOutput = fileURLToPath(new URL("../src/limits.js", import.meta.url));
+const schema = fileURLToPath(
+  new URL("../../../cmd/mcl-wasm/protocol.schema.json", import.meta.url),
+);
+const output = fileURLToPath(new URL("../src/protocol.ts", import.meta.url));
+const goLimitsOutput = fileURLToPath(
+  new URL("../../../internal/wasmprotocol/limits.go", import.meta.url),
+);
+const jsLimitsOutput = fileURLToPath(new URL("../src/limits.ts", import.meta.url));
 const schemaDocument = JSON.parse(await readFile(schema, "utf8"));
 const limits = schemaDocument["x-mcl-limits"];
 const requestOperations = schemaDocument.$defs.request.properties.operation.enum;
 const requestFileLimit = schemaDocument.$defs.request.properties.files.maxProperties;
 const renameNameLength = schemaDocument.$defs.request.properties.newName.maxLength;
 const projectPathConstraints = schemaDocument.$defs.projectPath.allOf;
-const projectPathLengthConstraint = projectPathConstraints.find((constraint) => constraint.maxLength !== undefined);
-const projectPathDepthConstraint = projectPathConstraints.find((constraint) => constraint.pattern !== undefined);
+const projectPathLengthConstraint = projectPathConstraints.find(
+  (constraint) => constraint.maxLength !== undefined,
+);
+const projectPathDepthConstraint = projectPathConstraints.find(
+  (constraint) => constraint.pattern !== undefined,
+);
 if (requestFileLimit !== limits.maxProjectFiles - 1) {
   throw new Error("The request file count must exclude the entrypoint from maxProjectFiles.");
 }
@@ -30,7 +38,9 @@ if (renameNameLength !== limits.maxRenameNameLength) {
 if (projectPathLengthConstraint?.maxLength !== limits.maxProjectPathLength) {
   throw new Error("The project path maxLength must match maxProjectPathLength.");
 }
-if (projectPathDepthConstraint?.pattern !== `^([^/]+/){0,${limits.maxProjectPathDepth - 1}}[^/]+$`) {
+if (
+  projectPathDepthConstraint?.pattern !== `^([^/]+/){0,${limits.maxProjectPathDepth - 1}}[^/]+$`
+) {
   throw new Error("The project path depth pattern must match maxProjectPathDepth.");
 }
 
@@ -64,7 +74,9 @@ const goOperationNames = requestOperations
   })
   .join(" +\n");
 const goLimitWidth = Math.max(...goLimitNames.map(([name]) => name.length));
-const goLimits = goLimitNames.map(([name, value]) => `\t${name.padEnd(goLimitWidth)} = ${value}`).join("\n");
+const goLimits = goLimitNames
+  .map(([name, value]) => `\t${name.padEnd(goLimitWidth)} = ${value}`)
+  .join("\n");
 
 await writeFile(output, declarations);
 await writeFile(
