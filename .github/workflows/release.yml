@@ -110,20 +110,6 @@ jobs:
             exit 1
           fi
 
-          # Reuse when SHA already has the latest release.
-          existing_release_tag="$(gh release view "$latest" \
-            --json tagName --jq '.tagName' 2>/dev/null || true)"
-          if [[ "$CHANNEL" == stable && \
-                "$existing_release_tag" == "$latest" && \
-                "$(git rev-list -n 1 "$latest")" == "$GITHUB_SHA" ]]; then
-            version="${latest#v}"
-            printf 'Commit %s already has release %s; resuming publication.\n' \
-              "$GITHUB_SHA" "$latest" >&2
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "tag=$latest" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           # Reuse channel-matched tag already pointing to this SHA.
           case "$CHANNEL" in
             stable) pattern='^v[0-9]+\.[0-9]+\.[0-9]+$' ;;
@@ -131,7 +117,7 @@ jobs:
             *)      exit 1 ;;
           esac
           prev="$(git tag --points-at "$GITHUB_SHA" --list 'v*' |
-            grep -E "$pattern" | tail -n 1 || true)"
+            grep -E "$pattern" | sort -V | tail -n 1 || true)"
           if [ -n "$prev" ]; then
             printf 'Commit %s already has tag %s; resuming publication.\n' \
               "$GITHUB_SHA" "$prev" >&2
@@ -485,8 +471,6 @@ jobs:
           )
           if [[ "$CHANNEL" == rc ]]; then
             args+=(--prerelease)
-          else
-            args+=(--latest)
           fi
           gh release create "${args[@]}"
 
