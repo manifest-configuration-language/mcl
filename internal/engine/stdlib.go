@@ -14,17 +14,16 @@ import (
 )
 
 type builtin struct {
-	name              string
-	module            string
-	exportName        string
-	parameters        []string
-	documentation     string
-	inference         builtinInference
-	evaluation        builtinEvaluation
-	staticInference   func([]Expr, []ResolvedType, []bool, map[string]ResolvedType) (ResolvedType, bool, error)
-	pureEvaluation    func([]RuntimeValue) (RuntimeValue, error)
-	contextEvaluation func([]RuntimeValue, *EvaluationState) (RuntimeValue, error)
-	deferred          builtinDeferredEvaluation
+	name            string
+	module          string
+	exportName      string
+	parameters      []string
+	documentation   string
+	inference       builtinInference
+	evaluation      builtinEvaluation
+	staticInference func([]Expr, []ResolvedType, []bool, map[string]ResolvedType) (ResolvedType, bool, error)
+	pureEvaluation  func([]RuntimeValue) (RuntimeValue, error)
+	deferred        builtinDeferredEvaluation
 }
 
 // StandardLibraryFunction describes the exported names registered for a standard-library function.
@@ -63,15 +62,7 @@ func LookupStandardLibraryFunction(module, name string) (StandardLibraryFunction
 	return StandardLibraryFunction{}, false
 }
 
-const (
-	stdlibListModule    = "std:list"
-	stdlibContextModule = "std:context"
-)
-
-const (
-	fnParameter    = "parameter"
-	fnIntParameter = "intParameter"
-)
+const stdlibListModule = "std:list"
 
 type builtinInference uint8
 
@@ -106,6 +97,7 @@ var builtinRegistry = []builtin{
 	{name: fnHashFNV1a64, module: "std:hash", exportName: "fnv1a64", parameters: []string{paramValue}, documentation: "値を決定的なJSON bytesへ変換し、非暗号学的なFNV-1a 64-bit digestを小文字16進数で返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticFNV1a64, pureEvaluation: evaluateFNV1a64},
 	{name: fnConcat, module: stdlibListModule, exportName: fnConcat, parameters: []string{"first", "second"}, documentation: "2つのリストを連結します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticConcatBuiltin, pureEvaluation: evaluateConcatBuiltin},
 	{name: fnUnion, module: stdlibListModule, exportName: fnUnion, parameters: []string{"first", "second"}, documentation: "重複を除きながら2つのリストを結合します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticUnionBuiltin, pureEvaluation: evaluateUnionBuiltin},
+	{name: fnFlatten, module: stdlibListModule, exportName: fnFlatten, parameters: []string{paramValues}, documentation: "リストのリストを1階層平坦化します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticFlattenBuiltin, pureEvaluation: evaluateFlattenBuiltin},
 	{name: fnReplaceAt, module: stdlibListModule, exportName: fnReplaceAt, parameters: []string{paramValues, paramIndex, paramValue}, documentation: "リストの指定位置にある要素を置き換えます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceAtBuiltin, pureEvaluation: evaluateReplaceAtBuiltin},
 	{name: fnMergeByKey, module: stdlibListModule, exportName: fnMergeByKey, parameters: []string{"existing", "overrides", paramKey}, documentation: "指定したキーを使ってマップのリストをマージします。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticMergeByKeyBuiltin, pureEvaluation: evaluateMergeByKeyBuiltin},
 	{name: fnMap, module: stdlibListModule, exportName: fnMap, parameters: []string{paramValues, "transform"}, documentation: "リストの各要素に関数を適用します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
@@ -117,8 +109,6 @@ var builtinRegistry = []builtin{
 	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, documentation: "指定したソースからManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, documentation: "指定したHelmチャートをレンダリングします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, documentation: "値にLifecycleイベントを関連付けます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
-	{name: fnParameter, module: stdlibContextModule, exportName: fnParameter, parameters: []string{"name"}, documentation: "明示的に指定された実行parameterを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContextParameter, contextEvaluation: evaluateContextParameter},
-	{name: fnIntParameter, module: stdlibContextModule, exportName: fnIntParameter, parameters: []string{"name"}, documentation: "明示的に指定された10進整数parameterをIntとして返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContextIntParameter, contextEvaluation: evaluateContextIntParameter},
 }
 
 var standardFunctions = func() map[string]struct{} {
@@ -214,9 +204,6 @@ func callRuntimeStandard(name string, arguments []RuntimeValue, names []string, 
 	if err != nil {
 		return RuntimeValue{}, err
 	}
-	if item.contextEvaluation != nil {
-		return item.contextEvaluation(ordered, state)
-	}
 	if item.pureEvaluation != nil {
 		if name == fnClone {
 			if len(ordered) != 1 {
@@ -245,42 +232,6 @@ func callRuntimeStandard(name string, arguments []RuntimeValue, names []string, 
 	}
 
 	return value, err
-}
-
-func evaluateContextParameter(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
-	if len(arguments) != 1 || arguments[0].Kind() != String {
-		return RuntimeValue{}, errors.New("context.parameter expects a String name")
-	}
-	if state == nil || state.Module == nil {
-		return RuntimeValue{}, errors.New("context.parameter requires module context")
-	}
-	name := arguments[0].Value.Text
-	value, exists := state.Module.Parameters[name]
-	if !exists {
-		return RuntimeValue{}, fmt.Errorf("parameter %q is not set; pass --parameter %s=<value>", name, name)
-	}
-
-	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: value}}, nil
-}
-
-func evaluateContextIntParameter(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
-	if len(arguments) != 1 || arguments[0].Kind() != String {
-		return RuntimeValue{}, errors.New("context.intParameter expects a String name")
-	}
-	if state == nil || state.Module == nil {
-		return RuntimeValue{}, errors.New("context.intParameter requires module context")
-	}
-	name := arguments[0].Value.Text
-	value, exists := state.Module.Parameters[name]
-	if !exists {
-		return RuntimeValue{}, fmt.Errorf("parameter %q is not set; pass --parameter %s=<value>", name, name)
-	}
-	integer, err := parseRuntimeInteger(value)
-	if err != nil {
-		return RuntimeValue{}, fmt.Errorf("context.intParameter parameter %q must be a decimal integer: %w", name, err)
-	}
-
-	return RuntimeValue{Value: runtimeValueData{Kind: Integer, Text: integer.String()}}, nil
 }
 
 func evaluateCryptoSHA256(arguments []RuntimeValue) (RuntimeValue, error) {
@@ -511,6 +462,33 @@ func evaluateConcatBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
 
 func evaluateUnionBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
 	return evaluateListCombinationBuiltin(fnUnion, arguments, true)
+}
+
+func evaluateFlattenBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 1 {
+		return RuntimeValue{}, fmt.Errorf("%s expects 1 argument", fnFlatten)
+	}
+	outer, isList := runtimeListValue(arguments[0])
+	if !isList {
+		return RuntimeValue{}, fmt.Errorf("%s expects a List of Lists", fnFlatten)
+	}
+
+	capacity := 0
+	for index, group := range outer.List {
+		items, groupIsList := runtimeListValue(group)
+		if !groupIsList {
+			return RuntimeValue{}, fmt.Errorf("%s expects each item to be a List (item %d is %s)", fnFlatten, index, kindName(group.Kind()))
+		}
+		capacity += len(items.List)
+	}
+
+	result := RuntimeValue{Value: runtimeListResultMetadata(outer), List: make([]RuntimeValue, 0, capacity)}
+	for _, group := range outer.List {
+		items, _ := runtimeListValue(group)
+		result.List = append(result.List, items.List...)
+	}
+
+	return result, nil
 }
 
 func evaluateListCombinationBuiltin(name string, arguments []RuntimeValue, deduplicate bool) (RuntimeValue, error) {

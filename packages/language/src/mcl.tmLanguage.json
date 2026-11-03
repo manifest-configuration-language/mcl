@@ -86,7 +86,7 @@
       "patterns": [
         {
           "name": "keyword.control.mcl",
-          "match": "\\b(?:as|bySchema|descendants|each|else|emit|export|fn|for|if|import|key|let|message|minMatches|node|require|requireDescendants|requireEach|rule|schema|select|type|using|validate|where|with|without)\\b"
+          "match": "\\b(?:as|bySchema|descendants|each|else|emit|export|fn|for|if|import|key|let|message|minMatches|node|param|require|requireDescendants|requireEach|rule|schema|select|text|type|using|validate|where|with|without)\\b"
         },
         {
           "name": "keyword.operator.mcl",

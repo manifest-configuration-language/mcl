@@ -57,6 +57,7 @@ type LetDeclaration struct {
 	NodeMetadata
 	Name       string
 	Exported   bool
+	Parameter  bool
 	Expression Expr
 	Annotation *TypeExpr
 	NameSpan   SourceSpan
@@ -84,6 +85,7 @@ type ValidateStatement struct {
 
 type FunctionDefinition struct {
 	Parameters []RuleParameter
+	Locals     []LetDeclaration
 	ReturnType *TypeExpr
 	Expression Expr
 }

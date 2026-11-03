@@ -30,7 +30,12 @@ func functionBodySpan(definition *FunctionDefinition) SourceSpan {
 		return SourceSpan{}
 	}
 
-	return expressionTreeSpan(definition.Expression)
+	span := expressionTreeSpan(definition.Expression)
+	for _, local := range definition.Locals {
+		span = mergeASTSpans(span, local.Span)
+	}
+
+	return span
 }
 
 func expressionTreeSpan(expression Expr) SourceSpan {

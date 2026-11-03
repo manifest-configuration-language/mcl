@@ -226,7 +226,7 @@ func (p *Parser) parseDynamicKeyTokens(keySpan SourceSpan, tokens []sourceToken)
 	if !hasKey || !hasOpen {
 		return nil, false, nil
 	}
-	if keyToken.lexeme.kind != sourceLexemeIdentifier || openToken.lexeme.kind != sourceLexemeSymbol || p.sourceTokenLexemeText(keyToken) != "key" || p.sourceTokenLexemeText(openToken) != "(" || keyToken.span.Start != keySpan.Start || keyToken.span.End != openToken.span.Start {
+	if keyToken.lexeme.kind != sourceLexemeIdentifier || openToken.lexeme.kind != sourceLexemeSymbol || p.sourceTokenLexemeText(keyToken) != "key" || p.sourceTokenLexemeText(openToken) != "(" || keyToken.span.Start != keySpan.Start {
 		return nil, false, nil
 	}
 	depth := 1

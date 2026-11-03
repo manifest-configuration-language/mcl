@@ -22,12 +22,7 @@ export type Request = {
   oldPath?: ProjectPath;
   newPath?: ProjectPath;
   entrypoint?: ProjectPath2;
-  /**
-   * Runtime evaluation parameters. Only check, evaluate, and render operations accept parameters.
-   */
-  parameters?: {
-    [k: string]: string;
-  };
+  parameters?: RequestParameters;
   /**
    * UTF-8 entrypoint source, limited by the runtime.
    */
@@ -57,6 +52,12 @@ export type LintResult = LintDiagnostic[];
 export interface CompletionPosition {
   line: number;
   character: number;
+}
+/**
+ * Typed JSON runtime parameter values. Only check, evaluate, and render operations accept parameters.
+ */
+export interface RequestParameters {
+  [k: string]: unknown;
 }
 export interface Response {
   requestId: number;

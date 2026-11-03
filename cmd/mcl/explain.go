@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
-func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string, parameters map[string]string) error {
+func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string, parameters map[string]jsontext.Value) error {
 	if apiVersion == "" || kind == "" || name == "" {
 		return errors.New("explain requires --api-version, --kind, and --name")
 	}

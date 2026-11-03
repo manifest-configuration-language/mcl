@@ -2,6 +2,7 @@ package mcl
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"io/fs"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
@@ -79,7 +80,7 @@ func EvaluateFileContext(ctx context.Context, path string) (Bundle, error) {
 }
 
 // EvaluateFileWithParametersContext evaluates an MCL file with explicit runtime parameters.
-func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) (Bundle, error) {
+func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) (Bundle, error) {
 	return engine.EvaluateFileWithParametersContext(ctx, path, parameters)
 }
 
@@ -94,7 +95,7 @@ func EvaluateFileForOperationContext(ctx context.Context, path, operation string
 }
 
 // EvaluateFileForOperationWithParametersContext evaluates an MCL file for an operation with explicit runtime parameters.
-func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, operation string, parameters map[string]string) (Bundle, error) {
+func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, operation string, parameters map[string]jsontext.Value) (Bundle, error) {
 	return engine.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
 }
 
@@ -106,7 +107,7 @@ func UpdateFileContext(ctx context.Context, path string) error {
 }
 
 // UpdateFileWithParametersContext updates dependencies after evaluating an MCL file with explicit runtime parameters.
-func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) error {
+func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) error {
 	return engine.UpdateFileWithParametersContext(ctx, path, parameters)
 }
 
@@ -140,7 +141,7 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 }
 
 // EvaluateProjectSourceWithParametersContext evaluates source from a project filesystem with explicit runtime parameters.
-func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot, entryPath, source string, files fs.FS, overlays, parameters map[string]string) (Bundle, error) {
+func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot, entryPath, source string, files fs.FS, overlays map[string]string, parameters map[string]jsontext.Value) (Bundle, error) {
 	return engine.EvaluateProjectSourceWithParametersContext(ctx, projectRoot, entryPath, source, files, overlays, parameters)
 }
 

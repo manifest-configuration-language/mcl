@@ -3,17 +3,18 @@
 Statement {
   ImportDeclaration |
   TypeDeclaration |
+  ParamDeclaration |
   LetDeclaration |
   EmitStatement |
-  ValidateStatement |
-  ExpressionStatement
+  ValidateStatement
 }
 
 BlockStatement { TypeRecordDeclaration | LetBlockDeclaration | LetNodeDeclaration | LetOverlayDeclaration | LetRemovalDeclaration | RuleDeclaration }
 
-ImportDeclaration { Export? kw<"import"> QuotedString kw<"as"> Identifier }
+ImportDeclaration { Export? kw<"import"> kw<"text">? QuotedString kw<"as"> Identifier }
 Export { kw<"export"> }
 TypeDeclaration { Export? kw<"type"> Identifier TypeParameterList? "=" TypeExpression }
+ParamDeclaration { kw<"param"> Identifier ":" TypeExpression ("=" Expression)? }
 TypeRecordDeclaration { Export? kw<"type"> Identifier TypeParameterList? "=" lineEnd TypeRecordBlock }
 LetDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" Expression }
 LetBlockDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" lineEnd Block }
@@ -21,8 +22,10 @@ LetNodeDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" NodeExpres
 LetOverlayDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" OverlayExpression }
 LetRemovalDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" RemovalExpression }
 TypeAnnotation { ":" TypeExpression }
-FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" (("->" | ":") TypeExpression)? "=" FunctionBody }
-FunctionBody { Expression lineEnd | lineEnd Block }
+FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" ("->" TypeExpression)? ("=" FunctionBodyExpression lineEnd | ":" lineEnd FunctionBlock) }
+FunctionBlock { indent FunctionLocalDeclaration* FunctionBodyExpression lineEnd (dedent | eof) }
+FunctionLocalDeclaration { kw<"let"> Identifier TypeAnnotation? "=" (FunctionBodyExpression lineEnd | lineEnd Block) }
+FunctionBodyExpression { NodeExpression | OverlayExpression | RemovalExpression | Expression }
 TypeParameterList { "<" Identifier ("," Identifier)* ","? ">" }
 ParameterList { Parameter ("," Parameter)* ","? }
 Parameter { Identifier TypeAnnotation? }
@@ -36,14 +39,13 @@ RuleReference { Identifier ("." Identifier)* }
 DescendantsQuery { kw<"descendants"> "(" kw<"output"> "," (TypeExpression | NamedQuerySelector) ("," kw<"minMatches"> "=" Number)? ")" }
 NamedQuerySelector { kw<"where"> "=" LambdaExpression | kw<"select"> "=" BySchemaSelector }
 BySchemaSelector { kw<"bySchema"> "(" TypeExpression ")" }
-ExpressionStatement { Expression }
 
 Block { indent BlockLine+ (dedent | eof) }
 BlockLine { MapEntry | SequenceItem | RequireStatement | IfExpression | ForExpression | Expression lineEnd }
 MapEntry { MapEntryKey ":" (Expression lineEnd | lineEnd Block | lineEnd) }
 MapEntryKey { DynamicMapKey | MapKey }
 DynamicMapKey { kw<"key"> "(" Expression ")" }
-MapKey { Identifier | MapKeyword | QuotedString | Number }
+MapKey { Identifier | MapKeyword | QuotedString }
 SequenceItem { ListMarker ((MapEntryKey ":" Expression) | Expression)? (lineEnd Block | lineEnd) }
 TypeRecordBlock { indent TypeField+ (dedent | eof) }
 TypeField { MapKey "?"? ":" TypeExpression lineEnd }
@@ -128,7 +130,7 @@ lineEnd { newline | eof }
 kw<term> { @specialize[@name={term}]<Identifier, term> }
 
 MapKeyword {
-  kw<"import"> | kw<"as"> | kw<"export"> | kw<"type"> | kw<"let"> | kw<"fn"> | kw<"rule"> | kw<"emit"> |
+  kw<"import"> | kw<"as"> | kw<"export"> | kw<"type"> | kw<"param"> | kw<"let"> | kw<"fn"> | kw<"rule"> | kw<"emit"> |
   kw<"validate"> | kw<"require"> | kw<"message"> | kw<"using"> | kw<"in"> | kw<"each"> | kw<"descendants"> |
   kw<"where"> | kw<"select"> | kw<"bySchema"> | kw<"minMatches"> | kw<"requireEach"> | kw<"requireDescendants"> |
   kw<"and"> | kw<"or"> | kw<"not"> | kw<"with"> | kw<"without"> | kw<"output"> | kw<"Any"> |

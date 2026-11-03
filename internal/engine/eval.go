@@ -134,7 +134,11 @@ func LintAST(module ModuleAST) []Diagnostic {
 			definitions[declaration.Name] = lintDefinition{kind: "rule", metadata: declaration.NodeMetadata, nameSpan: declaration.NameSpan}
 			rules[declaration.Name] = declaration
 		case *LetDeclaration:
-			definitions[declaration.Name] = lintDefinition{kind: "value", metadata: declaration.NodeMetadata, nameSpan: declaration.NameSpan}
+			kind := "value"
+			if declaration.Parameter {
+				kind = "parameter"
+			}
+			definitions[declaration.Name] = lintDefinition{kind: kind, metadata: declaration.NodeMetadata, nameSpan: declaration.NameSpan}
 		case *FunctionDeclaration:
 			definitions[declaration.Name] = lintDefinition{kind: "function", metadata: declaration.NodeMetadata, nameSpan: declaration.NameSpan}
 		case *ImportDeclaration:
@@ -163,6 +167,12 @@ func LintAST(module ModuleAST) []Diagnostic {
 				}
 				functionBody := &LambdaExpr{Parameters: parameters, Body: node.Function.Expression}
 				dependencies[node.Name] = expressionReferences(functionBody)
+				for _, local := range node.Function.Locals {
+					dependencies[node.Name] = append(dependencies[node.Name], expressionReferences(local.Expression)...)
+					if local.Annotation != nil {
+						dependencies[node.Name] = append(dependencies[node.Name], typeReferenceNames(semanticTypeFromSyntax(*local.Annotation))...)
+					}
+				}
 				for _, parameter := range node.Function.Parameters {
 					dependencies[node.Name] = append(dependencies[node.Name], typeReferenceNames(semanticTypeFromSyntax(parameter.Type))...)
 				}
@@ -412,6 +422,9 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 	if err := validateDefinitionCyclesAST(module); err != nil {
 		return nil, nil, err
 	}
+	if err := validateParameterDeclarations(module, state, entry); err != nil {
+		return nil, nil, err
+	}
 
 	bundle := &RuntimeBundle{}
 	var exports []RuntimeEntry
@@ -427,6 +440,13 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 		case *TypeDeclaration, *ImportDeclaration:
 			continue
 		case *LetDeclaration:
+			if declaration.Parameter {
+				if err := evaluateParameterDeclaration(declaration, state); err != nil {
+					return nil, nil, err
+				}
+
+				continue
+			}
 			if _, exists := state.Environment[declaration.Name]; exists {
 				return nil, nil, fmt.Errorf("%q is already defined", declaration.Name)
 			}
@@ -501,6 +521,39 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 				parameterTypes[index] = parameterType
 				bindings[parameter.Name] = TypeAnalysis{Type: parameterType}
 			}
+			locals := make([]typedLocalBinding, 0, len(declaration.Function.Locals))
+			for _, local := range declaration.Function.Locals {
+				var annotation *ResolvedType
+				if local.Annotation != nil {
+					resolved, err := resolveTypeFromSyntax(*local.Annotation, state)
+					if err != nil {
+						return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Annotation.Span, err)
+					}
+					annotation = &resolved
+				}
+				analysis, known, err := inferStaticExprAnalysisWithExpected(local.Expression, annotation, bindings, state.Types)
+				if err != nil {
+					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), err)
+				}
+				if !known {
+					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("cannot infer local variable %q", local.Name))
+				}
+				typed, supported, err := typedExpressionFromKnownAnalysis(local.Expression, state, analysis, true)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !supported {
+					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("expression type %T is not supported by the typed evaluator", local.Expression))
+				}
+				if annotation != nil {
+					if staticTypeCompatibility(analysis.Type, *annotation, state.Types).isDefinitelyIncompatible() {
+						return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("local %q does not match its declared type", local.Name))
+					}
+					analysis = preserveBundleProvenance(analysis, *annotation, state.Types)
+				}
+				bindings[local.Name] = analysis
+				locals = append(locals, typedLocalBinding{Name: local.Name, Expression: typed, Annotation: annotation, Span: local.Span})
+			}
 			bodyType := *signature.Type.ReturnType
 			bodyType.Span = SourceSpan{}
 			body, supported := typeExpression(declaration.Function.Expression, bodyType, typedEvaluationContext{
@@ -513,7 +566,7 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			lambdaTyping := &LambdaTyping{ParameterTypes: parameterTypes, ReturnType: signature.Type.ReturnType, TypeScope: maps.Clone(bindings)}
 			lambda := RuntimeValue{
 				Value:  runtimeValueData{Kind: Lambda, Span: functionBodySpan(declaration.Function), SourcePath: declaration.SourcePath},
-				Lambda: &typedLambda{Parameters: parameterNames, ParameterSpans: parameterSpans, Body: body, Scope: maps.Clone(state.Environment), ScopeSpan: functionBodySpan(declaration.Function), Typing: lambdaTyping, ModuleContext: state.Module},
+				Lambda: &typedLambda{Parameters: parameterNames, ParameterSpans: parameterSpans, Locals: locals, Body: body, Scope: maps.Clone(state.Environment), ScopeSpan: functionBodySpan(declaration.Function), Typing: lambdaTyping, ModuleContext: state.Module},
 			}
 			lambda.Lambda.Scope[declaration.Name] = lambda
 			state.Environment[declaration.Name] = lambda
@@ -883,6 +936,10 @@ func astNodeKind(node ASTNode) string {
 	case *FunctionDeclaration:
 		return statementFn
 	case *LetDeclaration:
+		if node.Parameter {
+			return statementParam
+		}
+
 		return statementLet
 	case *EmitStatement:
 		return statementEmit
@@ -982,6 +1039,30 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 			return TypeAnalysis{}, fmt.Errorf("return type: %w", err)
 		}
 		bindings[name] = signature
+	}
+	for _, local := range definition.Locals {
+		var expected *ResolvedType
+		if local.Annotation != nil {
+			resolved, err := resolveTypeFromSyntax(*local.Annotation, state)
+			if err != nil {
+				return TypeAnalysis{}, fmt.Errorf("local %q: %w", local.Name, err)
+			}
+			expected = &resolved
+		}
+		analysis, known, err := inferStaticExprAnalysisWithExpected(local.Expression, expected, bindings, types)
+		if err != nil {
+			return TypeAnalysis{}, fmt.Errorf("local %q: %w", local.Name, err)
+		}
+		if !known {
+			return TypeAnalysis{}, fmt.Errorf("local %q type cannot be inferred", local.Name)
+		}
+		if expected != nil {
+			if staticTypeCompatibility(analysis.Type, *expected, types).isDefinitelyIncompatible() {
+				return TypeAnalysis{}, fmt.Errorf("local %q does not match its declared type", local.Name)
+			}
+			analysis = preserveBundleProvenance(analysis, *expected, types)
+		}
+		bindings[local.Name] = analysis
 	}
 	inferredAnalysis, known, err := inferStaticExprAnalysisWithExpected(definition.Expression, returnType, bindings, types)
 	if err != nil {

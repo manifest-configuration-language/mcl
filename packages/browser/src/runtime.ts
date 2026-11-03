@@ -38,6 +38,23 @@ import type {
   Error as ProtocolError,
 } from "./protocol.js";
 
+function isJSONValue(value: unknown, ancestors = new Set<object>()): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || ancestors.has(value)) return false;
+  if (!Array.isArray(value)) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  }
+  ancestors.add(value);
+  const valid = Array.isArray(value)
+    ? value.every((item) => isJSONValue(item, ancestors))
+    : Object.values(value).every((item) => isJSONValue(item, ancestors));
+  ancestors.delete(value);
+  return valid;
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -579,7 +596,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     source: string,
     requestOptions: RequestOptions & {
       entrypoint?: string;
-      parameters?: Record<string, string>;
+      parameters?: Record<string, unknown>;
       position?: { line: number; character: number };
       newName?: string;
       oldPath?: string;
@@ -594,11 +611,11 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       }
       const parameters = requestOptions.parameters as unknown;
       if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
-        throw new TypeError("parameters must be an object with string values");
+        throw new TypeError("parameters must be an object with JSON values");
       }
       for (const value of Object.values(parameters)) {
-        if (typeof value !== "string") {
-          throw new TypeError("parameters must be an object with string values");
+        if (!isJSONValue(value)) {
+          throw new TypeError("parameters must be an object with JSON values");
         }
       }
     }
@@ -735,7 +752,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       operation: MclOperation,
       requestOptions: RequestOptions & {
         entrypoint?: string;
-        parameters?: Record<string, string>;
+        parameters?: Record<string, unknown>;
         position?: { line: number; character: number };
         newName?: string;
         oldPath?: string;

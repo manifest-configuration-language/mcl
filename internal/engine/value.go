@@ -65,7 +65,6 @@ type ModuleContext struct {
 	filesystem    *projectFilesystem
 	Dependencies  *dependency.Lock
 	HelmOperation string
-	Parameters    map[string]string
 	Analysis      *TypeAnalysisContext
 }
 

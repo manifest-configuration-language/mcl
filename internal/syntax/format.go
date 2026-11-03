@@ -308,10 +308,18 @@ func (cst *formatterCST) addSyntaxLabels(module ModuleAST) {
 		case *FunctionDeclaration:
 			cst.addStatementSyntaxLabel(node.Span, "fn")
 			if node.Function != nil {
+				for _, local := range node.Function.Locals {
+					cst.addStatementSyntaxLabel(local.Span, "let")
+					cst.addExpressionLabels(local.Expression, 0)
+				}
 				cst.addExpressionLabels(node.Function.Expression, 0)
 			}
 		case *LetDeclaration:
-			cst.addStatementSyntaxLabel(node.Span, "let")
+			kind := "let"
+			if node.Parameter {
+				kind = "param"
+			}
+			cst.addStatementSyntaxLabel(node.Span, kind)
 			cst.addExpressionLabels(node.Expression, 0)
 		case *EmitStatement:
 			cst.addStatementSyntaxLabel(node.Span, "emit")

@@ -3,10 +3,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -84,25 +87,29 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 	if err := json.Unmarshal([]byte(raw), &rawRequest); err != nil {
 		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
 	}
+	var parameters map[string]jsontext.Value
 	if parameterJSON, exists := rawRequest["parameters"]; exists {
 		var operation string
 		if err := json.Unmarshal(rawRequest["operation"], &operation); err != nil || (operation != "check" && operation != "evaluate" && operation != "render") {
 			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters are only valid for check, evaluate, and render operations"}})
 		}
-		var parameters map[string]json.RawMessage
-		trimmedParameters := strings.TrimSpace(string(parameterJSON))
-		if len(trimmedParameters) == 0 || trimmedParameters[0] != '{' || json.Unmarshal(parameterJSON, &parameters) != nil {
-			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters must be an object with string values"}})
+		decodedParameters, err := decodeParameters(parameterJSON)
+		if err != nil {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters must be an object of JSON values"}})
 		}
-		for _, value := range parameters {
-			var parameter string
-			if err := json.Unmarshal(value, &parameter); err != nil || strings.TrimSpace(string(value)) == "null" {
-				return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters must be an object with string values"}})
-			}
+		parameters = decodedParameters
+	}
+	inputJSON := []byte(raw)
+	if _, hasParameters := rawRequest["parameters"]; hasParameters {
+		delete(rawRequest, "parameters")
+		var err error
+		inputJSON, err = json.Marshal(rawRequest)
+		if err != nil {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
 		}
 	}
 	var input request
-	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+	if err := json.Unmarshal(inputJSON, &input); err != nil {
 		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
 	}
 	var requestID uint64
@@ -185,7 +192,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 				return marshal(result)
 			}
 		}
-		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint, input.Parameters)
+		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint, parameters)
 		if evalErr != nil {
 			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, evalErr)
 			return marshal(result)
@@ -284,11 +291,49 @@ func projectFilesForSession(projectID, entrypoint, source string) (*projectFiles
 	return activeProject, nil
 }
 
-func evaluate(source string, files fs.FS, entrypoint string, parameters map[string]string) (engine.Bundle, error) {
+func evaluate(source string, files fs.FS, entrypoint string, parameters map[string]jsontext.Value) (engine.Bundle, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
 	defer cancel()
 
 	return engine.EvaluateProjectSourceWithParametersContext(ctx, browserProjectRoot(), entrypoint, source, files, nil, parameters)
+}
+
+func decodeParameters(raw []byte) (map[string]jsontext.Value, error) {
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
+	opening, err := decoder.ReadToken()
+	if err != nil || opening.Kind() != jsontext.KindBeginObject {
+		return nil, errors.New("parameters must be an object")
+	}
+	parameters := make(map[string]jsontext.Value)
+	for decoder.PeekKind() != jsontext.KindEndObject {
+		key, err := decoder.ReadToken()
+		if err != nil {
+			return nil, fmt.Errorf("read parameter name: %w", err)
+		}
+		if key.Kind() != jsontext.KindString {
+			return nil, errors.New("parameter names must be strings")
+		}
+		name := key.String()
+		if _, exists := parameters[name]; exists {
+			return nil, fmt.Errorf("parameter %q was provided more than once", name)
+		}
+		value, err := decoder.ReadValue()
+		if err != nil {
+			return nil, fmt.Errorf("read parameter %q: %w", name, err)
+		}
+		parameters[name] = value.Clone()
+	}
+	if _, err := decoder.ReadToken(); err != nil {
+		return nil, fmt.Errorf("read parameter object end: %w", err)
+	}
+	if _, err := decoder.ReadValue(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("parameters contain more than one JSON value")
+		}
+		return nil, fmt.Errorf("read after parameter object: %w", err)
+	}
+
+	return parameters, nil
 }
 
 func copyBinaryFiles(value js.Value, source string, files map[string]fileInput) (map[string][]byte, error) {

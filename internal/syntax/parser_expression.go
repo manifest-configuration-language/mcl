@@ -155,19 +155,9 @@ func (parser *expressionParser) parsePrefix(stops map[string]bool) (Expr, error)
 
 		return parser.parsePostfix(expression, stops, true)
 	case lexeme.kind == sourceLexemeSymbol && text == "[":
-		closing, ok := parser.take()
-		if !ok || parser.lexemeText(closing) != "]" {
-			return nil, errors.New("only an empty list can be written inline")
-		}
-
-		return &EmptyListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(start, closing.end)}}, nil
+		return parser.parseInlineList(lexeme)
 	case lexeme.kind == sourceLexemeSymbol && text == "{":
-		closing, ok := parser.take()
-		if !ok || parser.lexemeText(closing) != "}" {
-			return nil, errors.New("only an empty map can be written inline")
-		}
-
-		return &EmptyMapExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(start, closing.end)}}, nil
+		return parser.parseInlineMap(lexeme)
 	case lexeme.kind == sourceLexemeLiteral || lexeme.kind == sourceLexemeNumber:
 		expression, err := parseScalarExpression(text)
 		if err != nil {
@@ -205,6 +195,113 @@ func (parser *expressionParser) parsePrefix(stops map[string]bool) (Expr, error)
 		return parser.parseRootPath(lexeme)
 	default:
 		return nil, fmt.Errorf("unsupported expression %q", parser.source.Text(start, lexeme.end))
+	}
+}
+
+func (parser *expressionParser) parseInlineList(open sourceLexeme) (Expr, error) {
+	if closing, ok := parser.peek(0); ok && parser.lexemeText(closing) == "]" {
+		parser.take()
+
+		return &EmptyListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, closing.end)}}, nil
+	}
+
+	items := make([]Expr, 0, 2)
+	for {
+		item, err := parser.parse(1, map[string]bool{",": true, "]": true})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+		next, ok := parser.take()
+		if !ok {
+			return nil, errors.New("unmatched opening bracket")
+		}
+		switch parser.lexemeText(next) {
+		case "]":
+			return &ListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, next.end)}, Items: items}, nil
+		case ",":
+			if closing, ok := parser.peek(0); ok && parser.lexemeText(closing) == "]" {
+				parser.take()
+
+				return &ListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, closing.end)}, Items: items}, nil
+			}
+		default:
+			return nil, errors.New("expected ',' or ']' after list item")
+		}
+	}
+}
+
+func (parser *expressionParser) parseInlineMap(open sourceLexeme) (Expr, error) {
+	if closing, ok := parser.peek(0); ok && parser.lexemeText(closing) == "}" {
+		parser.take()
+
+		return &EmptyMapExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, closing.end)}}, nil
+	}
+
+	entries := make([]ExprMapEntry, 0, 2)
+	for {
+		keyToken, ok := parser.peek(0)
+		if !ok {
+			return nil, errors.New("unmatched opening brace")
+		}
+		keyText := parser.lexemeText(keyToken)
+		entry := ExprMapEntry{KeySpan: parser.source.PhysicalSpan(keyToken.start, keyToken.end)}
+		switch keyToken.kind {
+		case sourceLexemeIdentifier:
+			next, hasNext := parser.peek(1)
+			if keyText == "key" && hasNext && parser.lexemeText(next) == "(" {
+				keyExpression, err := parser.parse(1, map[string]bool{":": true})
+				if err != nil {
+					return nil, err
+				}
+				call, ok := keyExpression.(*CallExpr)
+				if !ok {
+					return nil, errors.New("dynamic map keys must use key(expression)")
+				}
+				reference, isKey := call.Callee.(*ReferenceExpr)
+				if !isKey || reference.Name != "key" || len(call.Arguments) != 1 || call.ArgumentNames[0] != "" {
+					return nil, errors.New("dynamic map keys must use key(expression)")
+				}
+				entry.KeyExpr = call.Arguments[0]
+			} else {
+				parser.take()
+				entry.Key = keyText
+			}
+		case sourceLexemeLiteral:
+			parser.take()
+			key, err := strconv.Unquote(keyText)
+			if err != nil {
+				return nil, fmt.Errorf("invalid map key: %w", err)
+			}
+			entry.Key = key
+		default:
+			return nil, errors.New("map keys must be identifiers, quoted strings, or key(expression)")
+		}
+		if colon, ok := parser.take(); !ok || parser.lexemeText(colon) != ":" {
+			return nil, errors.New("expected ':' after map key")
+		}
+		value, err := parser.parse(1, map[string]bool{",": true, "}": true})
+		if err != nil {
+			return nil, err
+		}
+		entry.Value = value
+		entries = append(entries, entry)
+		next, ok := parser.take()
+		if !ok {
+			return nil, errors.New("unmatched opening brace")
+		}
+		switch parser.lexemeText(next) {
+		case "}":
+			return &MapExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, next.end)}, Entries: entries}, nil
+		case ",":
+			if closing, ok := parser.peek(0); ok && parser.lexemeText(closing) == "}" {
+				parser.take()
+
+				return &MapExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, closing.end)}, Entries: entries}, nil
+			}
+		default:
+			return nil, errors.New("expected ',' or '}' after map entry")
+		}
 	}
 }
 

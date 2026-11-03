@@ -280,6 +280,9 @@ func DeclarationHover(node syntax.ASTNode, source string) string {
 		return prefix + declaration.Name + " = " + TypeText(source, declaration.TypeSpec)
 	case *syntax.LetDeclaration:
 		prefix := "let "
+		if declaration.Parameter {
+			prefix = "param "
+		}
 		if declaration.Exported {
 			prefix = "export " + prefix
 		}

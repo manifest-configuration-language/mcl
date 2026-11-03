@@ -264,36 +264,6 @@ func inferStaticLifecycleAttachBuiltin(_ []Expr, argumentTypes []ResolvedType, k
 	return argumentTypes[0], true, nil
 }
 
-func inferStaticContextParameter(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
-	if len(argumentTypes) != 1 || len(known) != 1 {
-		return ResolvedType{}, false, nil
-	}
-	if known[0] {
-		stringType := ResolvedType{Name: typeString}
-		matches, compatible := staticTypeAssignable(argumentTypes[0], stringType, types)
-		if compatible && !matches {
-			return ResolvedType{}, false, errors.New("context.parameter name must be a String")
-		}
-	}
-
-	return ResolvedType{Name: typeString}, true, nil
-}
-
-func inferStaticContextIntParameter(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
-	if len(argumentTypes) != 1 || len(known) != 1 {
-		return ResolvedType{}, false, nil
-	}
-	if known[0] {
-		stringType := ResolvedType{Name: typeString}
-		matches, compatible := staticTypeAssignable(argumentTypes[0], stringType, types)
-		if compatible && !matches {
-			return ResolvedType{}, false, errors.New("context.intParameter name must be a String")
-		}
-	}
-
-	return ResolvedType{Name: typeInt}, true, nil
-}
-
 func inferStaticCryptoSHA256(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	if len(argumentTypes) != 2 || len(known) != 2 {
 		return ResolvedType{}, false, nil
@@ -415,6 +385,22 @@ func inferStaticConcatBuiltin(_ []Expr, argumentTypes []ResolvedType, known []bo
 
 func inferStaticUnionBuiltin(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	return inferStaticListCombinationBuiltin(fnUnion, argumentTypes, known, types)
+}
+
+func inferStaticFlattenBuiltin(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 1 || len(known) != 1 || !known[0] {
+		return ResolvedType{}, false, nil
+	}
+	groups, isList := staticListElement(argumentTypes[0], types)
+	if !isList {
+		return ResolvedType{}, false, fmt.Errorf("%s expects a List of Lists", fnFlatten)
+	}
+	element, isList := staticListElement(groups, types)
+	if !isList {
+		return ResolvedType{}, false, fmt.Errorf("%s expects a List of Lists", fnFlatten)
+	}
+
+	return ResolvedType{Name: typeList, Element: &element}, true, nil
 }
 
 func inferStaticListCombinationBuiltin(function string, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {

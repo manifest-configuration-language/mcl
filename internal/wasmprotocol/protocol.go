@@ -285,9 +285,9 @@ type Request struct {
 	// Operation corresponds to the JSON schema field "operation".
 	Operation RequestOperation `json:"operation" yaml:"operation" mapstructure:"operation"`
 
-	// Runtime evaluation parameters. Only check, evaluate, and render operations
-	// accept parameters.
-	Parameters RequestParameters `json:"parameters,omitempty,omitzero" yaml:"parameters,omitempty" mapstructure:"parameters,omitempty"`
+	// Typed JSON runtime parameter values. Only check, evaluate, and render
+	// operations accept parameters.
+	Parameters *RequestParameters `json:"parameters,omitempty,omitzero" yaml:"parameters,omitempty" mapstructure:"parameters,omitempty"`
 
 	// Position corresponds to the JSON schema field "position".
 	Position *CompletionPosition `json:"position,omitempty,omitzero" yaml:"position,omitempty" mapstructure:"position,omitempty"`
@@ -320,9 +320,7 @@ const RequestOperationRename RequestOperation = "rename"
 const RequestOperationRenameFileImports RequestOperation = "renameFileImports"
 const RequestOperationRender RequestOperation = "render"
 
-// Runtime evaluation parameters. Only check, evaluate, and render operations
-// accept parameters.
-type RequestParameters map[string]string
+type RequestParameters map[string]any
 
 type Response struct {
 	// Error corresponds to the JSON schema field "error".

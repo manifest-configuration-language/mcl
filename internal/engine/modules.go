@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -49,7 +50,7 @@ type moduleLoader struct {
 	runtimeTypes  map[string]map[string]ResolvedType
 	dependencies  *dependency.Lock
 	operation     string
-	parameters    map[string]string
+	parameters    map[string]jsontext.Value
 	overlays      map[string]string
 	loadedModules map[string]struct{}
 	textImports   map[string]string
@@ -82,7 +83,7 @@ func EvaluateFileContext(ctx context.Context, path string) (Bundle, error) {
 }
 
 // EvaluateFileWithParametersContext evaluates an MCL file with explicit runtime parameters.
-func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) (Bundle, error) {
+func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) (Bundle, error) {
 	return evaluateFileWithParameters(ctx, path, false, "", parameters)
 }
 
@@ -97,7 +98,7 @@ func EvaluateFileForOperationContext(ctx context.Context, path, operation string
 }
 
 // EvaluateFileForOperationWithParametersContext evaluates an MCL file for an operation with explicit runtime parameters.
-func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, operation string, parameters map[string]string) (Bundle, error) {
+func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, operation string, parameters map[string]jsontext.Value) (Bundle, error) {
 	if !validOperation(operation) {
 		return Bundle{}, fmt.Errorf("unknown operation %q", operation)
 	}
@@ -115,7 +116,7 @@ func UpdateFileContext(ctx context.Context, path string) error {
 }
 
 // UpdateFileWithParametersContext updates dependencies after evaluating an MCL file with explicit runtime parameters.
-func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]string) error {
+func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) error {
 	_, err := evaluateFileWithParameters(ctx, path, true, "", parameters)
 
 	return err
@@ -1030,11 +1031,11 @@ func dependentModuleSourcesWithContext(ctx context.Context, target string, sourc
 	return result, nil
 }
 
-func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]string) (Bundle, error) {
+func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value) (Bundle, error) {
 	return evaluateFileWithFilesystem(ctx, path, update, operation, parameters, nil)
 }
 
-func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, parameters map[string]string, files *projectFilesystem) (Bundle, error) {
+func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value, files *projectFilesystem) (Bundle, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
 	}
@@ -1160,7 +1161,7 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 }
 
 // EvaluateProjectSourceWithParametersContext evaluates source from a project filesystem with explicit runtime parameters.
-func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot, entryPath, source string, files fs.FS, overlays, parameters map[string]string) (Bundle, error) {
+func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot, entryPath, source string, files fs.FS, overlays map[string]string, parameters map[string]jsontext.Value) (Bundle, error) {
 	if ctx == nil {
 		return Bundle{}, errors.New("evaluation context is required")
 	}
@@ -1191,7 +1192,7 @@ func evaluateSourceWithFilesystem(ctx context.Context, path, source string, over
 	return evaluateSourceWithFilesystemAndParameters(ctx, path, source, overlays, files, nil)
 }
 
-func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem, parameters map[string]string) (Bundle, []string, error) {
+func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem, parameters map[string]jsontext.Value) (Bundle, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, nil, err
 	}
@@ -1332,8 +1333,11 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Parameters: maps.Clone(loader.parameters), Analysis: loader.analysis}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis}
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
+	if entry {
+		state.Parameters = maps.Clone(loader.parameters)
+	}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)
 		if !ok {

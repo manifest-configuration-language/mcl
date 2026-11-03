@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -257,7 +258,7 @@ func newRenderCommand() *cobra.Command {
 	command.Flags().String("operation", "", "operation to render")
 	command.Flags().String("output-dir", "", "directory for operation output files")
 	command.Flags().String("format", "yaml", "output format (yaml or json)")
-	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 
 	return command
 }
@@ -279,7 +280,7 @@ func newCheckCommand() *cobra.Command {
 		},
 	}
 	command.Flags().String("operation", "", "operation to check")
-	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 
 	return command
 }
@@ -313,7 +314,7 @@ func newExplainCommand() *cobra.Command {
 	command.Flags().String("phase", "main", "lifecycle phase to inspect")
 	command.Flags().String("operation", "", "operation to inspect")
 	command.Flags().String("path", "", "JSON Pointer within the resource")
-	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 
 	return command
 }
@@ -335,7 +336,7 @@ func newDiffCommand() *cobra.Command {
 		},
 	}
 	command.Flags().String("operation", "", "operation to compare")
-	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 
 	return command
 }
@@ -393,7 +394,7 @@ func newUpdateCommand() *cobra.Command {
 			return mcl.UpdateFileWithParametersContext(command.Context(), path, parameters)
 		},
 	}
-	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 
 	return command
 }
@@ -459,17 +460,21 @@ func maximumArgs(count int, message string) cobra.PositionalArgs {
 	}
 }
 
-func parseParameters(values []string) (map[string]string, error) {
-	parameters := make(map[string]string, len(values))
+func parseParameters(values []string) (map[string]jsontext.Value, error) {
+	parameters := make(map[string]jsontext.Value, len(values))
 	for _, value := range values {
 		name, parameterValue, found := strings.Cut(value, "=")
 		if !found || name == "" {
-			return nil, fmt.Errorf("invalid parameter %q; expected name=value", value)
+			return nil, fmt.Errorf("invalid parameter %q; expected name=<JSON value>", value)
 		}
 		if _, exists := parameters[name]; exists {
 			return nil, fmt.Errorf("parameter %q was provided more than once", name)
 		}
-		parameters[name] = parameterValue
+		jsonValue := jsontext.Value(parameterValue)
+		if !jsonValue.IsValid() {
+			return nil, fmt.Errorf("invalid JSON value for parameter %q", name)
+		}
+		parameters[name] = jsonValue.Clone()
 	}
 
 	return parameters, nil
@@ -524,7 +529,7 @@ func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, d
 	printSourceLine(line, column, lineText)
 }
 
-func diffCommand(ctx context.Context, beforePath, afterPath, operation string, parameters map[string]string) error {
+func diffCommand(ctx context.Context, beforePath, afterPath, operation string, parameters map[string]jsontext.Value) error {
 	evaluate := func(path string) (mcl.Bundle, error) {
 		if operation != "" {
 			return mcl.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
@@ -570,7 +575,7 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string, p
 	return nil
 }
 
-func checkCommand(ctx context.Context, path, operation string, parameters map[string]string) error {
+func checkCommand(ctx context.Context, path, operation string, parameters map[string]jsontext.Value) error {
 	var bundle mcl.Bundle
 	var err error
 	if operation != "" {
@@ -585,7 +590,7 @@ func checkCommand(ctx context.Context, path, operation string, parameters map[st
 	return mcl.ValidateBundleOutput(bundle)
 }
 
-func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]string) error {
+func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]jsontext.Value) error {
 	if operation != "" && phase != "" {
 		return errors.New("--operation and --phase cannot be used together")
 	}

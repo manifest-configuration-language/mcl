@@ -15,6 +15,11 @@
     "maxProjectPathDepth": 64
   },
   "$defs": {
+    "requestParameters": {
+      "type": "object",
+      "additionalProperties": {},
+      "goJSONSchema": { "type": "map[string]any" }
+    },
     "request": {
       "type": "object",
       "properties": {
@@ -27,9 +32,8 @@
         "newPath": { "$ref": "#/$defs/projectPath" },
         "entrypoint": { "$ref": "#/$defs/projectPath", "description": "Project-relative MCL source path. Defaults to main.mcl." },
         "parameters": {
-          "type": "object",
-          "description": "Runtime evaluation parameters. Only check, evaluate, and render operations accept parameters.",
-          "additionalProperties": { "type": "string" }
+          "$ref": "#/$defs/requestParameters",
+          "description": "Typed JSON runtime parameter values. Only check, evaluate, and render operations accept parameters."
         },
         "source": { "type": "string", "description": "UTF-8 entrypoint source, limited by the runtime." },
         "files": {

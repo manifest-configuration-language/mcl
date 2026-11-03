@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"maps"
@@ -81,11 +82,19 @@ func (value *runtimeValueData) ensureTyping() *ValueTyping {
 type typedLambda struct {
 	Parameters     []string
 	ParameterSpans []SourceSpan
+	Locals         []typedLocalBinding
 	Body           typedExpression
 	Scope          map[string]RuntimeValue
 	ScopeSpan      SourceSpan
 	Typing         *LambdaTyping
 	ModuleContext  *ModuleContext
+}
+
+type typedLocalBinding struct {
+	Name       string
+	Expression typedExpression
+	Annotation *ResolvedType
+	Span       SourceSpan
 }
 
 type RuntimeRule struct {
@@ -816,6 +825,7 @@ type RuntimeValidation struct {
 type EvaluationState struct {
 	Environment      map[string]RuntimeValue
 	StaticTypes      map[string]TypeAnalysis
+	Parameters       map[string]jsontext.Value
 	Types            map[string]ResolvedType
 	Stack            map[string]bool
 	Budget           *functionBudget
@@ -974,6 +984,27 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	childState.SourcePath = lambda.Value.SourcePath
 	if definition.ModuleContext != nil {
 		childState.Module = definition.ModuleContext
+	}
+
+	for _, local := range definition.Locals {
+		expression, err := specializeTypedExpression(local.Expression, substitutions, types)
+		if err != nil {
+			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, expression.span, err)
+		}
+		value, err := evaluateTypedExpressionRuntime(expression, &childState)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+		if local.Annotation != nil {
+			annotation := substituteTypeParameters(*local.Annotation, substitutions)
+			checkValue := value
+			checkValue.Value.SourcePath = lambda.Value.SourcePath
+			checkValue.Value.Span = local.Span
+			if err := checkRuntimeType(checkValue, annotation, types, make(map[string]bool), childState.Module.Analysis); err != nil {
+				return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, local.Span, err)
+			}
+		}
+		childState.Environment[local.Name] = value
 	}
 
 	return evaluateTypedExpressionRuntime(body, &childState)
