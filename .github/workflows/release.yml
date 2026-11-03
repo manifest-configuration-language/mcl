@@ -110,14 +110,50 @@ jobs:
             exit 1
           fi
 
-          # Reuse the release version when rerunning the same commit after a partial publish.
-          existing_release_tag="$(gh release view "$latest" --json tagName --jq '.tagName' 2>/dev/null || true)"
-          if [[ "$CHANNEL" == stable && "$existing_release_tag" == "$latest" && "$(git rev-list -n 1 "$latest")" == "$GITHUB_SHA" ]]; then
+          # Reuse when SHA already has the latest release.
+          existing_release_tag="$(gh release view "$latest" \
+            --json tagName --jq '.tagName' 2>/dev/null || true)"
+          if [[ "$CHANNEL" == stable && \
+                "$existing_release_tag" == "$latest" && \
+                "$(git rev-list -n 1 "$latest")" == "$GITHUB_SHA" ]]; then
             version="${latest#v}"
-            printf 'Commit %s already has release %s; resuming publication.\n' "$GITHUB_SHA" "$latest" >&2
+            printf 'Commit %s already has release %s; resuming publication.\n' \
+              "$GITHUB_SHA" "$latest" >&2
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=$latest" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          # Search for any existing tag pointing to this SHA and resume.
+          prev="$(git tag --list 'v*' |
+            grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+(-rc\.[0-9]+))?$' |
+            while read -r tag; do
+              if [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]]; then
+                echo "$tag"
+                break
+              fi
+            done)
+          if [ -n "$prev" ]; then
+            prev_release="$(gh release view "$prev" \
+              --json tagName --jq '.tagName' 2>/dev/null || true)"
+            if [[ "$CHANNEL" == stable && "$prev_release" != "$prev" ]]; then
+              printf 'Tag %s points to commit %s but has no release.\n' \
+                "$prev" "$GITHUB_SHA" >&2
+              exit 1
+            fi
+            printf 'Commit %s already has tag %s; resuming publication.\n' \
+              "$GITHUB_SHA" "$prev" >&2
+            echo "version=${prev#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=$prev" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Guard: refuse to create a newer version from an older commit.
+          if [[ "$(git rev-list -n 1 "$latest")" != "$GITHUB_SHA" ]] && \
+             git merge-base --is-ancestor "$GITHUB_SHA" "$latest"; then
+            printf 'Refusing to release %s: commit %s is older than latest release %s.\n' \
+              "${GITHUB_REF##refs/heads/}" "$GITHUB_SHA" "$latest" >&2
+            exit 1
           fi
 
           IFS=. read -r major minor patch <<< "${latest#v}"
@@ -216,7 +252,6 @@ jobs:
             ${{ steps.go-cache-paths.outputs.modules }}
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
           restore-keys: |
-            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-
             go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
       - name: Build CLI
         run: |
