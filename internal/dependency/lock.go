@@ -24,6 +24,8 @@ const maxRemoteChartArchiveSize = 64 << 20
 
 const maxRemoteGitTreeSize = 32 << 20
 
+const maxRemoteRedirects = 10
+
 const schemeHTTPS = "https"
 
 const (
@@ -462,11 +464,9 @@ func fetchRemote(ctx context.Context, source, category string) ([]byte, error) {
 		return nil, err
 	}
 	client := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("HTTPS redirects are not supported")
-		},
+		Transport:     transport,
+		Timeout:       30 * time.Second,
+		CheckRedirect: checkRemoteRedirect,
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
@@ -493,6 +493,17 @@ func fetchRemote(ctx context.Context, source, category string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+func checkRemoteRedirect(request *http.Request, via []*http.Request) error {
+	if len(via) >= maxRemoteRedirects {
+		return errors.New("remote dependency exceeds the redirect limit")
+	}
+	if request.URL.Scheme != schemeHTTPS {
+		return errors.New("remote dependency redirects must use HTTPS")
+	}
+
+	return nil
 }
 
 func ValidatedManifestURL(source string) (*url.URL, error) {

@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io/fs"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,41 @@ import (
 
 	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 )
+
+func TestCheckRemoteRedirect(t *testing.T) {
+	t.Parallel()
+
+	request := func(scheme string) *http.Request {
+		return &http.Request{URL: &url.URL{Scheme: scheme}}
+	}
+	tests := []struct {
+		name    string
+		request *http.Request
+		via     []*http.Request
+		wantErr string
+	}{
+		{name: "HTTPS", request: request(schemeHTTPS)},
+		{name: "reject HTTP downgrade", request: request("http"), wantErr: "must use HTTPS"},
+		{name: "reject too many redirects", request: request(schemeHTTPS), via: make([]*http.Request, maxRemoteRedirects), wantErr: "exceeds the redirect limit"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := checkRemoteRedirect(test.request, test.via)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("checkRemoteRedirect() error = %v, want nil", err)
+				}
+
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("checkRemoteRedirect() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
 
 func testToolchainIdentity() ToolchainIdentity {
 	return ToolchainIdentity{
