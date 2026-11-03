@@ -91,4 +91,4 @@ jobs:
         run: |
           go generate ./cmd/mcl-wasm
           pnpm --filter @manifest-configuration-language/browser run generate:protocol
-          git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.d.ts packages/browser/src/limits.js
+          git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.ts packages/browser/src/limits.ts
