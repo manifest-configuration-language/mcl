@@ -22,7 +22,7 @@ LetNodeDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" NodeExpres
 LetOverlayDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" OverlayExpression }
 LetRemovalDeclaration { Export? kw<"let"> Identifier TypeAnnotation? "=" RemovalExpression }
 TypeAnnotation { ":" TypeExpression }
-FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" ("->" TypeExpression)? ("=" FunctionBodyExpression lineEnd | ":" lineEnd FunctionBlock) }
+FunctionDeclaration { Export? kw<"fn"> Identifier "(" ParameterList? ")" ("->" TypeExpression)? ("=" (FunctionBodyExpression lineEnd | lineEnd Block) | ":" lineEnd FunctionBlock) }
 FunctionBlock { indent FunctionLocalDeclaration* FunctionBodyExpression lineEnd (dedent | eof) }
 FunctionLocalDeclaration { kw<"let"> Identifier TypeAnnotation? "=" (FunctionBodyExpression lineEnd | lineEnd Block) }
 FunctionBodyExpression { NodeExpression | OverlayExpression | RemovalExpression | Expression }
