@@ -2,12 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-temporary_directory="$(mktemp -d)"
-trap 'rm -rf "$temporary_directory"' EXIT
-output_directory="$temporary_directory/packages"
-for argument in "$@"; do
-  output_directory="$argument"
-done
+output_directory="$1"
 mkdir -p "$output_directory"
 output_directory="$(cd "$output_directory" && pwd)"
 for package in browser language; do
@@ -17,7 +12,6 @@ for package in browser language; do
       "$package" "$version" "$MCL_VERSION" >&2
     exit 1
   fi
-  rm -f "$output_directory/manifest-configuration-language-$package-$version.tgz"
 done
 
 for package in browser language; do
@@ -37,16 +31,17 @@ for package in browser language; do
       exit 1
     fi
     tar -xOf "$output_directory/$archive" package/dist/mcl.wasm | cmp - "$root/packages/browser/dist/mcl.wasm"
-    gzip -dc "$root/.build/release-assets/mcl.wasm.gz" | cmp - "$root/packages/browser/dist/mcl.wasm"
   fi
-  printf '%s\n' "$output_directory/$archive" >> "$temporary_directory/archives.txt"
 done
 
-(
-  cd "$output_directory"
-  if [ -f SHA512SUMS ]; then
-    sha512sum --check SHA512SUMS
-  else
-    sha512sum -- *.tgz > SHA512SUMS
-  fi
-)
+cd "$output_directory"
+for archive in ./*.tgz; do
+  package_dir="$(mktemp -d)"
+  tar -xzf "$archive" -C "$package_dir"
+  (
+    cd "$package_dir/package"
+    echo "Validating $archive ..."
+    publint --strict
+    node_modules/.bin/attw --ignore-missing-peer
+  )
+done

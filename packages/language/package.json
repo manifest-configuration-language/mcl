@@ -32,7 +32,9 @@
     "@lezer/lr": "1.4.11"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.0",
     "@lezer/generator": "1.8.1",
+    "publint": "^0.3.0",
     "vscode-oniguruma": "2.0.1",
     "vscode-textmate": "9.3.2"
   },
