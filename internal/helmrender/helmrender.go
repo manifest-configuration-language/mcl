@@ -58,14 +58,15 @@ type LoadRequest struct {
 
 // RenderOptionsはHelm template評価へ渡す値を保持します。
 type RenderOptions struct {
-	Values      map[string]any
-	ReleaseName string
-	Namespace   string
-	Operation   string
-	Revision    int
-	KubeVersion string
-	APIVersions []string
-	Now         *time.Time
+	Values          map[string]any
+	LookupResources []map[string]any
+	ReleaseName     string
+	Namespace       string
+	Operation       string
+	Revision        int
+	KubeVersion     string
+	APIVersions     []string
+	Now             *time.Time
 }
 
 // Preparedは描画用に統合した値とsource pathを保持します。
@@ -412,20 +413,22 @@ func Prepare(loaded Chart, options RenderOptions, projectRoot string) (Prepared,
 	prepared.Values = values
 	if loaded.ContentDigest != "" {
 		key, err := renderCacheKey(struct {
-			Format       string
-			ChartDigest  string
-			Operation    string
-			ReleaseName  string
-			Namespace    string
-			Revision     int
-			KubeVersion  string
-			APIVersions  []string
-			Now          *time.Time
-			RenderValues map[string]any
+			Format          string
+			ChartDigest     string
+			Operation       string
+			ReleaseName     string
+			Namespace       string
+			Revision        int
+			KubeVersion     string
+			APIVersions     []string
+			LookupResources []map[string]any
+			Now             *time.Time
+			RenderValues    map[string]any
 		}{
 			Format: "helm-render-v2", ChartDigest: loaded.ContentDigest, Operation: options.Operation,
 			ReleaseName: options.ReleaseName, Namespace: options.Namespace, Revision: options.Revision,
-			KubeVersion: options.KubeVersion, APIVersions: options.APIVersions, Now: options.Now, RenderValues: values,
+			KubeVersion: options.KubeVersion, APIVersions: options.APIVersions, LookupResources: options.LookupResources,
+			Now: options.Now, RenderValues: values,
 		})
 		if err == nil {
 			prepared.CacheKey = key
@@ -462,9 +465,20 @@ func renderSource(ctx context.Context, source chart.Charter, values map[string]a
 
 type deterministicNowContextKey struct{}
 
+type lookupResourcesContextKey struct{}
+
+type lookupResourcesContext struct {
+	resources []map[string]any
+}
+
 // WithNow supplies the fixed time used by Helm templates during a hermetic render.
 func WithNow(ctx context.Context, now time.Time) context.Context {
 	return context.WithValue(ctx, deterministicNowContextKey{}, now.UTC())
+}
+
+// WithLookupResources supplies the deterministic Kubernetes object snapshot used by Helm lookup.
+func WithLookupResources(ctx context.Context, resources []map[string]any) context.Context {
+	return context.WithValue(ctx, lookupResourcesContextKey{}, lookupResourcesContext{resources: resources})
 }
 
 func hermeticFunctions(ctx context.Context) template.FuncMap {
@@ -479,10 +493,32 @@ func hermeticFunctions(ctx context.Context) template.FuncMap {
 		return time.Time{}, errors.New("helm now is disabled in hermetic rendering")
 	}
 
+	lookup := func(apiVersion, kind, namespace, name string) (map[string]any, error) {
+		snapshot, ok := ctx.Value(lookupResourcesContextKey{}).(lookupResourcesContext)
+		if !ok {
+			return nil, errors.New("helm lookup requires an explicit lookupResources snapshot")
+		}
+		if name == "" {
+			items := make([]any, 0)
+			for _, resource := range snapshot.resources {
+				if helmLookupMatches(resource, apiVersion, kind, namespace, true) {
+					items = append(items, cloneLookupResource(resource))
+				}
+			}
+
+			return map[string]any{"apiVersion": apiVersion, "kind": kind + "List", "items": items}, nil
+		}
+		for _, resource := range snapshot.resources {
+			if helmLookupMatches(resource, apiVersion, kind, namespace, false) && helmLookupName(resource) == name {
+				return cloneLookupResource(resource), nil
+			}
+		}
+
+		return make(map[string]any), nil
+	}
+
 	return template.FuncMap{
-		"lookup": func(string, string, string, string) (map[string]any, error) {
-			return nil, errors.New("helm lookup is disabled in hermetic rendering")
-		},
+		"lookup":        lookup,
 		"getHostByName": func(string) (string, error) { return blocked() },
 		"now":           now,
 		"uuidv4":        blocked, "randAlphaNum": func(int) (string, error) { return blocked() },
@@ -497,6 +533,54 @@ func hermeticFunctions(ctx context.Context) template.FuncMap {
 		"genSelfSignedCertWithKey": func(...any) (string, error) { return blocked() },
 		"genSignedCert":            func(...any) (string, error) { return blocked() }, "genSignedCertWithKey": func(...any) (string, error) { return blocked() },
 		"bcrypt": func(string) (string, error) { return blocked() }, "htpasswd": func(string, string) (string, error) { return blocked() },
+	}
+}
+
+func helmLookupMatches(resource map[string]any, apiVersion, kind, namespace string, list bool) bool {
+	if resource["apiVersion"] != apiVersion || resource["kind"] != kind {
+		return false
+	}
+	metadata, ok := resource["metadata"].(map[string]any)
+	if !ok {
+		return namespace == ""
+	}
+	resourceNamespace, _ := metadata["namespace"].(string)
+	if list && namespace == "" {
+		return true
+	}
+	return resourceNamespace == namespace
+}
+
+func helmLookupName(resource map[string]any) string {
+	metadata, ok := resource["metadata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	name, _ := metadata["name"].(string)
+	return name
+}
+
+func cloneLookupResource(resource map[string]any) map[string]any {
+	cloned := make(map[string]any, len(resource))
+	for key, value := range resource {
+		cloned[key] = cloneLookupValue(value)
+	}
+
+	return cloned
+}
+
+func cloneLookupValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneLookupResource(typed)
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneLookupValue(item)
+		}
+		return cloned
+	default:
+		return value
 	}
 }
 

@@ -12,9 +12,17 @@
 
 `std:helm.render`はchart内のCRDを`bootstrap` lifecycleで出力し、対応するHelm hook annotationをMCLのlifecycle metadataへ変換します。NVIDIA GPU Operator v26.7.0では8 CRD、19通常resource、9 hook resourceを別phaseでrenderし、resource内容は`helm template --include-crds`出力と一致しました。hook annotationはlifecycle metadataに移るため、比較時はannotationではなくMCL operation phaseを使います。
 
+### 明示的なHelm lookup snapshot
+
+Helm templateの`lookup`は、クラスタ状態を暗黙に読み込むと同じrevisionから異なるManifestを生成します。`std:helm.render`に`lookupResources`を追加し、呼び出し側が固定したKubernetes resource snapshotを渡せるようにしました。省略時は従来どおり失敗し、明示した空Listは空のクラスタ状態として扱います。Longhorn chart v1.12.1はコメント内のtemplate条件でも`lookup`を評価するため、infra側では空snapshotを明示して再現可能なrenderを行います。
+
 ### 決定的な非暗号学的hash
 
 infraではExternalSecretが参照するremote値を公開せず、ローカルのdata mappingやtemplateが変わったときにSecret名を変えてPod更新を促す必要があります。この用途にSHA-256は不要な暗号学的強度を持ち、既存の6桁suffixは衝突しやすいため、MCLに`std:hash.fnv1a64(value)`を追加しました。この関数は決定的なJSON bytesへ変換してFNV-1a 64-bitの全16桁を返し、秘密保護や攻撃者入力の耐衝突性には使いません。immutable resourceのcontent-addressingなど暗号学的hashを必要とする用途では`std:crypto.sha256`を引き続き使います。infra側のExternalSecret suffixの適用条件はinfraリポジトリの設計文書に記録します。
+
+### module間での空collection型の保持
+
+明示的な型注釈を持つ空Listまたは空Mapを別moduleからimportすると、runtime valueから型を再推論する際に型注釈が失われ、record内で参照したときtyped evaluatorが拒否する問題を確認しました。runtime valueのtype provenanceを使って空collectionの型を復元し、MCL側のregression testとinfraの`iwashi-blackbox`で確認しました。
 
 ## 未解決の機能不足
 
@@ -24,7 +32,7 @@ infraではExternalSecretが参照するremote値を公開せず、ローカル�
 
 ### 空のMapとListの型推論
 
-MCLは空のMapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。また、型注釈済みの空ListをMap literalのfield valueとして渡すと、typed evaluatorが`syntax.MapExpr`を未対応として拒否するケースを`iwashi-blackbox`のHelm optionsで確認しました。空Listをmoduleからimportしてfield valueへ設定した場合と、同じmodule内で`List<String>`として定義した場合の両方で再現します。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
+MCLは型注釈のない空MapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
 
 ### Helm出力の複数行文字列
 

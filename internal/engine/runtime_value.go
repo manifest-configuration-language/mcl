@@ -1046,6 +1046,22 @@ func inferRuntimeValueStaticType(value RuntimeValue) (TypeAnalysis, bool) {
 
 		return TypeAnalysis{}, false
 	}
+	if value.Value.Typing != nil && (value.Kind() == List || value.Kind() == AdapterBundle) && len(value.List) == 0 {
+		for _, provenance := range value.Value.Typing.TypeProvenance {
+			resolved, known := resolveStaticAlias(provenance.Type, provenance.Types, make(map[string]bool))
+			if known && resolved.Name == typeList {
+				return TypeAnalysis{Type: resolved, Facts: TypeAnalysisFacts{Bundle: value.Kind() == AdapterBundle, BundleKnown: true}}, true
+			}
+		}
+	}
+	if value.Value.Typing != nil && value.Kind() == Map && len(value.Map) == 0 {
+		for _, provenance := range value.Value.Typing.TypeProvenance {
+			resolved, known := resolveStaticAlias(provenance.Type, provenance.Types, make(map[string]bool))
+			if known && isStaticMapType(resolved, provenance.Types) {
+				return TypeAnalysis{Type: resolved}, true
+			}
+		}
+	}
 	switch value.Kind() {
 	case Null:
 		return TypeAnalysis{Type: ResolvedType{Name: typeNull}}, true

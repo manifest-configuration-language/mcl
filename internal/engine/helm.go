@@ -158,6 +158,9 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 	if options.now != nil {
 		ctx = helmrender.WithNow(ctx, *options.now)
 	}
+	if options.lookupResourcesSet {
+		ctx = helmrender.WithLookupResources(ctx, options.lookupResources)
+	}
 	allocations := runtimeAllocationBudgetOf(state)
 	rendered, err := renderHelmTemplates(ctx, prepared, allocations, files)
 	if err != nil {
@@ -177,7 +180,7 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 	prepared, err := helmrender.Prepare(loaded, helmrender.RenderOptions{
 		Values: options.values, ReleaseName: options.releaseName, Namespace: options.namespace,
 		Operation: options.operation, Revision: options.revision, KubeVersion: options.kubeVersion,
-		APIVersions: options.apiVersions, Now: options.now,
+		APIVersions: options.apiVersions, Now: options.now, LookupResources: options.lookupResources,
 	}, projectRoot)
 	if err != nil {
 		if helmrender.IsValuesError(err) {
@@ -532,16 +535,18 @@ func helmCleanupPolicy(policy string) (string, bool) {
 }
 
 type helmRenderOptions struct {
-	values       map[string]any
-	valuesSource RuntimeValue
-	now          *time.Time
-	releaseName  string
-	namespace    string
-	operation    string
-	revision     int
-	kubeVersion  string
-	apiVersions  []string
-	version      string
+	values             map[string]any
+	lookupResources    []map[string]any
+	lookupResourcesSet bool
+	valuesSource       RuntimeValue
+	now                *time.Time
+	releaseName        string
+	namespace          string
+	operation          string
+	revision           int
+	kubeVersion        string
+	apiVersions        []string
+	version            string
 }
 
 func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
@@ -609,6 +614,26 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 				}
 				options.apiVersions[index] = version.TextValue()
 			}
+		case "lookupResources":
+			if entry.Value.Kind() != List && entry.Value.Kind() != AdapterBundle {
+				return options, errors.New("helm.render option lookupResources must be a List of resource Maps")
+			}
+			options.lookupResources = make([]map[string]any, len(entry.Value.ListItems()))
+			for index, resource := range entry.Value.ListItems() {
+				if resource.Kind() != Map {
+					return options, errors.New("helm.render option lookupResources must contain only Maps")
+				}
+				converted, err := helmValue(resource)
+				if err != nil {
+					return options, fmt.Errorf("convert Helm lookup resource: %w", err)
+				}
+				object, ok := converted.(map[string]any)
+				if !ok {
+					return options, errors.New("helm.render lookupResources entries must be Maps")
+				}
+				options.lookupResources[index] = object
+			}
+			options.lookupResourcesSet = true
 		default:
 			return options, fmt.Errorf("helm.render has no option named %q", entry.Key)
 		}

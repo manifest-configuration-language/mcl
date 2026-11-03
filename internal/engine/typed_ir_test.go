@@ -3,6 +3,7 @@ package engine
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 const (
@@ -91,6 +92,30 @@ func TestTypePrimitiveMapWithConstantDynamicKeys(t *testing.T) {
 		if source[entry.KeySpan.Start:entry.KeySpan.End] == "" {
 			t.Fatalf("entry %d has an empty key span", index)
 		}
+	}
+}
+
+func TestTypedEvaluatorSupportsImportedEmptyListInRecord(t *testing.T) {
+	t.Parallel()
+
+	files := fstest.MapFS{
+		"chart.mcl": &fstest.MapFile{Data: []byte("export let apiVersions: List<String> = []\n")},
+	}
+	source := "import \"./chart.mcl\" as chart\nlet options =\n  apiVersions: chart.apiVersions\nemit options.apiVersions\n"
+	if _, err := EvaluateProjectSourceContext(t.Context(), "/virtual-project", "main.mcl", source, files, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTypedEvaluatorSupportsImportedEmptyMapInRecord(t *testing.T) {
+	t.Parallel()
+
+	files := fstest.MapFS{
+		"chart.mcl": &fstest.MapFile{Data: []byte("export let selector: Map<String, Any> = {}\n")},
+	}
+	source := "import \"./chart.mcl\" as chart\nlet options =\n  selector: chart.selector\nemit options.selector\n"
+	if _, err := EvaluateProjectSourceContext(t.Context(), "/virtual-project", "main.mcl", source, files, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
