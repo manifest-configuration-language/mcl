@@ -94,8 +94,6 @@ jobs:
         with:
           path: packages/browser/dist/
           key: ${{ steps.wasm-cache-restore.outputs.cache-primary-key }}
-      - name: Prepare release WebAssembly assets
-        run: mise run release:wasm
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: mcl-browser-dist
@@ -130,6 +128,8 @@ jobs:
           echo "MCL_VERSION=$version" >> "$GITHUB_ENV"
           npm --prefix packages/browser pkg set "version=$version"
           npm --prefix packages/language pkg set "version=$version"
+      - name: Stage release WebAssembly assets
+        run: mise run release:wasm
       - parallel:
         - name: Lint GitHub Actions
           timeout-minutes: 15
