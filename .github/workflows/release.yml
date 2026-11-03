@@ -4,7 +4,7 @@ run-name: Release ${{ github.ref_name }}
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: read
@@ -109,7 +109,6 @@ jobs:
 
   attest:
     needs: release
-    if: github.repository_visibility == 'public'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -216,4 +215,3 @@ jobs:
           MCL_VERSION: ${{ needs.release.outputs.version }}
         run: |
           node scripts/publish-npm-packages.mjs "$RUNNER_TEMP/mcl-npm-packages" "$MCL_VERSION"
-
