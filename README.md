@@ -44,4 +44,8 @@ GitHub Actionsの **Release** ワークフローを `main` ブランチから実
 - `bump`: `patch` / `minor` / `major`（バージョンの上げ幅）
 - `channel`: `stable` / `rc`（公開チャネル）
 
-途中で失敗した場合は、新しい実行を開始せず、失敗した実行の「Re-run failed jobs」で再実行してください。
+失敗時の対応は状況によって異なります。
+
+- **CI 成功待機やビルドの段階で失敗した場合**：同じ実行の「Re-run failed jobs」で再実行してください。Release が作成される前なので、再実行で正常に公開できます。
+- **npm 公開だけが失敗した場合**：公開済み Release のある同じ実行で「Re-run failed jobs」を実行してください。アセットは既にあるため、npm パッケージの公開だけをやり直します。
+- **workflow ファイルの変更によって Release 作成が拒否された場合**：再実行では解決しません。最新 `main` の CI 成功を確認したうえで、新しい Release run を開始してください。

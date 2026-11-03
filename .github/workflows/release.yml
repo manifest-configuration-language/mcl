@@ -74,7 +74,10 @@ jobs:
               --commit "$GITHUB_SHA" \
               --limit 1 \
               --json headSha,status,conclusion \
-              --jq '.[0] | [.headSha, .status, .conclusion] | @tsv' 2>/dev/null || true)"
+              --jq '.[0] | [.headSha, .status, .conclusion] | @tsv')" || {
+              printf 'Failed to query CI runs for %s.\n' "$GITHUB_SHA" >&2
+              exit 1
+            }
             sha=""
             status=""
             conclusion=""
@@ -290,7 +293,7 @@ jobs:
   publish_release:
     needs: [release, attest]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -299,6 +302,12 @@ jobs:
         with:
           name: mcl-${{ needs.release.outputs.version }}
           path: dist
+
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Publish attested GitHub Release
         env:
@@ -319,6 +328,11 @@ jobs:
             latest_args+=(--latest)
           fi
           existing_draft=false
+
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" \
+            "+refs/tags/*:refs/tags/*"
+
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
             is_draft="$(jq -r '.isDraft' "$RUNNER_TEMP/existing-release.json")"
             if [ "$is_draft" != true ]; then
@@ -331,14 +345,27 @@ jobs:
                 --pattern SHA256SUMS
               cmp dist/SHA256SUMS "$existing_assets/SHA256SUMS"
               (cd "$existing_assets" && sha256sum --check SHA256SUMS)
-              printf 'Release %s is already published with matching assets.\n' "$tag"
+
+              tag_sha=""
+              if [ -n "$(git ls-remote --tags --refs --exit-code origin "$tag" 2>/dev/null)" ]; then
+                read -r _local _remote <<< "$(git ls-remote --tags --refs origin "$tag")"
+                if [ "$_remote" != "$(git rev-parse "v${VERSION}")" ]; then
+                  printf 'Published release %s points to a different commit than expected.\n' "$tag" >&2
+                  exit 1
+                fi
+              fi
+
+              printf 'Release %s is already published with matching assets and tag.\n' "$tag"
               exit 0
             fi
             existing_draft=true
           fi
 
-          if ! git diff --quiet "origin/${DEFAULT_BRANCH}..${GITHUB_SHA}" -- .github/workflows/; then
-            printf 'Default branch workflows changed during the release. Start a new Release run from the latest commit.\n' >&2
+          if ! git diff --quiet \
+            "origin/${DEFAULT_BRANCH}" \
+            "${GITHUB_SHA}" \
+            -- .github/workflows/; then
+            printf 'Default branch workflows have been modified since the release commit. Start a new Release run from the latest commit.\n' >&2
             exit 1
           fi
 
