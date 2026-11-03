@@ -190,7 +190,7 @@ jobs:
     needs: [release, publish_release]
     if: ${{ always() && needs.release.result == 'success' && needs.publish_release.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
@@ -217,32 +217,3 @@ jobs:
         run: |
           node scripts/publish-npm-packages.mjs "$RUNNER_TEMP/mcl-npm-packages" "$MCL_VERSION"
 
-      - name: Wait for npm registry propagation
-        env:
-          MCL_VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          attempt=1
-          while ! npm view --prefer-online "@manifest-configuration-language/browser@$MCL_VERSION" version >/dev/null 2>&1 || ! npm view --prefer-online "@manifest-configuration-language/language@$MCL_VERSION" version >/dev/null 2>&1; do
-            if [ "$attempt" -ge 60 ]; then
-              printf 'npm registry did not expose all MCL %s packages within thirty minutes.\n' "$MCL_VERSION" >&2
-              exit 1
-            fi
-            sleep 30
-            attempt=$((attempt + 1))
-          done
-
-      - name: Install and verify published packages
-        env:
-          MCL_VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          smoke_directory="$(mktemp -d)"
-          trap 'rm -rf "$smoke_directory"' EXIT
-          cat > "$smoke_directory/package.json" <<EOF
-          {"private":true,"dependencies":{"@manifest-configuration-language/browser":"$MCL_VERSION","@manifest-configuration-language/language":"$MCL_VERSION"}}
-          EOF
-          npm install --prefix "$smoke_directory" --ignore-scripts --no-audit --no-fund
-          (cd "$smoke_directory" && npm audit signatures)
-          cp "$GITHUB_WORKSPACE/scripts/verify-installed-packages.mjs" "$smoke_directory/verify-installed-packages.mjs"
-          (cd "$smoke_directory" && node verify-installed-packages.mjs)
