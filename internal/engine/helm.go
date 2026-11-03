@@ -248,6 +248,10 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
+		// Helm appends a line break when it assembles rendered templates into manifests.
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
 		templateSourcePath, hasTemplateSourcePath := helmStaticTemplateSourcePath([]byte(content), path, chartRoot, chartSourcePath, rendered.prepared.chartSourceFiles, filesystems...)
 		yamlSource := normalizeHelmDocumentStartComments([]byte(content))
 		documents, err := decodeRuntimeYAMLDocuments(yamlSource, templateSourcePathIfKnown(templateSourcePath, hasTemplateSourcePath), allocations)

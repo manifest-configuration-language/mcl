@@ -45,6 +45,95 @@ func TestSchemaAnalysisLoadsOnlyExportedTypesWithoutEvaluatingValues(t *testing.
 	}
 }
 
+func TestModuleTypeAliasCanReferenceImportedExportedType(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual-type-alias"
+	files := fstest.MapFS{
+		"shared.mcl": &fstest.MapFile{Data: []byte("export type Config = { name: String }\n")},
+	}
+	source := `import "./shared.mcl" as shared
+type Local = shared.Config
+let value: Local =
+  name: "ready"
+emit value.name
+`
+	fields, err := SchemaTypeFieldsForProjectFS(root, "main.mcl", source, "Local", nil, files)
+	if err != nil || !slices.Contains(fields, "name") {
+		t.Fatalf("schema type fields = %v, %v; want imported field name", fields, err)
+	}
+	bundle, err := EvaluateProjectSourceContext(t.Context(), root, "main.mcl", source, files, nil)
+	if err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want imported type alias to validate", err)
+	}
+	output, err := Render(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), `"ready"`) {
+		t.Fatalf("Render() = %s, want imported type alias value", output)
+	}
+}
+
+func TestListMapAcceptsImportedUnionThroughLocalTypeAlias(t *testing.T) {
+	t.Parallel()
+
+	const root = "/virtual-imported-union"
+	files := fstest.MapFS{
+		"types.mcl": &fstest.MapFile{Data: []byte(`
+export type Config = { enabled: Bool }
+export type WakeOnLAN = { backend: "WakeOnLAN", wakeOnLAN: { broadcastAddress: String } }
+export type Redfish = { backend: "Redfish", redfish: { address: String } }
+export type Power = WakeOnLAN | Redfish
+`)},
+	}
+	const source = `import "std:list" as list
+import "./types.mcl" as types
+
+type LocalConfig = types.Config
+type Host = { power: types.Power, config: LocalConfig }
+
+fn powerOf(host: Host) -> Any = host.power
+
+let hosts: List<Host> =
+  - power:
+      backend: "WakeOnLAN"
+      wakeOnLAN:
+        broadcastAddress: "192.168.0.255:9"
+    config:
+      enabled: true
+
+emit each list.map(hosts, powerOf)
+`
+	if _, err := EvaluateProjectSourceContext(t.Context(), root, "main.mcl", source, files, nil); err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want imported union and local alias callback types to validate", err)
+	}
+}
+
+func TestImportedCallbackAliasChecksInlineLambdaSignature(t *testing.T) {
+	t.Parallel()
+
+	const root = "/virtual-imported-callback"
+	files := fstest.MapFS{
+		"callbacks.mcl": &fstest.MapFile{Data: []byte(`
+type Payload = { name: String }
+export type Callback = Function<Payload, String>
+`)},
+	}
+	const source = `import "./callbacks.mcl" as callbacks
+
+fn consume(callback: callbacks.Callback) -> String = "ok"
+let result = consume(fn(payload) => payload.name)
+`
+	if _, err := EvaluateProjectSourceContext(t.Context(), root, "main.mcl", source, files, nil); err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want imported callback alias to accept a compatible lambda", err)
+	}
+
+	invalidSource := strings.Replace(source, "payload.name", "1", 1)
+	if _, err := EvaluateProjectSourceContext(t.Context(), root, "main.mcl", invalidSource, files, nil); err == nil || !strings.Contains(err.Error(), "lambda returns Int, declared String") {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want an incompatible callback return type diagnostic", err)
+	}
+}
+
 func TestSchemaAnalysisReportsImportCycles(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

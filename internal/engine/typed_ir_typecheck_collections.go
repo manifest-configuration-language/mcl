@@ -2,13 +2,12 @@ package engine
 
 func typePrimitiveListExpression(expression Expr, inferred ResolvedType, contexts ...typedEvaluationContext) (typedExpression, bool) {
 	context := typedContext(contexts)
-	if empty, ok := expression.(*EmptyListExpr); ok {
-		_ = empty
-		if !hasTypedEmptyListType(inferred) {
+	if _, ok := expression.(*EmptyListExpr); ok {
+		if _, isList := staticListElement(inferred, context.types); !isList {
 			return typedExpression{}, false
 		}
 
-		return typedExpression{kind: typedExpressionList, span: expression.ExprSpan()}, true
+		return typedExpression{kind: typedExpressionList, span: expression.ExprSpan(), resolvedType: inferred}, true
 	}
 	node, ok := expression.(*ListExpr)
 	if !ok {
@@ -24,10 +23,10 @@ func typePrimitiveListExpression(expression Expr, inferred ResolvedType, context
 		if err != nil || !known {
 			return typedExpression{}, false
 		}
-		if !staticTypeCompatibility(itemType, elementType, context.types).isAssignable() {
+		if !staticExpressionAssignableWithEmptyCollections(item, itemType, elementType, context) {
 			return typedExpression{}, false
 		}
-		typedItem, ok := typeExpression(item, itemType, context)
+		typedItem, ok := typeExpressionWithExpectedCollections(item, itemType, elementType, context)
 		if !ok {
 			return typedExpression{}, false
 		}
@@ -87,10 +86,10 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 				dynamicValueType = new(valueType)
 			}
 		}
-		if !staticTypeCompatibility(valueType, fieldType, context.types).isAssignable() {
+		if !staticExpressionAssignableWithEmptyCollections(entry.Value, valueType, fieldType, context) {
 			return typedExpression{}, false
 		}
-		value, ok := typeExpression(entry.Value, valueType, context)
+		value, ok := typeExpressionWithExpectedCollections(entry.Value, valueType, fieldType, context)
 		if !ok {
 			return typedExpression{}, false
 		}
@@ -98,6 +97,107 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 	}
 
 	return typed, true
+}
+
+func typeExpressionWithExpectedCollections(expression Expr, actual, expected ResolvedType, context typedEvaluationContext) (typedExpression, bool) {
+	inferred, known, err := inferStaticExprTypeWithExpected(expression, expected, context.staticTypes, context.types)
+	if err != nil || !known || !staticExpressionAssignableWithEmptyCollections(expression, actual, expected, context) {
+		return typedExpression{}, false
+	}
+
+	return typeExpression(expression, inferred, context)
+}
+
+func staticExpressionAssignableWithEmptyCollections(expression Expr, actual, expected ResolvedType, context typedEvaluationContext) bool {
+	if staticTypeCompatibility(actual, expected, context.types).isAssignable() {
+		return true
+	}
+	if !containsEmptyCollectionLiteral(expression) {
+		return false
+	}
+
+	switch node := expression.(type) {
+	case *EmptyListExpr:
+		_, isList := staticListElement(expected, context.types)
+		return isList
+	case *EmptyMapExpr:
+		return isStaticMapType(expected, context.types)
+	case *ListExpr:
+		elementType, isList := staticListElement(expected, context.types)
+		if !isList {
+			return false
+		}
+		for _, item := range node.Items {
+			itemType, known, err := context.inferType(item)
+			if err != nil || !known || !staticExpressionAssignableWithEmptyCollections(item, itemType, elementType, context) {
+				return false
+			}
+		}
+		return true
+	case *MapExpr:
+		if !isStaticMapType(expected, context.types) {
+			return false
+		}
+		for _, entry := range node.Entries {
+			valueType, exists := staticMapValueType(expected, entry.Key, entry.KeyExpr == nil, context.types)
+			if !exists {
+				return false
+			}
+			actualValueType, known, err := context.inferType(entry.Value)
+			if err != nil || !known || !staticExpressionAssignableWithEmptyCollections(entry.Value, actualValueType, valueType, context) {
+				return false
+			}
+		}
+		resolvedExpected, known := resolveStaticAlias(expected, context.types, make(map[string]bool))
+		if !known || resolvedExpected.Name == typeMap || resolvedExpected.OpenRecord {
+			return true
+		}
+		for _, field := range resolvedExpected.Fields {
+			if field.Optional {
+				continue
+			}
+			found := false
+			for _, entry := range node.Entries {
+				if entry.KeyExpr == nil && entry.Key == field.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	case *ConditionalExpr:
+		return staticExpressionAssignableWithEmptyCollections(node.Then, actual, expected, context) && staticExpressionAssignableWithEmptyCollections(node.Else, actual, expected, context)
+	default:
+		return staticTypeCompatibility(actual, expected, context.types).isAssignable()
+	}
+}
+
+func containsEmptyCollectionLiteral(expression Expr) bool {
+	switch node := expression.(type) {
+	case *EmptyListExpr, *EmptyMapExpr:
+		return true
+	case *ListExpr:
+		for _, item := range node.Items {
+			if containsEmptyCollectionLiteral(item) {
+				return true
+			}
+		}
+	case *MapExpr:
+		for _, entry := range node.Entries {
+			if containsEmptyCollectionLiteral(entry.Value) {
+				return true
+			}
+		}
+	case *ConditionalExpr:
+		return containsEmptyCollectionLiteral(node.Then) || containsEmptyCollectionLiteral(node.Else)
+	case *NodeExpr:
+		return containsEmptyCollectionLiteral(node.Body)
+	}
+
+	return false
 }
 
 func isStaticMapType(typeExpr ResolvedType, types map[string]ResolvedType) bool {
@@ -183,18 +283,6 @@ func typeRuntimeIndexAccess(expression Expr, inferred ResolvedType, context type
 	}
 
 	return typedExpression{kind: typedExpressionIndexAccess, span: node.Span, left: &base, right: &key}, true
-}
-
-func hasTypedEmptyListType(typeExpr ResolvedType) bool {
-	return hasTypedPrimitiveListType(typeExpr) && isBareAnyTypeExpr(*typeExpr.Element)
-}
-
-func isBareAnyTypeExpr(typeExpr ResolvedType) bool {
-	return typeExpr.Span == (SourceSpan{}) && typeExpr.Name == typeAny && typeExpr.StringLiteral == "" && !typeExpr.StringLiteralKnown && typeExpr.TypeParameters == nil && typeExpr.Arguments == nil && typeExpr.SchemaPath == "" && typeExpr.SchemaID == "" && typeExpr.ScopeID == "" && typeExpr.Element == nil && typeExpr.Options == nil && typeExpr.Fields == nil && !typeExpr.OpenRecord && typeExpr.AdditionalProperties == nil && !typeExpr.Optional && typeExpr.Parameters == nil && typeExpr.ReturnType == nil
-}
-
-func hasTypedPrimitiveListType(typeExpr ResolvedType) bool {
-	return typeExpr.Span == (SourceSpan{}) && typeExpr.Name == typeList && typeExpr.StringLiteral == "" && !typeExpr.StringLiteralKnown && typeExpr.TypeParameters == nil && typeExpr.Arguments == nil && typeExpr.SchemaPath == "" && typeExpr.SchemaID == "" && typeExpr.ScopeID == "" && typeExpr.Element != nil && typeExpr.Options == nil && typeExpr.Fields == nil && !typeExpr.OpenRecord && typeExpr.AdditionalProperties == nil && !typeExpr.Optional && typeExpr.Parameters == nil && typeExpr.ReturnType == nil
 }
 
 func typeBooleanSubexpression(expression Expr, contexts ...typedEvaluationContext) (typedExpression, bool) {

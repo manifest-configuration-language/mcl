@@ -46,6 +46,18 @@ type TypeField struct {
 }
 
 func typeDefinitionsAST(module ModuleAST) (map[string]ResolvedType, error) {
+	types, err := collectTypeDefinitionsAST(module)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTypeDefinitionsAST(module, types); err != nil {
+		return nil, err
+	}
+
+	return types, nil
+}
+
+func collectTypeDefinitionsAST(module ModuleAST) (map[string]ResolvedType, error) {
 	types := make(map[string]ResolvedType)
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*TypeDeclaration)
@@ -63,27 +75,34 @@ func typeDefinitionsAST(module ModuleAST) (map[string]ResolvedType, error) {
 		}
 		types[declaration.Name] = semanticTypeFromSyntax(*declaration.TypeSpec)
 	}
+
+	return types, nil
+}
+
+func validateTypeDefinitionsAST(module ModuleAST, types map[string]ResolvedType) error {
+	localTypes := make(map[string]ResolvedType)
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*TypeDeclaration)
 		if !ok || declaration == nil {
 			continue
 		}
+		localTypes[declaration.Name] = types[declaration.Name]
 		parameters := make(map[string]bool, len(declaration.TypeSpec.TypeParameters))
 		for _, parameter := range declaration.TypeSpec.TypeParameters {
 			if !identifier(parameter) || parameters[parameter] {
-				return nil, fmt.Errorf("line %d: invalid or duplicate type parameter %q", declaration.Line, parameter)
+				return fmt.Errorf("line %d: invalid or duplicate type parameter %q", declaration.Line, parameter)
 			}
 			parameters[parameter] = true
 		}
 		if err := validateTypeExprWithParameters(types[declaration.Name], types, make(map[string]bool), parameters); err != nil {
-			return nil, fmt.Errorf("line %d: %w", declaration.Line, err)
+			return fmt.Errorf("line %d: %w", declaration.Line, err)
 		}
 	}
-	if err := validateTypeAliasCycles(types); err != nil {
-		return nil, err
+	if err := validateTypeAliasCycles(localTypes); err != nil {
+		return err
 	}
 
-	return types, nil
+	return nil
 }
 
 func isBuiltinType(name string) bool {
@@ -887,7 +906,7 @@ func validateTypeExprWithParameters(typeExpr ResolvedType, types map[string]Reso
 			if len(typeExpr.Arguments) != len(definition.TypeParameters) {
 				return fmt.Errorf("%s expects %d type arguments", typeExpr.Name, len(definition.TypeParameters))
 			}
-			if !resolving[typeExpr.Name] {
+			if !resolving[typeExpr.Name] && definition.ScopeID == "" {
 				resolving[typeExpr.Name] = true
 				if err := validateTypeExprWithParameters(definition, types, resolving, parameterSet(definition.TypeParameters)); err != nil {
 					return err

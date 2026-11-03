@@ -53,6 +53,52 @@ func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 	}
 }
 
+func TestHelmRenderPreservesClippedBlockScalarTrailingNewline(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Clean(t.TempDir())
+	files := fstest.MapFS{
+		"charts/app/Chart.yaml": &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 1.0.0\n")},
+		"charts/app/templates/configmap.yaml": &fstest.MapFile{Data: []byte(
+			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  global: |\n    {\n      \"keepLatestMaintenanceJobs\": 3\n    }",
+		)},
+	}
+	module := &ModuleContext{
+		Context:     t.Context(),
+		ProjectRoot: root,
+		filesystem:  newProjectFilesystem(root, files),
+	}
+	bundle, err := helmRender([]RuntimeValue{
+		{Value: runtimeValueData{Kind: String, Text: "charts/app"}},
+		{Value: runtimeValueData{Kind: Map}, Map: []RuntimeEntry{{
+			Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: "1.36.0"}},
+		}, {
+			Key: "apiVersions", Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
+		}}},
+	}, &EvaluationState{SourcePath: filepath.Join(root, "main.mcl"), Module: module})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Kind() != AdapterBundle || len(bundle.List) != 1 {
+		t.Fatalf("helm.render returned %#v; want one rendered resource", bundle)
+	}
+	var got string
+	for _, entry := range bundle.List[0].Map {
+		if entry.Key != "data" {
+			continue
+		}
+		for _, dataEntry := range entry.Value.Map {
+			if dataEntry.Key == "global" {
+				got = dataEntry.Value.TextValue()
+			}
+		}
+	}
+	const want = "{\n  \"keepLatestMaintenanceJobs\": 3\n}\n"
+	if got != want {
+		t.Fatalf("helm.render data.global = %q, want %q", got, want)
+	}
+}
+
 func TestHelmValueDecimalRoundTripsWithoutPrecisionLoss(t *testing.T) {
 	t.Parallel()
 

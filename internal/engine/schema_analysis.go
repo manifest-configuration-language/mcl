@@ -52,7 +52,7 @@ func (loader *schemaAnalysisLoader) analyze(path string, entry bool) (map[string
 	if err != nil {
 		return nil, err
 	}
-	types, err := typeDefinitionsAST(module)
+	types, err := collectTypeDefinitionsAST(module)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -78,6 +78,9 @@ func (loader *schemaAnalysisLoader) analyze(path string, entry bool) (map[string
 		for name, typeExpr := range exportedTypes {
 			types[declaration.Name+"."+name] = typeExpr
 		}
+	}
+	if err := validateTypeDefinitionsAST(module, types); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
 	if !entry {

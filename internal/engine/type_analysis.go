@@ -13,8 +13,9 @@ type SchemaID string
 type TypeScopeID string
 
 type TypeAnalysis struct {
-	Type  ResolvedType
-	Facts TypeAnalysisFacts
+	Type        ResolvedType
+	Facts       TypeAnalysisFacts
+	typeContext *TypeAnalysisContext
 }
 
 // typeCompatibility distinguishes a proven assignability result from an

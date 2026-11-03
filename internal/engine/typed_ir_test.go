@@ -119,6 +119,42 @@ func TestTypedEvaluatorSupportsImportedEmptyMapInRecord(t *testing.T) {
 	}
 }
 
+func TestTypedEvaluatorPropagatesExpectedTypeToEmptyNodeConfigFields(t *testing.T) {
+	t.Parallel()
+
+	const source = `type NodeConfigBody =
+  apiVersion: String
+  kind: String
+  metadata: Map<String, Any>
+  nodeSelector: Map<String, String>
+  tolerations: List<Map<String, Any>>
+type NodeConfig = Node<NodeConfigBody>
+let config: NodeConfig = node:
+  apiVersion: "example.test/v1"
+  kind: "NodeConfig"
+  metadata:
+    name: "default"
+  nodeSelector: {}
+  tolerations: []
+fn newNodeConfig() -> NodeConfig = node:
+  apiVersion: "example.test/v1"
+  kind: "NodeConfig"
+  metadata:
+    name: "default"
+  nodeSelector: {}
+  tolerations: []
+emit config
+emit newNodeConfig()
+`
+	if _, err := EvaluateSource("main.mcl", source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want empty nodeConfig collections to inherit their declared field types", err)
+	}
+	invalidSource := strings.Replace(source, "nodeSelector: {}", "nodeSelector: {worker: 1}", 1)
+	if _, err := EvaluateSource("invalid.mcl", invalidSource); err == nil {
+		t.Fatal("EvaluateSource() accepted a nonempty field with a value incompatible with its declared type")
+	}
+}
+
 func TestTypePrimitiveMapWithDynamicKeysFallbackBoundaries(t *testing.T) {
 	t.Parallel()
 

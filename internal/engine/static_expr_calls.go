@@ -19,7 +19,7 @@ func inferStaticExprCall(expression Expr, bindings map[string]TypeAnalysis, type
 	}
 	calleeType := calleeAnalysis.Type
 	if calleeKnown {
-		calleeType, calleeKnown = resolveStaticAlias(calleeType, types, make(map[string]bool))
+		calleeType, calleeKnown = resolveStaticAlias(calleeType, types, make(map[string]bool), calleeAnalysis.typeContext)
 		if calleeKnown {
 			calleeAnalysis.Type = calleeType
 		}
@@ -27,11 +27,11 @@ func inferStaticExprCall(expression Expr, bindings map[string]TypeAnalysis, type
 	if calleeKnown && len(calleeType.Options) > 0 {
 		var result ResolvedType
 		for index, option := range calleeType.Options {
-			option, known := resolveStaticAlias(option, types, make(map[string]bool))
+			option, known := resolveStaticAlias(option, types, make(map[string]bool), calleeAnalysis.typeContext)
 			if !known || option.Name != typeFunction || option.ReturnType == nil && calleeAnalysis.Facts.FunctionInference == nil {
 				return ResolvedType{}, false, nil
 			}
-			optionAnalysis := TypeAnalysis{Type: option, Facts: calleeAnalysis.Facts}
+			optionAnalysis := TypeAnalysis{Type: option, Facts: calleeAnalysis.Facts, typeContext: calleeAnalysis.typeContext}
 			inferred, known, err := inferStaticFunctionCall(optionAnalysis, call.Arguments, call.ArgumentNames, bindings, types)
 			if err != nil || !known {
 				return ResolvedType{}, known, err
@@ -77,7 +77,7 @@ func inferStaticExprCall(expression Expr, bindings map[string]TypeAnalysis, type
 		}
 		typeExpr := analysis.Type
 		if isKnown {
-			typeExpr, isKnown = resolveStaticAlias(typeExpr, types, make(map[string]bool))
+			typeExpr, isKnown = resolveStaticAlias(typeExpr, types, make(map[string]bool), analysis.typeContext)
 		}
 		argumentTypes[index], known[index] = typeExpr, isKnown
 		argumentAnalyses[index] = analysis
@@ -113,7 +113,7 @@ func inferStaticFunctionCall(calleeAnalysis TypeAnalysis, callArguments []Expr, 
 	argumentTypes := make([]ResolvedType, len(arguments))
 	argumentKnown := make([]bool, len(arguments))
 	for index, argument := range arguments {
-		argumentType, known, err := inferStaticExprCallArgument(argument, calleeType.Parameters[index].Type, bindings, types)
+		argumentType, known, err := inferStaticExprCallArgument(argument, calleeType.Parameters[index].Type, bindings, types, calleeAnalysis.typeContext)
 		if err != nil {
 			return ResolvedType{}, false, fmt.Errorf("argument %d: %w", index+1, err)
 		}
@@ -121,7 +121,7 @@ func inferStaticFunctionCall(calleeAnalysis TypeAnalysis, callArguments []Expr, 
 		if !known {
 			continue
 		}
-		matches, compatible := staticTypeAssignable(argumentType, calleeType.Parameters[index].Type, types)
+		matches, compatible := staticTypeAssignable(argumentType, calleeType.Parameters[index].Type, types, calleeAnalysis.typeContext)
 		if compatible && !matches {
 			return ResolvedType{}, false, fmt.Errorf("argument %q expects %s, got %s", calleeType.Parameters[index].Name, staticTypeName(calleeType.Parameters[index].Type), staticTypeName(argumentType))
 		}
@@ -529,7 +529,7 @@ func inferStaticHigherOrderBuiltin(item builtin, arguments []Expr, argumentTypes
 			if known[2] && argumentTypes[2].Name == typeFunction && argumentTypes[2].SchemaPath != "" {
 				return inferStaticFoldFunction(functionAnalysis, argumentTypes[1], element, types)
 			}
-			functionType, functionKnown := resolveStaticAlias(argumentTypes[2], types, make(map[string]bool))
+			functionType, functionKnown := resolveStaticAlias(argumentTypes[2], types, make(map[string]bool), functionAnalysis.typeContext)
 			if known[2] && functionKnown && functionType.Name != typeFunction && functionType.Name != typeAny {
 				return ResolvedType{}, false, errors.New("fold expects a lambda")
 			}
@@ -578,7 +578,7 @@ func inferStaticHigherOrderBuiltin(item builtin, arguments []Expr, argumentTypes
 		if known[1] && argumentTypes[1].Name == typeFunction && argumentTypes[1].SchemaPath != "" {
 			return inferStaticHigherOrder(function, functionAnalysis, []ResolvedType{element}, argumentTypes[0], types)
 		}
-		functionType, functionKnown := resolveStaticAlias(argumentTypes[1], types, make(map[string]bool))
+		functionType, functionKnown := resolveStaticAlias(argumentTypes[1], types, make(map[string]bool), functionAnalysis.typeContext)
 		if known[1] && functionKnown && functionType.Name != typeFunction && functionType.Name != typeAny {
 			return ResolvedType{}, false, fmt.Errorf("%s expects a lambda", function)
 		}
@@ -681,19 +681,19 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 	return ResolvedType{Name: typeList, Element: &anyType}, true, nil
 }
 
-func inferStaticExprCallArgument(argument Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
+func inferStaticExprCallArgument(argument Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (ResolvedType, bool, error) {
 	if func() bool {
 		_, ok := argument.(*ConditionalExpr)
 
 		return ok
 	}() {
-		return inferStaticConditionalCallArgument(argument, expected, bindings, types)
+		return inferStaticConditionalCallArgument(argument, expected, bindings, types, analyses...)
 	}
 	lambda, isLambda := argument.(*LambdaExpr)
 	if !isLambda || lambda.Body == nil {
 		return inferStaticExprType(argument, bindings, types)
 	}
-	expected, known := resolveStaticAlias(expected, types, make(map[string]bool))
+	expected, known := resolveStaticAlias(expected, types, make(map[string]bool), analyses...)
 	if !known || expected.Name != typeFunction || len(expected.Parameters) != len(lambda.Parameters) {
 		return inferStaticExprType(argument, bindings, types)
 	}
@@ -703,7 +703,10 @@ func inferStaticExprCallArgument(argument Expr, expected ResolvedType, bindings 
 	}
 	parameters := make([]FunctionTypeParameter, len(lambda.Parameters))
 	for index, name := range lambda.Parameters {
-		parameterType := expected.Parameters[index].Type
+		parameterType, known := resolveStaticAlias(expected.Parameters[index].Type, types, make(map[string]bool), analyses...)
+		if !known {
+			return inferStaticExprType(argument, bindings, types)
+		}
 		lambdaBindings[name] = TypeAnalysis{Type: parameterType}
 		parameters[index] = FunctionTypeParameter{Name: name, Type: parameterType}
 	}
@@ -714,7 +717,7 @@ func inferStaticExprCallArgument(argument Expr, expected ResolvedType, bindings 
 	}
 	if returnKnown {
 		if returnType != nil {
-			matches, compatible := staticTypeAssignable(inferred, *returnType, types)
+			matches, compatible := staticTypeAssignable(inferred, *returnType, types, analyses...)
 			if compatible && !matches {
 				return ResolvedType{}, false, fmt.Errorf("lambda returns %s, declared %s", staticTypeName(inferred), staticTypeName(*returnType))
 			}
@@ -726,7 +729,7 @@ func inferStaticExprCallArgument(argument Expr, expected ResolvedType, bindings 
 	return ResolvedType{Name: typeFunction, Parameters: parameters, ReturnType: returnType}, true, nil
 }
 
-func inferStaticConditionalCallArgument(expression Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
+func inferStaticConditionalCallArgument(expression Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (ResolvedType, bool, error) {
 	conditional, ok := expression.(*ConditionalExpr)
 	if !ok || conditional.Condition == nil || conditional.Then == nil || conditional.Else == nil {
 		return ResolvedType{}, false, nil
@@ -741,7 +744,7 @@ func inferStaticConditionalCallArgument(expression Expr, expected ResolvedType, 
 			branch = conditional.Then
 		}
 
-		return inferStaticExprCallArgument(branch, expected, bindings, types)
+		return inferStaticExprCallArgument(branch, expected, bindings, types, analyses...)
 	}
 	conditionType, known, err := inferStaticExprType(conditional.Condition, bindings, types)
 	if err != nil {
@@ -754,12 +757,12 @@ func inferStaticConditionalCallArgument(expression Expr, expected ResolvedType, 
 		}
 	}
 	thenBindings := narrowStaticBindings(conditional.Condition, bindings, types, true)
-	thenType, thenKnown, err := inferStaticExprCallArgument(conditional.Then, expected, thenBindings, types)
+	thenType, thenKnown, err := inferStaticExprCallArgument(conditional.Then, expected, thenBindings, types, analyses...)
 	if err != nil {
 		return ResolvedType{}, false, fmt.Errorf("if branch: %w", err)
 	}
 	elseBindings := narrowStaticBindings(conditional.Condition, bindings, types, false)
-	elseType, elseKnown, err := inferStaticExprCallArgument(conditional.Else, expected, elseBindings, types)
+	elseType, elseKnown, err := inferStaticExprCallArgument(conditional.Else, expected, elseBindings, types, analyses...)
 	if err != nil {
 		return ResolvedType{}, false, fmt.Errorf("else branch: %w", err)
 	}

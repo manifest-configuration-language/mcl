@@ -434,7 +434,15 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			if declaration.Expression != nil {
 				expression = declaration.Expression
 			}
-			analysis, known, err := inferStaticExprAnalysis(expression, state.StaticTypes, state.Types)
+			var annotation *ResolvedType
+			if declaration.Annotation != nil {
+				resolved, err := resolveTypeFromSyntax(*declaration.Annotation, state)
+				if err != nil {
+					return nil, nil, sourceDiagnostic(declaration.SourcePath, declaration.Annotation.Span, err)
+				}
+				annotation = &resolved
+			}
+			analysis, known, err := inferStaticExprAnalysisWithExpected(expression, annotation, state.StaticTypes, state.Types)
 			if err != nil {
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, expression.ExprSpan(), err)
 			}
@@ -450,16 +458,12 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 				return nil, nil, err
 			}
 			addRuntimeDependencySourceLocation(&value, declaration.SourcePath, expression.ExprSpan())
-			if declaration.Annotation != nil {
-				annotation, err := resolveTypeFromSyntax(*declaration.Annotation, state)
-				if err != nil {
-					return nil, nil, sourceDiagnostic(declaration.SourcePath, declaration.Annotation.Span, err)
-				}
-				if err := checkRuntimeType(value, annotation, state.Types, make(map[string]bool), state.Module.Analysis); err != nil {
+			if annotation != nil {
+				if err := checkRuntimeType(value, *annotation, state.Types, make(map[string]bool), state.Module.Analysis); err != nil {
 					return nil, nil, sourceDiagnostic(declaration.SourcePath, expression.ExprSpan(), fmt.Errorf("value %q does not match its type: %w", declaration.Name, err))
 				}
-				value.EnsureTyping().TypeProvenance = append(value.EnsureTyping().TypeProvenance, TypeProvenance{Type: annotation, Types: maps.Clone(state.Types)})
-				state.StaticTypes[declaration.Name] = preserveBundleProvenance(analysis, annotation, state.Types)
+				value.EnsureTyping().TypeProvenance = append(value.EnsureTyping().TypeProvenance, TypeProvenance{Type: *annotation, Types: maps.Clone(state.Types)})
+				state.StaticTypes[declaration.Name] = preserveBundleProvenance(analysis, *annotation, state.Types)
 			} else if known {
 				state.StaticTypes[declaration.Name] = analysis
 			}
@@ -475,6 +479,7 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			if err != nil {
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, functionBodySpan(declaration.Function), err)
 			}
+			signature.typeContext = state.Module.Analysis
 			if signature.Type.ReturnType == nil {
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, functionBodySpan(declaration.Function), errors.New("function return type is unknown"))
 			}
@@ -989,7 +994,7 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 		}
 		bindings[name] = signature
 	}
-	inferredAnalysis, known, err := inferStaticExprAnalysis(definition.Expression, bindings, types)
+	inferredAnalysis, known, err := inferStaticExprAnalysisWithExpected(definition.Expression, returnType, bindings, types)
 	if err != nil {
 		return TypeAnalysis{}, fmt.Errorf("body: %w", err)
 	}

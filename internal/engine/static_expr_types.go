@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -144,6 +145,149 @@ func inferStaticExprAnalysis(expression Expr, bindings map[string]TypeAnalysis, 
 	}
 
 	return analysis, true, nil
+}
+
+func inferStaticExprAnalysisWithExpected(expression Expr, expected *ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (TypeAnalysis, bool, error) {
+	analysis, known, err := inferStaticExprAnalysis(expression, bindings, types)
+	if err != nil || !known || expected == nil {
+		return analysis, known, err
+	}
+	analysis.Type, known, err = inferStaticExprTypeWithExpected(expression, *expected, bindings, types)
+	if err != nil || !known {
+		return TypeAnalysis{}, known, err
+	}
+
+	return analysis, true, nil
+}
+
+func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	inferred, known, err := inferStaticExprType(expression, bindings, types)
+	if err != nil || !known {
+		return inferred, known, err
+	}
+	resolvedExpected, expectedKnown := resolveStaticAlias(expected, types, make(map[string]bool))
+	if !expectedKnown {
+		return inferred, true, nil
+	}
+	var expectedNodeBody *ResolvedType
+	if resolvedExpected.Name == typeNode && len(resolvedExpected.Arguments) == 1 {
+		expectedNodeBody = new(resolvedExpected.Arguments[0])
+		resolvedExpected = resolvedExpected.Arguments[0]
+	}
+
+	switch node := expression.(type) {
+	case *EmptyListExpr:
+		if _, ok := staticListElement(resolvedExpected, types); ok {
+			return expected, true, nil
+		}
+	case *EmptyMapExpr:
+		if isStaticMapType(resolvedExpected, types) {
+			return expected, true, nil
+		}
+	case *ListExpr:
+		expectedElement, isList := staticListElement(resolvedExpected, types)
+		if !isList {
+			return inferred, true, nil
+		}
+		var elementType ResolvedType
+		for index, item := range node.Items {
+			itemType, itemKnown, itemErr := inferStaticExprTypeWithExpected(item, expectedElement, bindings, types)
+			if itemErr != nil {
+				return ResolvedType{}, false, fmt.Errorf("item %d: %w", index, itemErr)
+			}
+			if !itemKnown {
+				return inferred, true, nil
+			}
+			if index == 0 {
+				elementType = itemType
+			} else {
+				elementType = joinStaticTypes(elementType, itemType)
+			}
+		}
+		inferred.Element = &elementType
+	case *MapExpr:
+		if inferred.Name == typeMap {
+			expectedElement, isMap := staticMapElement(resolvedExpected, types)
+			if !isMap {
+				return inferred, true, nil
+			}
+			var elementType ResolvedType
+			for index, entry := range node.Entries {
+				valueType, valueKnown, valueErr := inferStaticExprTypeWithExpected(entry.Value, expectedElement, bindings, types)
+				if valueErr != nil {
+					return ResolvedType{}, false, fmt.Errorf("field %q: %w", entry.Key, valueErr)
+				}
+				if !valueKnown {
+					return inferred, true, nil
+				}
+				if index == 0 {
+					elementType = valueType
+				} else {
+					elementType = joinStaticTypes(elementType, valueType)
+				}
+			}
+			if len(node.Entries) > 0 {
+				inferred.Element = &elementType
+			}
+		} else if inferred.Fields != nil && len(inferred.Fields) == len(node.Entries) {
+			fields := slices.Clone(inferred.Fields)
+			for index, entry := range node.Entries {
+				fieldType, exists := staticMapValueType(resolvedExpected, entry.Key, entry.KeyExpr == nil, types)
+				if !exists {
+					continue
+				}
+				valueType, valueKnown, valueErr := inferStaticExprTypeWithExpected(entry.Value, fieldType, bindings, types)
+				if valueErr != nil {
+					return ResolvedType{}, false, fmt.Errorf("field %q: %w", entry.Key, valueErr)
+				}
+				if valueKnown {
+					fields[index].Type = valueType
+				}
+			}
+			inferred.Fields = fields
+		}
+	case *ConditionalExpr:
+		thenType, thenKnown, thenErr := inferStaticExprTypeWithExpected(node.Then, expected, narrowStaticBindings(node.Condition, bindings, types, true), types)
+		elseType, elseKnown, elseErr := inferStaticExprTypeWithExpected(node.Else, expected, narrowStaticBindings(node.Condition, bindings, types, false), types)
+		if thenErr != nil || elseErr != nil {
+			return ResolvedType{}, false, errors.Join(thenErr, elseErr)
+		}
+		if thenKnown && elseKnown {
+			return joinStaticTypes(thenType, elseType), true, nil
+		}
+	case *NodeExpr:
+		if expectedNodeBody != nil {
+			bodyType, bodyKnown, bodyErr := inferStaticExprTypeWithExpected(node.Body, *expectedNodeBody, bindings, types)
+			if bodyErr != nil || !bodyKnown {
+				return ResolvedType{}, bodyKnown, bodyErr
+			}
+			inferred.Arguments = []ResolvedType{bodyType}
+			return inferred, true, nil
+		}
+	}
+
+	return inferred, true, nil
+}
+
+func staticMapElement(typeExpr ResolvedType, types map[string]ResolvedType) (ResolvedType, bool) {
+	resolved, known := resolveStaticAlias(typeExpr, types, make(map[string]bool))
+	if !known {
+		return ResolvedType{}, false
+	}
+	if resolved.Name == typeNode && len(resolved.Arguments) == 1 {
+		return staticMapElement(resolved.Arguments[0], types)
+	}
+	if resolved.Name == typeMap && resolved.Element != nil {
+		return *resolved.Element, true
+	}
+	if resolved.Fields != nil || resolved.OpenRecord {
+		if resolved.AdditionalProperties != nil {
+			return *resolved.AdditionalProperties, true
+		}
+		return ResolvedType{}, false
+	}
+
+	return ResolvedType{}, false
 }
 
 func inferStaticExprCallFacts(call *CallExpr, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (TypeAnalysisFacts, bool, error) {

@@ -28,23 +28,19 @@ infraではExternalSecretが参照するremote値を公開せず、ローカル�
 
 明示的な型注釈を持つ空Listまたは空Mapを別moduleからimportすると、runtime valueから型を再推論する際に型注釈が失われ、record内で参照したときtyped evaluatorが拒否する問題を確認しました。runtime valueのtype provenanceを使って空collectionの型を復元し、MCL側のregression testとinfraの`iwashi-blackbox`で確認しました。
 
-## 未解決の機能不足
+### 宣言型からの空collection推論
 
-### module間の型参照
-
-`import "./types.mcl" as types`で読み込んだmoduleがexportする型を、別moduleの型定義から`types.Power`のように参照すると、現行MCLはunknown typeとして拒否します。複数clusterのTart Power Unionを共有できず、同じ型定義を複数moduleに重複しています。qualified type importを実装するか、共有型を展開できる機能が必要です。
-
-### module export境界でのnested node評価
-
-MCL 0.3.21では、module内でexportしたSecurityPolicy nodeの`spec.oidc.clientIDRef.name`と`spec.oidc.clientSecret.name`を同時に定義し、同じ`spec`へ`jwt.providers`を加えると、import元entrypointのrenderで`expected expression`診断が発生します。OIDC referenceの一方だけとJWT providerの組み合わせ、またはJWT provider単独では再現しません。nodeをimport元moduleから直接emitするとrenderに成功し、Secret名をliteralへ置き換えても失敗するため、hash計算は原因ではありません。複雑なnested nodeをmoduleからexportしても同じ評価結果になるよう、module export境界のnode expression評価を改善する必要があります。infraでは該当SecurityPolicyだけを`main.mcl`で生成し、他resourceはmoduleへ分割しています。
-
-### 空のMapとListの型推論
-
-MCLは型注釈のない空MapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
+型注釈を持つlet宣言とfunction return typeから空Mapと空Listのexpected typeを式へ伝播し、`Node<T>`のnested recordとconditional expression内でもMap valueとList itemを検証するようにしました。Scylla NodeConfigの`nodeSelector: {}`と`tolerations: []`は、外部の型定義からexpected typeを受け取り、collectionごとのローカル型注釈なしで検証できます。非互換のnon-empty valueは型エラーになります。
 
 ### Helm出力の複数行文字列
 
-Velero chart v12.1.0のHelm出力では、ConfigMap `velero`の`data.global`にJSON文字列の末尾改行があります。`std:helm.render`のMCL出力では同じ文字列から末尾改行が失われ、Helm出力との比較でこの値だけが異なりました。出力上の改行を保持し、chartの通常resourceをHelm出力と構造的に同じ文字列にする必要があります。
+Helmがrender済みtemplateをmanifestへまとめる際に末尾改行を加える挙動に合わせ、MCLもYAML解析前に末尾改行を補うようにしました。Velero chart v12.1.0のConfigMap `velero`で、`data.global`の末尾改行を含むHelm出力と一致することをregression testで確認しました。
+
+### moduleからimportした型alias
+
+module alias経由でimportした型を別moduleの型定義で参照できるようにしました。型aliasを使ったunionのscope情報も型解析とhigher-order callbackの型比較まで維持します。KurumiとBiscuitのTart host設定でPower unionを共有し、重複定義を削除しました。MCLの全Go testとinfraのcluster設定checkで確認しました。
+
+## 未解決の機能不足
 
 ### 再現性と証明書生成
 

@@ -280,7 +280,7 @@ func inferStaticHigherOrder(function string, analysis TypeAnalysis, inputs []Res
 	if signature.Name == typeFunction && signature.SchemaPath != "" {
 		return inferStaticBuiltinCallback(function, signature.SchemaPath, inputs, types)
 	}
-	signature, known := resolveStaticAlias(signature, types, make(map[string]bool))
+	signature, known := resolveStaticAlias(signature, types, make(map[string]bool), analysis.typeContext)
 	if !known || signature.Name != typeFunction {
 		return ResolvedType{}, false, nil
 	}
@@ -307,7 +307,7 @@ func inferStaticHigherOrder(function string, analysis TypeAnalysis, inputs []Res
 			continue
 		}
 		if parameter.Type.Name != "" || parameter.Type.Fields != nil || parameter.Type.OpenRecord || parameter.Type.Element != nil || len(parameter.Type.Options) != 0 {
-			matches, compatible := staticTypeAssignable(input, parameter.Type, types)
+			matches, compatible := staticTypeAssignable(input, parameter.Type, types, analysis.typeContext)
 			if compatible && !matches {
 				name := parameter.Name
 				if name == "" {
@@ -764,7 +764,7 @@ func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedTy
 	return ResolvedType{}, true, false, false
 }
 
-func staticTypeAssignable(inferred, expected ResolvedType, types map[string]ResolvedType) (bool, bool) {
+func staticTypeAssignable(inferred, expected ResolvedType, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (bool, bool) {
 	if inferred.Name == typeNever {
 		return true, true
 	}
@@ -783,7 +783,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 	if len(inferred.Options) > 0 {
 		unknown := false
 		for _, option := range inferred.Options {
-			matches, known := staticTypeAssignable(option, expected, types)
+			matches, known := staticTypeAssignable(option, expected, types, analyses...)
 			if !known {
 				unknown = true
 			} else if !matches {
@@ -796,7 +796,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 	if len(expected.Options) > 0 {
 		unknown := false
 		for _, option := range expected.Options {
-			matches, known := staticTypeAssignable(inferred, option, types)
+			matches, known := staticTypeAssignable(inferred, option, types, analyses...)
 			if matches && known {
 				return true, true
 			}
@@ -805,13 +805,13 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 
 		return false, !unknown
 	}
-	inferred, inferredKnown := resolveStaticAlias(inferred, types, make(map[string]bool))
-	expected, expectedKnown := resolveStaticAlias(expected, types, make(map[string]bool))
+	inferred, inferredKnown := resolveStaticAlias(inferred, types, make(map[string]bool), analyses...)
+	expected, expectedKnown := resolveStaticAlias(expected, types, make(map[string]bool), analyses...)
 	if !inferredKnown || !expectedKnown {
 		return false, false
 	}
 	if len(inferred.Options) > 0 || len(expected.Options) > 0 {
-		return staticTypeAssignable(inferred, expected, types)
+		return staticTypeAssignable(inferred, expected, types, analyses...)
 	}
 	if expected.Name == typeAny {
 		return true, true
@@ -824,20 +824,20 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 			return false, true
 		}
 
-		return staticTypeAssignable(inferred.Arguments[0], expected.Arguments[0], types)
+		return staticTypeAssignable(inferred.Arguments[0], expected.Arguments[0], types, analyses...)
 	}
 	if inferred.Name == typeNode {
 		if len(inferred.Arguments) != 1 {
 			return false, true
 		}
 
-		return staticTypeAssignable(inferred.Arguments[0], expected, types)
+		return staticTypeAssignable(inferred.Arguments[0], expected, types, analyses...)
 	}
 	if inferred.Name == typeMap && inferred.Fields != nil && expected.Name == "" && expected.Fields != nil {
-		return staticOpenMapToRecordAssignable(inferred, expected, types)
+		return staticOpenMapToRecordAssignable(inferred, expected, types, analyses...)
 	}
 	if expected.Name == typeMap && expected.Fields != nil {
-		return staticMapFieldsAssignable(inferred, expected, types)
+		return staticMapFieldsAssignable(inferred, expected, types, analyses...)
 	}
 	if expected.Name == typeMap && expected.Fields == nil && expected.Element == nil && (inferred.Fields != nil || inferred.OpenRecord) {
 		return true, true
@@ -845,7 +845,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 	if expected.Name == typeMap && expected.Element != nil && (inferred.Fields != nil || inferred.OpenRecord) {
 		unknown := false
 		for _, field := range inferred.Fields {
-			matches, known := staticTypeAssignable(field.Type, *expected.Element, types)
+			matches, known := staticTypeAssignable(field.Type, *expected.Element, types, analyses...)
 			if known && !matches {
 				return false, true
 			}
@@ -858,7 +858,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 			if inferred.AdditionalProperties != nil {
 				additional = *inferred.AdditionalProperties
 			}
-			matches, known := staticTypeAssignable(additional, *expected.Element, types)
+			matches, known := staticTypeAssignable(additional, *expected.Element, types, analyses...)
 			if known && !matches {
 				return false, true
 			}
@@ -886,27 +886,27 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 				return true, false
 			}
 
-			return staticTypeAssignable(*inferred.Element, *expected.Element, types)
+			return staticTypeAssignable(*inferred.Element, *expected.Element, types, analyses...)
 		}
 		if inferred.Name == typeMap && expected.Element != nil {
 			if inferred.Element == nil {
 				return true, false
 			}
 
-			return staticTypeAssignable(*inferred.Element, *expected.Element, types)
+			return staticTypeAssignable(*inferred.Element, *expected.Element, types, analyses...)
 		}
 		if inferred.Name == typeFunction && expected.Name == typeFunction && expected.ReturnType != nil {
 			if inferred.ReturnType == nil || len(inferred.Parameters) != len(expected.Parameters) {
 				return false, inferred.ReturnType != nil
 			}
 			for index := range inferred.Parameters {
-				matches, known := staticTypeAssignable(expected.Parameters[index].Type, inferred.Parameters[index].Type, types)
+				matches, known := staticTypeAssignable(expected.Parameters[index].Type, inferred.Parameters[index].Type, types, analyses...)
 				if !known || !matches {
 					return matches, known
 				}
 			}
 
-			return staticTypeAssignable(*inferred.ReturnType, *expected.ReturnType, types)
+			return staticTypeAssignable(*inferred.ReturnType, *expected.ReturnType, types, analyses...)
 		}
 
 		return true, true
@@ -928,7 +928,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 					if inferred.AdditionalProperties != nil {
 						additional = *inferred.AdditionalProperties
 					}
-					matches, known := staticTypeAssignable(additional, expectedField.Type, types)
+					matches, known := staticTypeAssignable(additional, expectedField.Type, types, analyses...)
 					if known && !matches {
 						return false, true
 					}
@@ -943,7 +943,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 		if inferredField.Optional && !expectedField.Optional {
 			return false, true
 		}
-		matches, known := staticTypeAssignable(inferredField.Type, expectedField.Type, types)
+		matches, known := staticTypeAssignable(inferredField.Type, expectedField.Type, types, analyses...)
 		if !known {
 			unknown = true
 
@@ -962,7 +962,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 			if expected.OpenRecord {
 				field := knownFields[name]
 				if expected.AdditionalProperties != nil {
-					matches, known := staticTypeAssignable(field.Type, *expected.AdditionalProperties, types)
+					matches, known := staticTypeAssignable(field.Type, *expected.AdditionalProperties, types, analyses...)
 					if known && !matches {
 						return false, true
 					}
@@ -984,7 +984,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 				unknown = true
 			}
 		} else if expected.AdditionalProperties != nil {
-			matches, known := staticTypeAssignable(*inferred.AdditionalProperties, *expected.AdditionalProperties, types)
+			matches, known := staticTypeAssignable(*inferred.AdditionalProperties, *expected.AdditionalProperties, types, analyses...)
 			if known && !matches {
 				return false, true
 			}
@@ -995,7 +995,7 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 	return true, !unknown
 }
 
-func staticOpenMapToRecordAssignable(inferred, expected ResolvedType, types map[string]ResolvedType) (bool, bool) {
+func staticOpenMapToRecordAssignable(inferred, expected ResolvedType, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (bool, bool) {
 	inferredFields := make(map[string]TypeField, len(inferred.Fields))
 	for _, field := range inferred.Fields {
 		inferredFields[field.Name] = field
@@ -1016,7 +1016,7 @@ func staticOpenMapToRecordAssignable(inferred, expected ResolvedType, types map[
 		if inferredField.Optional && !expectedField.Optional {
 			return false, false
 		}
-		matches, known := staticTypeAssignable(inferredField.Type, expectedField.Type, types)
+		matches, known := staticTypeAssignable(inferredField.Type, expectedField.Type, types, analyses...)
 		if known && !matches {
 			return false, true
 		}
@@ -1036,7 +1036,7 @@ func staticOpenMapToRecordAssignable(inferred, expected ResolvedType, types map[
 	return false, false
 }
 
-func staticMapFieldsAssignable(inferred, expected ResolvedType, types map[string]ResolvedType) (bool, bool) {
+func staticMapFieldsAssignable(inferred, expected ResolvedType, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (bool, bool) {
 	if inferred.Fields == nil {
 		if inferred.Name != typeMap {
 			return false, false
@@ -1058,14 +1058,14 @@ func staticMapFieldsAssignable(inferred, expected ResolvedType, types map[string
 		}
 		unknown := false
 		for _, expectedField := range expected.Fields {
-			matches, known := staticTypeAssignable(*inferred.Element, expectedField.Type, types)
+			matches, known := staticTypeAssignable(*inferred.Element, expectedField.Type, types, analyses...)
 			if known && !matches {
 				return false, true
 			}
 			unknown = unknown || !known
 		}
 		if expected.AdditionalProperties != nil {
-			matches, known := staticTypeAssignable(*inferred.Element, *expected.AdditionalProperties, types)
+			matches, known := staticTypeAssignable(*inferred.Element, *expected.AdditionalProperties, types, analyses...)
 			if known && !matches {
 				return false, true
 			}
@@ -1091,7 +1091,7 @@ func staticMapFieldsAssignable(inferred, expected ResolvedType, types map[string
 		if inferredField.Optional && !expectedField.Optional {
 			return false, true
 		}
-		matches, known := staticTypeAssignable(inferredField.Type, expectedField.Type, types)
+		matches, known := staticTypeAssignable(inferredField.Type, expectedField.Type, types, analyses...)
 		if known && !matches {
 			return false, true
 		}
@@ -1280,12 +1280,16 @@ func resolveStaticAlias(typeExpr ResolvedType, types map[string]ResolvedType, re
 	if !exists || resolving[typeExpr.Name] {
 		return ResolvedType{}, false
 	}
+	if scoped := analysis.scope(definition.ScopeID); scoped != nil {
+		types = scoped
+	}
 	instantiated, err := instantiateTypeAlias(typeExpr, definition)
 	if err != nil {
 		return ResolvedType{}, false
 	}
+	instantiated = inheritStaticTypeScope(instantiated, definition.ScopeID)
 	resolving[typeExpr.Name] = true
-	resolved, known := resolveStaticAlias(instantiated, types, resolving)
+	resolved, known := resolveStaticAlias(instantiated, types, resolving, analyses...)
 	delete(resolving, typeExpr.Name)
 	if known && typeExpr.StringLiteralKnown {
 		resolved.StringLiteral = typeExpr.StringLiteral
@@ -1293,4 +1297,36 @@ func resolveStaticAlias(typeExpr ResolvedType, types map[string]ResolvedType, re
 	}
 
 	return resolved, known
+}
+
+func inheritStaticTypeScope(typeExpr ResolvedType, scope TypeScopeID) ResolvedType {
+	if typeExpr.ScopeID == "" {
+		typeExpr.ScopeID = scope
+	}
+	for index := range typeExpr.Options {
+		typeExpr.Options[index] = inheritStaticTypeScope(typeExpr.Options[index], scope)
+	}
+	for index := range typeExpr.Arguments {
+		typeExpr.Arguments[index] = inheritStaticTypeScope(typeExpr.Arguments[index], scope)
+	}
+	if typeExpr.Element != nil {
+		element := inheritStaticTypeScope(*typeExpr.Element, scope)
+		typeExpr.Element = &element
+	}
+	for index := range typeExpr.Fields {
+		typeExpr.Fields[index].Type = inheritStaticTypeScope(typeExpr.Fields[index].Type, scope)
+	}
+	if typeExpr.AdditionalProperties != nil {
+		additional := inheritStaticTypeScope(*typeExpr.AdditionalProperties, scope)
+		typeExpr.AdditionalProperties = &additional
+	}
+	for index := range typeExpr.Parameters {
+		typeExpr.Parameters[index].Type = inheritStaticTypeScope(typeExpr.Parameters[index].Type, scope)
+	}
+	if typeExpr.ReturnType != nil {
+		returnType := inheritStaticTypeScope(*typeExpr.ReturnType, scope)
+		typeExpr.ReturnType = &returnType
+	}
+
+	return typeExpr
 }

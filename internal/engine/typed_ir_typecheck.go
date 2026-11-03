@@ -130,7 +130,14 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 		if err != nil || !known {
 			return typedExpression{}, false
 		}
-		body, ok := typeExpression(node.Body, bodyType, context)
+		var body typedExpression
+		var ok bool
+		expectedNode, expectedNodeKnown := resolveStaticAlias(inferred, context.types, make(map[string]bool))
+		if expectedNodeKnown && expectedNode.Name == typeNode && len(expectedNode.Arguments) == 1 {
+			body, ok = typeExpressionWithExpectedCollections(node.Body, bodyType, expectedNode.Arguments[0], context)
+		} else {
+			body, ok = typeExpression(node.Body, bodyType, context)
+		}
 		if !ok {
 			return typedExpression{}, false
 		}
@@ -690,20 +697,27 @@ func typePrimitiveConditionalExpression(expression Expr, inferred ResolvedType, 
 		if index == 1 {
 			branch = node.Else
 		}
-		if _, empty := branch.(*EmptyListExpr); empty {
-			if _, isList := staticListElement(inferred, context.types); isList {
-				continue
+		if containsEmptyCollectionLiteral(branch) {
+			if !staticExpressionAssignableWithEmptyCollections(branch, branchType, inferred, context) {
+				return typedExpression{}, false
 			}
+			continue
 		}
 		if !staticTypeCompatibility(branchType, inferred, context.types).isAssignable() {
 			return typedExpression{}, false
 		}
 	}
 	thenBranch, ok := typeExpression(node.Then, thenType, thenContext)
+	if containsEmptyCollectionLiteral(node.Then) {
+		thenBranch, ok = typeExpressionWithExpectedCollections(node.Then, thenType, inferred, thenContext)
+	}
 	if !ok {
 		return typedExpression{}, false
 	}
 	elseBranch, ok := typeExpression(node.Else, elseType, elseContext)
+	if containsEmptyCollectionLiteral(node.Else) {
+		elseBranch, ok = typeExpressionWithExpectedCollections(node.Else, elseType, inferred, elseContext)
+	}
 	if !ok {
 		return typedExpression{}, false
 	}

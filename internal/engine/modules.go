@@ -1292,7 +1292,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		return nil, nil, nil, err
 	}
 	setModuleASTSourcePath(module, path)
-	types, err := typeDefinitionsAST(module)
+	types, err := collectTypeDefinitionsAST(module)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -1362,6 +1362,9 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		if inferred, known := inferRuntimeValueStaticType(imported); known {
 			state.StaticTypes[declaration.Name] = inferred
 		}
+	}
+	if err := validateTypeDefinitionsAST(module, state.Types); err != nil {
+		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
 	declarationValues := 0
 	for _, node := range module.Nodes {
