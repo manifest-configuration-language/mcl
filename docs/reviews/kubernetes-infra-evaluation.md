@@ -4,16 +4,7 @@
 
 この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、アプリケーションのdeployment record、ApplicationSet Plugin Generatorの設計、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
 
-各項目では、評価で確認した挙動、実装済みの変更、未解決の改善候補を区別します。MCLの実装やrelease状況が変わった場合は該当項目を更新します。
-
-## 実装済みの変更
-
-- Helm Adapterは、Helm templateを評価する前にchartの依存条件を処理する必要があります。無効なsubchartもtemplate対象に含めていたため、無効subchart内の重複YAML keyでrenderが失敗することがありました。読み込み済みchartを複製してからHelmの依存条件を適用し、処理済みchartでrenderする変更をMCL作業treeに実装しました。
-- Kubernetes組み込みschema validationは、schemaで宣言されたobject propertyのnullを省略値として扱い、`additionalProperties` map内のnull値はvalidation対象に残す必要があります。caretta chartではoptional annotationのnullが出力され、この区別がないとvalidationに失敗しました。schemaに基づくnull正規化をMCL作業treeに実装しました。
-- MCL project rootで共有する`mcl.lock`をentrypointごとに更新しても、別entrypointが使う依存情報を保持する必要があります。以前の`mcl update <entrypoint>`はlockfile全体をentrypoint到達依存だけで置き換えていたため、appを順に更新すると別appのchart hashが消えました。到達した依存だけを更新し、ほかのentrypointの記録を保持する変更をMCL作業treeに実装しました。未使用依存を明示的に削除する機能は未実装です。
-- MCL 0.3.14では、Helm chart取得時にHTTPS redirectを最大10回まで追従し、HTTPへの降格を拒否する変更が入りました。external-dns-cloudflareの公式archive取得でこの挙動を確認しました。
-
-上記の変更はMCL作業treeで確認した状態です。releaseに含まれたことを確認した場合は、そのrelease versionとCI結果をこの節に追記します。
+各項目では、評価で確認した挙動と未解決の改善候補を記載します。MCLの実装状況が変わり課題が解消した場合は、この文書から該当項目を削除します。
 
 ## 未解決の機能不足
 
