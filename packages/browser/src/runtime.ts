@@ -561,7 +561,10 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     const previousSnapshot = workerProjectId === projectId ? workerSnapshot : undefined;
     const reset = workerProjectId !== projectId;
     const result = computeProjectDelta(snapshot, previousSnapshot, reset);
-    if (result === null) return; // nothing changed
+    if (result === null) {
+      workerSnapshot = snapshot;
+      return;
+    }
 
     const { delta, binaryFiles, transferables } = result;
     const updateJSON = JSON.stringify(delta);
@@ -659,13 +662,10 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         if (timeoutMs <= 0) throw timeoutError;
-        timer = setTimeout(() => {
-          if (stopCurrent) stopCurrent(timeoutError);
-          else stopInitialization?.(timeoutError);
-        }, timeoutMs);
-
         await waitUntilReady(signal);
         if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+
+        timer = setTimeout(() => stopCurrent?.(timeoutError), timeoutMs);
 
         const currentApi = workerApi!;
         const currentGeneration = workerGeneration;

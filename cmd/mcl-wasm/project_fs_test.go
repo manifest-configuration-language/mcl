@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
@@ -85,6 +86,36 @@ func TestNewProjectFilesRequiresMatchingBinaryMetadata(t *testing.T) {
 				t.Fatalf("newProjectFiles() error = %v, want substring %q", err, test.wantErrSub)
 			}
 		})
+	}
+}
+
+func TestProjectFilesystemApplyDeltaChecksFinalProjectSize(t *testing.T) {
+	t.Parallel()
+
+	data := make([]byte, wasmprotocol.MaxProjectBytes)
+	files := fstest.MapFS{
+		"a.bin": {Data: data[:8<<20]},
+		"b.bin": {Data: data[8<<20 : 24<<20]},
+		"c.bin": {Data: data[24<<20 : 40<<20]},
+		"d.bin": {Data: data[40<<20:]},
+	}
+	upserts := map[string]wasmprotocol.FileInput{
+		"a.bin": {Encoding: wasmprotocol.FileInputEncodingBinary},
+		"b.bin": {Encoding: wasmprotocol.FileInputEncodingBinary},
+	}
+	binaryFiles := map[string][]byte{
+		"a.bin": data[:16<<20],
+		"b.bin": data[16<<20 : 24<<20],
+	}
+
+	for range 8 {
+		filesystem := &projectFilesystem{files: files, totalBytes: wasmprotocol.MaxProjectBytes}
+		if err := filesystem.applyDelta(upserts, binaryFiles, nil, false); err != nil {
+			t.Fatalf("applyDelta() error = %v", err)
+		}
+		if filesystem.totalBytes != wasmprotocol.MaxProjectBytes {
+			t.Fatalf("totalBytes = %d, want %d", filesystem.totalBytes, wasmprotocol.MaxProjectBytes)
+		}
 	}
 }
 

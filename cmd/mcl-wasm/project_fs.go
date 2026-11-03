@@ -73,7 +73,6 @@ func (filesystem *projectFilesystem) WriteFileAtomic(name string, data []byte) e
 	return nil
 }
 
-//nolint:unused // Called by the js/wasm entry point, which golangci-lint does not analyze by default.
 func (filesystem *projectFilesystem) applyDelta(upserts map[string]wasmprotocol.FileInput, binaryFiles map[string][]byte, deletes []string, reset bool) error {
 	filesystem.mu.Lock()
 	defer filesystem.mu.Unlock()
@@ -131,9 +130,6 @@ func (filesystem *projectFilesystem) applyDelta(upserts map[string]wasmprotocol.
 			totalBytes -= len(previous.Data)
 		}
 		totalBytes += len(content)
-		if totalBytes > wasmprotocol.MaxProjectBytes {
-			return fmt.Errorf("project files exceed the %d-byte limit", wasmprotocol.MaxProjectBytes)
-		}
 		files[filePath] = &fstest.MapFile{Data: bytes.Clone(content), Mode: 0o444}
 	}
 	if binaryCount != len(binaryFiles) {
@@ -141,6 +137,9 @@ func (filesystem *projectFilesystem) applyDelta(upserts map[string]wasmprotocol.
 	}
 	if len(files) > wasmprotocol.MaxProjectFiles {
 		return fmt.Errorf("project has more than %d files", wasmprotocol.MaxProjectFiles)
+	}
+	if totalBytes > wasmprotocol.MaxProjectBytes {
+		return fmt.Errorf("project files exceed the %d-byte limit", wasmprotocol.MaxProjectBytes)
 	}
 	filesystem.files = files
 	filesystem.totalBytes = totalBytes
