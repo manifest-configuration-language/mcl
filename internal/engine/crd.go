@@ -36,7 +36,7 @@ type customResourceDefinitionKey struct {
 // KubernetesのCustomResourceDefinitionのKind名。
 const kindCustomResourceDefinition = "CustomResourceDefinition"
 
-func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) error {
+func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []RuntimeArtifact) error {
 	schemas := make(map[customResourceDefinitionKey]crdVersionSchema)
 	for index := range artifacts {
 		artifact := &artifacts[index]
@@ -83,7 +83,7 @@ func validateRuntimeBundleCustomResources(artifacts []RuntimeArtifact) error {
 			validationErrors = append(validationErrors, listtype.ValidateListSetsAndMaps(field.NewPath("resource"), registered.structural, instanceMap)...)
 		}
 		if registered.cel != nil {
-			celErrors, _ := registered.cel.Validate(context.Background(), field.NewPath("resource"), registered.structural, instance, nil, int64(celconfig.PerCallLimit))
+			celErrors, _ := registered.cel.Validate(ctx, field.NewPath("resource"), registered.structural, instance, nil, int64(celconfig.PerCallLimit))
 			validationErrors = append(validationErrors, celErrors...)
 		}
 		if len(validationErrors) != 0 {

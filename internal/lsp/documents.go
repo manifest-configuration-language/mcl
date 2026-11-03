@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
 
@@ -91,11 +92,12 @@ func applyContentChange(text string, change contentChange) (string, error) {
 	if change.Range == nil {
 		return change.Text, nil
 	}
-	start, err := offsetAtUTF16(text, change.Range.Start)
+	index := sourceindex.New(text)
+	start, err := index.OffsetAt(sourceindex.Position{Line: change.Range.Start.Line, Character: change.Range.Start.Character})
 	if err != nil {
 		return text, err
 	}
-	end, err := offsetAtUTF16(text, change.Range.End)
+	end, err := index.OffsetAt(sourceindex.Position{Line: change.Range.End.Line, Character: change.Range.End.Character})
 	if err != nil {
 		return text, err
 	}
@@ -107,31 +109,7 @@ func applyContentChange(text string, change contentChange) (string, error) {
 }
 
 func offsetAtUTF16(text string, position location) (int, error) {
-	if position.Line < 0 || position.Character < 0 {
-		return 0, errors.New("text document change position is negative")
-	}
-	lineStart := 0
-	for range position.Line {
-		nextLine := strings.IndexByte(text[lineStart:], '\n')
-		if nextLine < 0 {
-			return 0, errors.New("text document change line is out of range")
-		}
-		lineStart += nextLine + 1
-	}
-	lineEnd := len(text)
-	if nextLine := strings.IndexByte(text[lineStart:], '\n'); nextLine >= 0 {
-		lineEnd = lineStart + nextLine
-	}
-	if lineEnd > lineStart && text[lineEnd-1] == '\r' {
-		lineEnd--
-	}
-	runes := []rune(text[lineStart:lineEnd])
-	runeIndex := runeIndexAtUTF16(runes, position.Character)
-	if utf16Length(runes[:runeIndex]) != position.Character {
-		return 0, errors.New("text document change character is out of range")
-	}
-
-	return lineStart + len(string(runes[:runeIndex])), nil
+	return sourceindex.New(text).OffsetAt(sourceindex.Position{Line: position.Line, Character: position.Character})
 }
 
 func (s *server) sourceForPath(path, fallback string) string {

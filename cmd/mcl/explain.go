@@ -13,7 +13,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
-func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string) error {
+func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string, parameters map[string]string) error {
 	if apiVersion == "" || kind == "" || name == "" {
 		return errors.New("explain requires --api-version, --kind, and --name")
 	}
@@ -24,9 +24,9 @@ func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, names
 
 	var bundle mcl.Bundle
 	if operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationContext(ctx, filePath, operation)
+		bundle, err = mcl.EvaluateFileForOperationWithParametersContext(ctx, filePath, operation, parameters)
 	} else {
-		bundle, err = mcl.EvaluateFileContext(ctx, filePath)
+		bundle, err = mcl.EvaluateFileWithParametersContext(ctx, filePath, parameters)
 	}
 	if err != nil {
 		return err

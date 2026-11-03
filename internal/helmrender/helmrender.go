@@ -945,9 +945,6 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 		if name == "." {
 			return nil
 		}
-		if entry.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("helm chart contains unsupported symlink %q", name)
-		}
 		fileInfo, err := entry.Info()
 		if err != nil {
 			return err
@@ -955,8 +952,18 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 		if fileInfo.IsDir() {
 			parent := path.Dir(name)
 			ignoredDirectories[name] = ignoredDirectories[parent] || rules.Ignore(filepath.ToSlash(name), fileInfo)
+			if ignoredDirectories[name] {
+				return fs.SkipDir
+			}
 
 			return nil
+		}
+		parent := path.Dir(name)
+		if ignoredDirectories[parent] || rules.Ignore(filepath.ToSlash(name), fileInfo) {
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("helm chart contains unsupported symlink %q", name)
 		}
 		if !fileInfo.Mode().IsRegular() {
 			return fmt.Errorf("helm chart contains unsupported file %q", name)
@@ -976,10 +983,7 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 		digestKey.WriteByte(0)
 		digestKey.WriteString(content.SHA256(data))
 		digestKey.WriteByte(0)
-		parent := path.Dir(name)
-		if !ignoredDirectories[parent] && !rules.Ignore(filepath.ToSlash(name), fileInfo) {
-			files = append(files, &archive.BufferedFile{Name: filepath.ToSlash(name), ModTime: fileInfo.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})})
-		}
+		files = append(files, &archive.BufferedFile{Name: filepath.ToSlash(name), ModTime: fileInfo.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})})
 
 		return nil
 	})

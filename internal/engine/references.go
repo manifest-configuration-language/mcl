@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -335,7 +336,14 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 			return err
 		}
 	}
-	if err := validateRuntimeBundleCustomResources(bundle.Artifacts); err != nil {
+	var validationContext context.Context
+	if state.Module != nil {
+		validationContext = state.Module.Context
+	}
+	if validationContext == nil {
+		validationContext = context.Background()
+	}
+	if err := validateRuntimeBundleCustomResources(validationContext, bundle.Artifacts); err != nil {
 		return err
 	}
 	for index := range bundle.Artifacts {

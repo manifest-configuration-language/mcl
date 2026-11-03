@@ -297,8 +297,13 @@ func newExplainCommand() *cobra.Command {
 			phase, _ := command.Flags().GetString("phase")
 			operation, _ := command.Flags().GetString("operation")
 			path, _ := command.Flags().GetString("path")
+			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameters, err := parseParameters(parameterValues)
+			if err != nil {
+				return err
+			}
 
-			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path)
+			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path, parameters)
 		},
 	}
 	command.Flags().String("api-version", "", "Kubernetes API version (required)")
@@ -308,6 +313,7 @@ func newExplainCommand() *cobra.Command {
 	command.Flags().String("phase", "main", "lifecycle phase to inspect")
 	command.Flags().String("operation", "", "operation to inspect")
 	command.Flags().String("path", "", "JSON Pointer within the resource")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
 
 	return command
 }
@@ -319,11 +325,17 @@ func newDiffCommand() *cobra.Command {
 		Args:  exactArgs(2, "diff requires before and after input files"),
 		RunE: func(command *cobra.Command, args []string) error {
 			operation, _ := command.Flags().GetString("operation")
+			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameters, err := parseParameters(parameterValues)
+			if err != nil {
+				return err
+			}
 
-			return diffCommand(command.Context(), args[0], args[1], operation)
+			return diffCommand(command.Context(), args[0], args[1], operation, parameters)
 		},
 	}
 	command.Flags().String("operation", "", "operation to compare")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=value form; may be repeated")
 
 	return command
 }
@@ -512,13 +524,13 @@ func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, d
 	printSourceLine(line, column, lineText)
 }
 
-func diffCommand(ctx context.Context, beforePath, afterPath, operation string) error {
+func diffCommand(ctx context.Context, beforePath, afterPath, operation string, parameters map[string]string) error {
 	evaluate := func(path string) (mcl.Bundle, error) {
 		if operation != "" {
-			return mcl.EvaluateFileForOperationContext(ctx, path, operation)
+			return mcl.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
 		}
 
-		return mcl.EvaluateFileContext(ctx, path)
+		return mcl.EvaluateFileWithParametersContext(ctx, path, parameters)
 	}
 	before, err := evaluate(beforePath)
 	if err != nil {
