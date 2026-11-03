@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -94,6 +94,8 @@ jobs:
         with:
           path: packages/browser/dist/
           key: ${{ steps.wasm-cache-restore.outputs.cache-primary-key }}
+      - name: Verify WebAssembly
+        run: mise run wasm:check
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: mcl-browser-dist

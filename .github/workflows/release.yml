@@ -27,6 +27,7 @@ permissions:
 
 concurrency:
   group: release-${{ github.repository }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -202,6 +203,7 @@ jobs:
       GOARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.prepare.outputs.version }}
       MCL_VERSION: ${{ needs.prepare.outputs.version }}
+      CGO_ENABLED: "0"
     steps:
       - name: Check out source
         uses: actions/checkout@v7.0.1
@@ -287,8 +289,10 @@ jobs:
           install_args: >-
             go node
             aqua:WebAssembly/binaryen
-            aqua:anchore/syft
           cache: true
+
+      - name: Set up pnpm
+        run: corepack enable && pnpm --version
 
       - name: Install npm package workspace
         run: pnpm install --frozen-lockfile
