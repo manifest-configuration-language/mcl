@@ -16,10 +16,6 @@
 
 MCLは空のMapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
 
-### Helm YAML parserのplain scalar
-
-有効なcert-manager subchartが出力するRBAC名の一部には、plain scalar内にコロンを含む値があります。現行MCLのYAML parserはその値を拒否します。Topolvm 17.2.0ではcert-manager subchartが無効で、Helm依存条件処理によってtemplate評価前に除外されるため、この問題は発生しません。YAML仕様に沿ってplain scalarをparseできるようにする必要があります。
-
 ### Helm chart内の証明書生成
 
 rabbitmq-topology-operator 0.4.1は`useCertManager: true`を指定しても、`templates/validating-webhook-configuration.yaml`で`genCA`を呼び出します。MCLのhermetic Helm renderingは`genCA`を無効にしているため、`mcl update`が失敗します。random関数を無条件に許可せずにこのchartをrenderできるよう、chartが既存の証明書を受け取る設定、または決定的な証明書入力を扱う方法を確認する必要があります。

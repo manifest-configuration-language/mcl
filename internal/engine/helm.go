@@ -243,7 +243,8 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 			continue
 		}
 		templateSourcePath, hasTemplateSourcePath := helmStaticTemplateSourcePath([]byte(content), path, chartRoot, chartSourcePath, rendered.prepared.chartSourceFiles, filesystems...)
-		documents, err := decodeRuntimeYAMLDocuments([]byte(content), templateSourcePathIfKnown(templateSourcePath, hasTemplateSourcePath), allocations)
+		yamlSource := normalizeHelmDocumentStartComments([]byte(content))
+		documents, err := decodeRuntimeYAMLDocuments(yamlSource, templateSourcePathIfKnown(templateSourcePath, hasTemplateSourcePath), allocations)
 		if err != nil {
 			if hasTemplateSourcePath {
 				if line, ok := yamlDecodeErrorLine(err); ok {
@@ -330,6 +331,17 @@ func buildHelmBundle(rendered helmRenderedChart, allocations *runtimeAllocationB
 	}
 
 	return runtimeBundleValueWithBudget(artifacts, "", allocations)
+}
+
+func normalizeHelmDocumentStartComments(source []byte) []byte {
+	lines := bytes.Split(source, []byte("\n"))
+	for index, line := range lines {
+		if bytes.HasPrefix(line, []byte("---#")) {
+			lines[index] = append([]byte("--- "), line[3:]...)
+		}
+	}
+
+	return bytes.Join(lines, []byte("\n"))
 }
 
 func helmLifecycleOrigin(origin, chartRoot, filename string) string {

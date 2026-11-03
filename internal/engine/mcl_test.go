@@ -112,10 +112,11 @@ func TestHelmRenderBuildsManifestHookAndCRDBundle(t *testing.T) {
 	}
 	chartPath := filepath.Join(root, "chart")
 	files := map[string]string{
-		"Chart.yaml":          "apiVersion: v2\nname: sample\nversion: 1.0.0\n",
-		"templates/hook.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n  annotations:\n    helm.sh/hook: pre-install\n    helm.sh/hook-weight: \"-2\"\n    helm.sh/hook-delete-policy: hook-succeeded\n",
-		"templates/NOTES.txt": `{{ lookup "v1" "Secret" "default" "credentials" }}`,
-		"crds/sample.yaml":    "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: samples.example.test\nspec:\n  group: example.test\n  scope: Namespaced\n  names:\n    plural: samples\n    singular: sample\n    kind: Sample\n    listKind: SampleList\n  versions:\n    - name: v1\n      served: true\n      storage: true\n      schema:\n        openAPIV3Schema:\n          type: object\n",
+		"Chart.yaml":                      "apiVersion: v2\nname: sample\nversion: 1.0.0\n",
+		"templates/hook.yaml":             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n  annotations:\n    helm.sh/hook: pre-install\n    helm.sh/hook-weight: \"-2\"\n    helm.sh/hook-delete-policy: hook-succeeded\n",
+		"templates/attached-comment.yaml": "---\n{{- /* Helm trim markers can attach a comment to the document separator. */ -}}\n# attached comment\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: attached-comment\n",
+		"templates/NOTES.txt":             `{{ lookup "v1" "Secret" "default" "credentials" }}`,
+		"crds/sample.yaml":                "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: samples.example.test\nspec:\n  group: example.test\n  scope: Namespaced\n  names:\n    plural: samples\n    singular: sample\n    kind: Sample\n    listKind: SampleList\n  versions:\n    - name: v1\n      served: true\n      storage: true\n      schema:\n        openAPIV3Schema:\n          type: object\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(chartPath, filepath.FromSlash(name))
@@ -138,24 +139,36 @@ func TestHelmRenderBuildsManifestHookAndCRDBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.Kind() != AdapterBundle || len(bundle.List) != 2 {
-		t.Fatalf("helm.render returned %#v; want an AdapterBundle with the hook and CRD", bundle)
+	if bundle.Kind() != AdapterBundle || len(bundle.List) != 3 {
+		t.Fatalf("helm.render returned %#v; want an AdapterBundle with the hook, comment-prefixed resource, and CRD", bundle)
 	}
 
-	var hookFound, crdFound bool
+	var hookFound, attachedCommentFound, crdFound bool
 	for _, document := range bundle.List {
 		kind := ""
+		name := ""
 		for _, entry := range document.Map {
-			if entry.Key == "kind" {
+			switch entry.Key {
+			case "kind":
 				kind = entry.Value.TextValue()
+			case metadataFieldName:
+				for _, metadataEntry := range entry.Value.Map {
+					if metadataEntry.Key == "name" {
+						name = metadataEntry.Value.TextValue()
+					}
+				}
 			}
 		}
 		switch kind {
 		case "ConfigMap":
-			hookFound = true
-			lifecycle := document.Metadata().lifecycleMetadata()
-			if lifecycle == nil || len(lifecycle.Events) != 1 || lifecycle.Events[0] != phaseBeforeCreate || lifecycle.Priority != -2 || len(lifecycle.Cleanup) != 1 || lifecycle.Cleanup[0] != "on-success" {
-				t.Errorf("Helm hook lifecycle = %#v; want before-create event, weight -2, and on-success cleanup", lifecycle)
+			if name == "attached-comment" {
+				attachedCommentFound = true
+			} else {
+				hookFound = true
+				lifecycle := document.Metadata().lifecycleMetadata()
+				if lifecycle == nil || len(lifecycle.Events) != 1 || lifecycle.Events[0] != phaseBeforeCreate || lifecycle.Priority != -2 || len(lifecycle.Cleanup) != 1 || lifecycle.Cleanup[0] != "on-success" {
+					t.Errorf("Helm hook lifecycle = %#v; want before-create event, weight -2, and on-success cleanup", lifecycle)
+				}
 			}
 		case "CustomResourceDefinition":
 			crdFound = true
@@ -165,8 +178,8 @@ func TestHelmRenderBuildsManifestHookAndCRDBundle(t *testing.T) {
 			}
 		}
 	}
-	if !hookFound || !crdFound {
-		t.Errorf("Helm bundle kinds: hook=%t, CRD=%t; want both", hookFound, crdFound)
+	if !hookFound || !attachedCommentFound || !crdFound {
+		t.Errorf("Helm bundle kinds: hook=%t, attached-comment=%t, CRD=%t; want all three", hookFound, attachedCommentFound, crdFound)
 	}
 }
 

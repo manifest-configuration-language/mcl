@@ -240,7 +240,7 @@ func TestTypeNestedPrimitiveMapAndListIndexAccess(t *testing.T) {
 	}
 
 	mapExpression := declaration.Expression
-	metadataKey := &StringExpr{Value: "metadata"}
+	metadataKey := &StringExpr{Value: metadataFieldName}
 	metadataAccess := &IndexExpr{Base: mapExpression, Key: metadataKey}
 	portsKey := &StringExpr{Value: "ports"}
 	portsAccess := &IndexExpr{Base: metadataAccess, Key: portsKey}
