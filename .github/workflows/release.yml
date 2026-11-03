@@ -1,10 +1,22 @@
 name: Release
-run-name: Release ${{ github.ref_name }}
+run-name: Release ${{ inputs.release_tag || 'next patch' }}
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. v1.2.3). Empty uses the next patch after the latest stable vX.Y.Z tag."
+        required: false
+        type: string
+      release_type:
+        description: GitHub Release type
+        required: true
+        default: latest
+        type: choice
+        options:
+          - none
+          - pre-release
+          - latest
 
 permissions:
   contents: read
@@ -19,6 +31,7 @@ jobs:
     timeout-minutes: 90
     outputs:
       version: ${{ steps.target.outputs.version }}
+      release_tag: ${{ steps.target.outputs.release_tag }}
     permissions:
       contents: read
     steps:
@@ -28,16 +41,43 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            printf 'Release workflows must run from the default branch (%s).\n' "$DEFAULT_BRANCH" >&2
+            exit 1
+          fi
+
       - name: Validate release target
         id: target
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           release_tag="$RELEASE_TAG"
+          if [ -z "$release_tag" ]; then
+            latest_tag="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+            if [ -z "$latest_tag" ]; then
+              printf 'A release tag is required because no stable vX.Y.Z tag exists.\n' >&2
+              exit 1
+            fi
+            version="${latest_tag#v}"
+            IFS=. read -r major minor patch <<< "$version"
+            release_tag="v${major}.${minor}.$((patch + 1))"
+          fi
           if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             printf 'Invalid release tag: %s\n' "$release_tag" >&2
             exit 1
+          fi
+          if git show-ref --verify --quiet "refs/tags/$release_tag"; then
+            tag_revision="$(git rev-parse "refs/tags/$release_tag^{commit}")"
+            if [ "$tag_revision" != "$GITHUB_SHA" ]; then
+              printf 'Release tag %s already exists at %s, not %s.\n' "$release_tag" "$tag_revision" "$GITHUB_SHA" >&2
+              exit 1
+            fi
           fi
           for package in browser language; do
             package_version="$(node -p "require('./packages/${package}/package.json').version")"
@@ -47,6 +87,18 @@ jobs:
             fi
           done
           echo "version=${release_tag#v}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create local release tag
+        env:
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
+          fi
 
       - name: Set up mise
         uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
@@ -142,14 +194,17 @@ jobs:
           path: dist
 
       - name: Publish attested GitHub Release
+        if: inputs.release_type != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.release.outputs.version }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
         run: |
           set -euo pipefail
-          tag="v$VERSION"
+          tag="$RELEASE_TAG"
           prerelease_args=()
-          if [[ "$VERSION" == *-* ]]; then
+          if [[ "$VERSION" == *-* || "$RELEASE_TYPE" == pre-release ]]; then
             prerelease_args+=(--prerelease)
           fi
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
@@ -170,11 +225,15 @@ jobs:
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
           fi
 
+          target_args=()
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            target_args+=(--target "$GITHUB_SHA")
+          fi
           gh release create "$tag" dist/mcl_* dist/SHA256SUMS \
             "${prerelease_args[@]}" \
+            "${target_args[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
-            --verify-tag \
             --title "MCL $VERSION" \
             --generate-notes
 
@@ -187,6 +246,7 @@ jobs:
 
   publish_npm:
     needs: [release, publish_release]
+    if: inputs.release_type != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
