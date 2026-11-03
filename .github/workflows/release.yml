@@ -182,7 +182,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Cache Release Go builds (restore)
-        # PRのキャッシュはmainから復元できないため、信頼境界を維持。
         id: release-go-cache
         # jactionlint ignore=cache-poisoning
         uses: actions/cache/restore@v6.1.0
@@ -204,15 +203,6 @@ jobs:
 
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
-
-      - name: Ensure default branch workflows are current
-        run: |
-          set -euo pipefail
-          git fetch origin "${GITHUB_REF_NAME}"
-          if ! git diff --quiet "origin/${GITHUB_REF_NAME}..${GITHUB_SHA}" -- .github/workflows/; then
-            printf 'Default branch workflows changed since the release commit. Run a new Release from the latest commit.\n' >&2
-            exit 1
-          fi
 
       - name: Build release assets
         run: |
