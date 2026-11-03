@@ -550,6 +550,7 @@ func helmLookupMatches(resource map[string]any, apiVersion, kind, namespace stri
 	if list && namespace == "" {
 		return true
 	}
+
 	return resourceNamespace == namespace
 }
 
@@ -559,6 +560,7 @@ func helmLookupName(resource map[string]any) string {
 		return ""
 	}
 	name, _ := metadata["name"].(string)
+
 	return name
 }
 
@@ -580,6 +582,7 @@ func cloneLookupValue(value any) any {
 		for index, item := range typed {
 			cloned[index] = cloneLookupValue(item)
 		}
+
 		return cloned
 	default:
 		return value
