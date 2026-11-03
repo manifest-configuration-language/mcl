@@ -8,6 +8,10 @@
 
 ## 実装済みの改善
 
+### Helm chartのCRDとhook lifecycle
+
+`std:helm.render`はchart内のCRDを`bootstrap` lifecycleで出力し、対応するHelm hook annotationをMCLのlifecycle metadataへ変換します。NVIDIA GPU Operator v26.7.0では8 CRD、19通常resource、9 hook resourceを別phaseでrenderし、resource内容は`helm template --include-crds`出力と一致しました。hook annotationはlifecycle metadataに移るため、比較時はannotationではなくMCL operation phaseを使います。
+
 ### 決定的な非暗号学的hash
 
 infraではExternalSecretが参照するremote値を公開せず、ローカルのdata mappingやtemplateが変わったときにSecret名を変えてPod更新を促す必要があります。この用途にSHA-256は不要な暗号学的強度を持ち、既存の6桁suffixは衝突しやすいため、MCLに`std:hash.fnv1a64(value)`を追加しました。この関数は決定的なJSON bytesへ変換してFNV-1a 64-bitの全16桁を返し、秘密保護や攻撃者入力の耐衝突性には使いません。immutable resourceのcontent-addressingなど暗号学的hashを必要とする用途では`std:crypto.sha256`を引き続き使います。infra側のExternalSecret suffixの適用条件はinfraリポジトリの設計文書に記録します。
