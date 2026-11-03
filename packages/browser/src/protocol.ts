@@ -23,6 +23,12 @@ export type Request = {
   newPath?: ProjectPath;
   entrypoint?: ProjectPath2;
   /**
+   * Runtime evaluation parameters. Only check, evaluate, and render operations accept parameters.
+   */
+  parameters?: {
+    [k: string]: string;
+  };
+  /**
    * UTF-8 entrypoint source, limited by the runtime.
    */
   source: string;

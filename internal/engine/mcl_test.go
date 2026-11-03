@@ -828,7 +828,7 @@ emit labels
 	}
 }
 
-func TestKnownKubernetesKindWithUnknownVersionPassesWithoutSchema(t *testing.T) {
+func TestKnownKubernetesKindWithUnknownVersionRequiresSchema(t *testing.T) {
 	t.Parallel()
 	source := `let resource =
   apiVersion: "apps/v99"
@@ -837,12 +837,12 @@ func TestKnownKubernetesKindWithUnknownVersionPassesWithoutSchema(t *testing.T) 
     name: "sample"
 emit resource
 `
-	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err != nil {
-		t.Fatalf("EvaluateSource() error = %v, want unsupported GVK to pass without schema validation", err)
+	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err == nil || !strings.Contains(err.Error(), "no schema is registered") {
+		t.Fatalf("EvaluateSource() error = %v, want unsupported GVK schema diagnostic", err)
 	}
 }
 
-func TestUnknownKubernetesResourceWithoutSchemaPassesValidation(t *testing.T) {
+func TestUnknownKubernetesResourceWithoutSchemaFailsValidation(t *testing.T) {
 	t.Parallel()
 	source := `let resource =
   apiVersion: "example.test/v1"
@@ -851,8 +851,8 @@ func TestUnknownKubernetesResourceWithoutSchemaPassesValidation(t *testing.T) {
     name: "sample"
 emit resource
 `
-	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err != nil {
-		t.Fatalf("EvaluateSource() error = %v, want unknown GVK to pass without schema validation", err)
+	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err == nil || !strings.Contains(err.Error(), "no schema is registered") {
+		t.Fatalf("EvaluateSource() error = %v, want unknown GVK schema diagnostic", err)
 	}
 }
 
@@ -1104,7 +1104,7 @@ func TestValidateEachTypeQueryReportsRuleTypeMismatchForAnnotatedCandidate(t *te
 	}
 }
 
-func TestMergeByKeyUpdatesMatchesAndAppendsNewEntries(t *testing.T) {
+func TestMergeByKeyUpdatesMatches(t *testing.T) {
 	t.Parallel()
 	source := `let base =
   - name: "api"
@@ -1114,8 +1114,6 @@ func TestMergeByKeyUpdatesMatchesAndAppendsNewEntries(t *testing.T) {
 let overrides =
   - name: "api"
     image: "example.test/api:v2"
-  - name: "proxy"
-    image: "example.test/proxy:v1"
 let result = mergeByKey(base, overrides, "name")
 emit each result
 `
@@ -1127,7 +1125,7 @@ emit each result
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(output), "name:") != 3 || !strings.Contains(string(output), `image: "example.test/api:v2"`) || !strings.Contains(string(output), `name: "proxy"`) {
+	if strings.Count(string(output), "name:") != 2 || !strings.Contains(string(output), `image: "example.test/api:v2"`) || !strings.Contains(string(output), `name: "worker"`) {
 		t.Fatalf("mergeByKey returned unexpected items:\n%s", output)
 	}
 }

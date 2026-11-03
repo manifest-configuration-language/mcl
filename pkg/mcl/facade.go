@@ -2,6 +2,7 @@ package mcl
 
 import (
 	"context"
+	"io/fs"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 )
@@ -136,6 +137,11 @@ func EvaluateSourceWithOverlaysAndDependencies(path, source string, overlays map
 // EvaluateSourceWithOverlaysAndDependenciesContextは呼び出し元のContextを使ってソースを評価し、読み込んだモジュールのパスを返します。
 func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path, source string, overlays map[string]string) (Bundle, []string, error) {
 	return engine.EvaluateSourceWithOverlaysAndDependenciesContext(ctx, path, source, overlays)
+}
+
+// EvaluateProjectSourceWithParametersContext evaluates source from a project filesystem with explicit runtime parameters.
+func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot, entryPath, source string, files fs.FS, overlays, parameters map[string]string) (Bundle, error) {
+	return engine.EvaluateProjectSourceWithParametersContext(ctx, projectRoot, entryPath, source, files, overlays, parameters)
 }
 
 func Render(bundle Bundle) ([]byte, error) { return engine.Render(bundle) }

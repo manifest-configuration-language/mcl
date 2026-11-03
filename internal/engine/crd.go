@@ -5,6 +5,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -36,7 +37,7 @@ type customResourceDefinitionKey struct {
 // KubernetesのCustomResourceDefinitionのKind名。
 const kindCustomResourceDefinition = "CustomResourceDefinition"
 
-func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []RuntimeArtifact) error {
+func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []RuntimeArtifact) (map[customResourceDefinitionKey]struct{}, error) {
 	schemas := make(map[customResourceDefinitionKey]crdVersionSchema)
 	for index := range artifacts {
 		artifact := &artifacts[index]
@@ -48,7 +49,7 @@ func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []Runti
 		if err := registerRuntimeCustomResourceDefinition(schemas, resource); err != nil {
 			metadata := artifact.Value.Metadata()
 
-			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("CustomResourceDefinition: %w", err))
+			return nil, sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("CustomResourceDefinition: %w", err))
 		}
 	}
 	for index := range artifacts {
@@ -69,14 +70,14 @@ func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []Runti
 		}
 		metadata := artifact.Value.Metadata()
 		if !registered.served {
-			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("custom resource %s uses unserved version %q", kind, apiVersion))
+			return nil, sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("custom resource %s uses unserved version %q", kind, apiVersion))
 		}
 		if registered.typeExpr != nil {
 			annotateRuntimeSchemaProvenance(&artifact.Value, apiVersion+"/"+kind, "", registered.typeExpr)
 		}
 		instance, err := runtimeValueAsKubernetesJSON(resource)
 		if err != nil {
-			return fmt.Errorf("custom resource %s: %w", kind, err)
+			return nil, fmt.Errorf("custom resource %s: %w", kind, err)
 		}
 		validationErrors := crdvalidation.ValidateCustomResource(field.NewPath("resource"), instance, registered.validator)
 		if instanceMap, ok := instance.(map[string]any); ok {
@@ -87,11 +88,15 @@ func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []Runti
 			validationErrors = append(validationErrors, celErrors...)
 		}
 		if len(validationErrors) != 0 {
-			return fmt.Errorf("custom resource %s (%s): %w", kind, apiVersion, customResourceRuntimeValidationDiagnostic(artifact.Value, validationErrors, registered.location))
+			return nil, fmt.Errorf("custom resource %s (%s): %w", kind, apiVersion, customResourceRuntimeValidationDiagnostic(artifact.Value, validationErrors, registered.location))
 		}
 	}
+	registeredSchemas := make(map[customResourceDefinitionKey]struct{}, len(schemas))
+	for key := range schemas {
+		registeredSchemas[key] = struct{}{}
+	}
 
-	return nil
+	return registeredSchemas, nil
 }
 
 func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitionKey]crdVersionSchema, value RuntimeValue) error {
@@ -279,9 +284,9 @@ func runtimeValueAsKubernetesJSON(value RuntimeValue) (any, error) {
 		if err := validateRuntimeDecimal(parsed); err != nil {
 			return nil, err
 		}
-		converted, err := strconv.ParseFloat(value.TextValue(), 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid Decimal value %q", value.TextValue())
+		converted, exact := parsed.Float64()
+		if !exact || math.IsInf(converted, 0) || math.IsNaN(converted) {
+			return nil, fmt.Errorf("decimal %q cannot be represented exactly as a Kubernetes number", value.TextValue())
 		}
 
 		return converted, nil

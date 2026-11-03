@@ -26,6 +26,11 @@
         "oldPath": { "$ref": "#/$defs/projectPath" },
         "newPath": { "$ref": "#/$defs/projectPath" },
         "entrypoint": { "$ref": "#/$defs/projectPath", "description": "Project-relative MCL source path. Defaults to main.mcl." },
+        "parameters": {
+          "type": "object",
+          "description": "Runtime evaluation parameters. Only check, evaluate, and render operations accept parameters.",
+          "additionalProperties": { "type": "string" }
+        },
         "source": { "type": "string", "description": "UTF-8 entrypoint source, limited by the runtime." },
         "files": {
           "type": "object",
@@ -37,6 +42,10 @@
       },
       "required": ["operation", "source"],
       "allOf": [
+        {
+          "if": { "properties": { "operation": { "enum": ["parse", "lint", "format", "completion", "definition", "hover", "references", "rename", "renameFileImports"] } }, "required": ["operation"] },
+          "then": { "not": { "required": ["parameters"] } }
+        },
         {
           "if": { "properties": { "operation": { "enum": ["completion", "definition", "hover", "references", "rename"] } }, "required": ["operation"] },
           "then": { "required": ["position"] }

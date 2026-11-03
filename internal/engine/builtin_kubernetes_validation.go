@@ -3,11 +3,12 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
 )
 
-func validateBuiltinKubernetesResource(value RuntimeValue) error {
+func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[customResourceDefinitionKey]struct{}) error {
 	value = runtimeMapContents(value)
 	if value.Kind() != Map {
 		return nil
@@ -30,8 +31,16 @@ func validateBuiltinKubernetesResource(value RuntimeValue) error {
 	}
 	apiVersion, _ := valueStringField(converted, "apiVersion")
 	if !k8sschema.HasBuiltinSchema(apiVersion, identity.kind) {
-		// scope catalogとは独立してschemaを扱い、ローカルschemaがないリソースの検証を省略する。
-		return nil
+		group, version, hasGroup := strings.Cut(apiVersion, "/")
+		if !hasGroup {
+			version = group
+			group = ""
+		}
+		if _, registered := customSchemas[customResourceDefinitionKey{group: group, version: version, kind: identity.kind}]; registered {
+			return nil
+		}
+
+		return fmt.Errorf("no schema is registered for Kubernetes resource %s (%s)", identity.kind, apiVersion)
 	}
 	instance, err := runtimeValueAsKubernetesJSON(value)
 	if err != nil {

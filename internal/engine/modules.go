@@ -1159,7 +1159,39 @@ func EvaluateSourceWithOverlaysAndDependenciesContext(ctx context.Context, path,
 	return evaluateSourceWithFilesystem(ctx, path, source, overlays, nil)
 }
 
+// EvaluateProjectSourceWithParametersContext evaluates source from a project filesystem with explicit runtime parameters.
+func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot, entryPath, source string, files fs.FS, overlays, parameters map[string]string) (Bundle, error) {
+	if ctx == nil {
+		return Bundle{}, errors.New("evaluation context is required")
+	}
+	if files == nil {
+		return Bundle{}, errors.New("project filesystem is required")
+	}
+	if !filepath.IsAbs(projectRoot) {
+		return Bundle{}, fmt.Errorf("project root %q must be absolute", projectRoot)
+	}
+	if !validProjectPath(entryPath) {
+		return Bundle{}, fmt.Errorf("invalid project entry path %q", entryPath)
+	}
+	root := filepath.Clean(projectRoot)
+	entry := filepath.Join(root, filepath.FromSlash(entryPath))
+	absoluteOverlays := make(map[string]string, len(overlays))
+	for overlayPath, overlaySource := range overlays {
+		if !validProjectPath(overlayPath) {
+			return Bundle{}, fmt.Errorf("invalid project overlay path %q", overlayPath)
+		}
+		absoluteOverlays[filepath.Join(root, filepath.FromSlash(overlayPath))] = overlaySource
+	}
+	bundle, _, err := evaluateSourceWithFilesystemAndParameters(ctx, entry, source, absoluteOverlays, newProjectFilesystem(root, files), parameters)
+
+	return bundle, err
+}
+
 func evaluateSourceWithFilesystem(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem) (Bundle, []string, error) {
+	return evaluateSourceWithFilesystemAndParameters(ctx, path, source, overlays, files, nil)
+}
+
+func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem, parameters map[string]string) (Bundle, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, nil, err
 	}
@@ -1213,6 +1245,7 @@ func evaluateSourceWithFilesystem(ctx context.Context, path, source string, over
 		files:         files,
 		entry:         entry,
 		entryText:     source,
+		parameters:    maps.Clone(parameters),
 		runtimeCache:  make(map[string][]RuntimeEntry),
 		runtimeTypes:  make(map[string]map[string]ResolvedType),
 		dependencies:  dependencies,

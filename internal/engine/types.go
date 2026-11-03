@@ -401,11 +401,11 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 				continue
 			}
 			if !typeExpr.OpenRecord {
-				return runtimeMapKeyDiagnostic(entry, unknownTypeFieldError(entry.Key, typeExpr.Fields))
+				return runtimeMapKeyDiagnostic(value, entry, unknownTypeFieldError(entry.Key, typeExpr.Fields))
 			}
 			if typeExpr.AdditionalProperties != nil {
 				if err := checkRuntimeType(entry.Value, *typeExpr.AdditionalProperties, types, resolving, analysis); err != nil {
-					return runtimeMapKeyDiagnostic(entry, fmt.Errorf("additional property: %w", err))
+					return runtimeMapKeyDiagnostic(value, entry, fmt.Errorf("additional property: %w", err))
 				}
 			}
 		}
@@ -534,7 +534,7 @@ func runtimeNodeContents(value RuntimeValue) RuntimeValue {
 	return value
 }
 
-func runtimeMapKeyDiagnostic(entry RuntimeEntry, err error) error {
+func runtimeMapKeyDiagnostic(containingMap RuntimeValue, entry RuntimeEntry, err error) error {
 	locations := appendSourceLocations(nil, entry.KeySourceLocations, entry.KeySourcePath, entry.KeySpan, "Map key")
 	if len(locations) == 0 {
 		return err
@@ -546,7 +546,10 @@ func runtimeMapKeyDiagnostic(entry RuntimeEntry, err error) error {
 		code = "E201"
 	}
 
-	diagnostic := SourceDiagnosticError{Path: primary.Path, Code: code, Message: err.Error(), Span: primary.Span, Related: locations[:len(locations)-1], Cause: err}
+	related := appendSourceLocations(nil, locations[:len(locations)-1], "", SourceSpan{}, "")
+	metadata := containingMap.Metadata()
+	related = appendSourceLocations(related, metadata.SourceLocations, metadata.SourcePath, metadata.Span, "Containing map")
+	diagnostic := SourceDiagnosticError{Path: primary.Path, Code: code, Message: err.Error(), Span: primary.Span, Related: related, Cause: err}
 	if unknownField.suggestion != "" {
 		diagnostic.Message = fmt.Sprintf("unknown field %q; did you mean %q?", unknownField.name, unknownField.suggestion)
 	}

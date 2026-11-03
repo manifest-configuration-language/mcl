@@ -713,17 +713,6 @@ func addRuntimeDependencySourceLocation(value *RuntimeValue, sourcePath string, 
 		return
 	}
 	value.Value.SourceLocations = appendSourceLocations(slices.Clone(value.Value.SourceLocations), nil, sourcePath, sourceSpan, "Let expression")
-	for index := range value.List {
-		addRuntimeDependencySourceLocation(&value.List[index], sourcePath, sourceSpan)
-	}
-	for index := range value.Map {
-		entry := &value.Map[index]
-		entry.KeySourceLocations = appendSourceLocations(slices.Clone(entry.KeySourceLocations), nil, sourcePath, sourceSpan, "Let expression")
-		addRuntimeDependencySourceLocation(&entry.Value, sourcePath, sourceSpan)
-	}
-	if value.Base != nil {
-		addRuntimeDependencySourceLocation(value.Base, sourcePath, sourceSpan)
-	}
 }
 
 func astNodeSpan(node ASTNode) SourceSpan {

@@ -59,7 +59,16 @@ func (s *server) dispatchOrdered(ctx context.Context, method string, handler fun
 	s.dispatchMu.Unlock()
 
 	jsonrpc2.Async(ctx)
-	<-previous
+	select {
+	case <-previous:
+	case <-ctx.Done():
+		go func() {
+			<-previous
+			close(next)
+		}()
+
+		return nil, ctx.Err()
+	}
 	if isConcurrentReadOnlyMethod(method) {
 		snapshot := s.readOnlySnapshot()
 		close(next)

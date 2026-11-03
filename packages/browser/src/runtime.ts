@@ -579,6 +579,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     source: string,
     requestOptions: RequestOptions & {
       entrypoint?: string;
+      parameters?: Record<string, string>;
       position?: { line: number; character: number };
       newName?: string;
       oldPath?: string;
@@ -587,6 +588,20 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     entrypoint: string,
     project: { id: string; snapshot: ProjectSnapshot },
   ): Promise<MclResult> {
+    if (requestOptions.parameters !== undefined) {
+      if (!(["check", "evaluate", "render"] as string[]).includes(operation)) {
+        throw new TypeError("parameters are only valid for check, evaluate, and render operations");
+      }
+      const parameters = requestOptions.parameters as unknown;
+      if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
+        throw new TypeError("parameters must be an object with string values");
+      }
+      for (const value of Object.values(parameters)) {
+        if (typeof value !== "string") {
+          throw new TypeError("parameters must be an object with string values");
+        }
+      }
+    }
     // Validate renameFileImports paths eagerly so we never spin up a Worker.
     if (operation === "renameFileImports") {
       const { oldPath, newPath } = requestOptions;
@@ -651,6 +666,9 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
           operation,
           entrypoint,
           source,
+          ...(requestOptions.parameters !== undefined
+            ? { parameters: { ...requestOptions.parameters } }
+            : {}),
           ...(requestOptions.position ? { position: requestOptions.position } : {}),
           ...(requestOptions.newName ? { newName: requestOptions.newName } : {}),
           ...(requestOptions.oldPath ? { oldPath: requestOptions.oldPath } : {}),
@@ -717,6 +735,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       operation: MclOperation,
       requestOptions: RequestOptions & {
         entrypoint?: string;
+        parameters?: Record<string, string>;
         position?: { line: number; character: number };
         newName?: string;
         oldPath?: string;

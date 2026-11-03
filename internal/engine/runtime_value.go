@@ -347,7 +347,15 @@ func cloneRuntimeValueGraphWithBudget(value RuntimeValue, identities map[*NodeId
 		identities = make(map[*NodeIdentity]*NodeIdentity)
 	}
 	var references []*runtimeReference
-	cloned := cloneRuntimeValueGraphInto(value, identities, &references)
+	state := &runtimeValueCloneState{
+		identities: identities,
+		references: &references,
+		values:     make(map[*RuntimeValue]*RuntimeValue),
+		deferred:   make(map[*typedContinuation]*typedContinuation),
+		lambdas:    make(map[*typedLambda]*typedLambda),
+		rules:      make(map[*RuntimeRule]*RuntimeRule),
+	}
+	cloned := state.clone(value)
 	for _, reference := range references {
 		for index, identity := range reference.Targets {
 			if replacement, exists := identities[identity]; exists {
@@ -372,7 +380,10 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 		count += runtimeValueGraphSizeActive(entry.Value, active)
 	}
 	if value.Base != nil {
-		count += runtimeValueGraphSizeActive(*value.Base, active)
+		if !active[value.Base] {
+			active[value.Base] = true
+			count += runtimeValueGraphSizeActive(*value.Base, active)
+		}
 	}
 	if value.Deferred != nil {
 		if !active[value.Deferred] {
@@ -403,7 +414,6 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 			if removal := value.Deferred.Removal; removal != nil {
 				count += runtimeValueGraphSizeActive(removal.Value, active)
 			}
-			delete(active, value.Deferred)
 		}
 	}
 	if value.Lambda != nil {
@@ -412,7 +422,6 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 			for _, captured := range value.Lambda.Scope {
 				count += runtimeValueGraphSizeActive(captured, active)
 			}
-			delete(active, value.Lambda)
 		}
 	}
 	if value.Rule != nil {
@@ -421,7 +430,6 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 			for _, captured := range value.Rule.Closure {
 				count += runtimeValueGraphSizeActive(captured, active)
 			}
-			delete(active, value.Rule)
 		}
 	}
 
@@ -446,7 +454,17 @@ func runtimeBundleValueWithBudget(artifacts []RuntimeArtifact, sourcePath string
 	return value, nil
 }
 
-func cloneRuntimeValueGraphInto(value RuntimeValue, identities map[*NodeIdentity]*NodeIdentity, references *[]*runtimeReference) RuntimeValue {
+type runtimeValueCloneState struct {
+	identities map[*NodeIdentity]*NodeIdentity
+	references *[]*runtimeReference
+	values     map[*RuntimeValue]*RuntimeValue
+	deferred   map[*typedContinuation]*typedContinuation
+	lambdas    map[*typedLambda]*typedLambda
+	rules      map[*RuntimeRule]*RuntimeRule
+}
+
+func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
+	identities, references := state.identities, state.references
 	if value.Value.NodeID != nil {
 		identity, exists := identities[value.Value.NodeID]
 		if !exists {
@@ -458,115 +476,125 @@ func cloneRuntimeValueGraphInto(value RuntimeValue, identities map[*NodeIdentity
 	value.Value = value.Value.cloneMetadata()
 	value.List = slices.Clone(value.List)
 	for index := range value.List {
-		value.List[index] = cloneRuntimeValueGraphInto(value.List[index], identities, references)
+		value.List[index] = state.clone(value.List[index])
 	}
 	value.Map = slices.Clone(value.Map)
 	for index := range value.Map {
 		value.Map[index].KeySourceLocations = slices.Clone(value.Map[index].KeySourceLocations)
 		value.Map[index].KeyScope = maps.Clone(value.Map[index].KeyScope)
-		value.Map[index].Value = cloneRuntimeValueGraphInto(value.Map[index].Value, identities, references)
+		value.Map[index].Value = state.clone(value.Map[index].Value)
 		if value.Map[index].KeyExpression != nil {
 			keyExpression := *value.Map[index].KeyExpression
 			value.Map[index].KeyExpression = &keyExpression
 		}
 	}
 	if value.Base != nil {
-		base := cloneRuntimeValueGraphInto(*value.Base, identities, references)
-		value.Base = &base
+		if cloned, exists := state.values[value.Base]; exists {
+			value.Base = cloned
+		} else {
+			base := new(RuntimeValue)
+			state.values[value.Base] = base
+			*base = state.clone(*value.Base)
+			value.Base = base
+		}
 	}
 	if value.Deferred != nil {
-		deferred := *value.Deferred
-		deferred.Expression = cloneTypedExpression(deferred.Expression)
-		deferred.Arguments = slices.Clone(deferred.Arguments)
-		if deferred.Binary != nil {
-			binary := *deferred.Binary
-			binary.Left = cloneRuntimeValueGraphInto(binary.Left, identities, references)
-			binary.Right = cloneRuntimeValueGraphInto(binary.Right, identities, references)
-			binary.Scope = maps.Clone(binary.Scope)
-			if binary.RightExpression != nil {
-				expression := cloneTypedExpression(*binary.RightExpression)
-				binary.RightExpression = &expression
+		if cloned, exists := state.deferred[value.Deferred]; exists {
+			value.Deferred = cloned
+		} else {
+			deferred := *value.Deferred
+			state.deferred[value.Deferred] = &deferred
+			deferred.Expression = cloneTypedExpression(deferred.Expression)
+			deferred.Arguments = slices.Clone(deferred.Arguments)
+			if deferred.Binary != nil {
+				binary := *deferred.Binary
+				binary.Left = state.clone(binary.Left)
+				binary.Right = state.clone(binary.Right)
+				binary.Scope = maps.Clone(binary.Scope)
+				if binary.RightExpression != nil {
+					expression := cloneTypedExpression(*binary.RightExpression)
+					binary.RightExpression = &expression
+				}
+				deferred.Binary = &binary
 			}
-			deferred.Binary = &binary
-		}
-		if deferred.Conditional != nil {
-			conditional := *deferred.Conditional
-			conditional.Condition = cloneRuntimeValueGraphInto(conditional.Condition, identities, references)
-			conditional.ThenBranch = cloneTypedExpression(conditional.ThenBranch)
-			conditional.ElseBranch = cloneTypedExpression(conditional.ElseBranch)
-			conditional.Scope = maps.Clone(conditional.Scope)
-			deferred.Conditional = &conditional
-		}
-		if deferred.Predicate != nil {
-			predicate := *deferred.Predicate
-			predicate.Arguments = slices.Clone(predicate.Arguments)
-			for index := range predicate.Arguments {
-				predicate.Arguments[index] = cloneRuntimeValueGraphInto(predicate.Arguments[index], identities, references)
+			if deferred.Conditional != nil {
+				conditional := *deferred.Conditional
+				conditional.Condition = state.clone(conditional.Condition)
+				conditional.ThenBranch = cloneTypedExpression(conditional.ThenBranch)
+				conditional.ElseBranch = cloneTypedExpression(conditional.ElseBranch)
+				conditional.Scope = maps.Clone(conditional.Scope)
+				deferred.Conditional = &conditional
 			}
-			deferred.Predicate = &predicate
-		}
-		if deferred.Call != nil {
-			call := *deferred.Call
-			call.Callee = cloneRuntimeValueGraphInto(call.Callee, identities, references)
-			call.Arguments = slices.Clone(call.Arguments)
-			for index := range call.Arguments {
-				call.Arguments[index] = cloneRuntimeValueGraphInto(call.Arguments[index], identities, references)
+			if deferred.Predicate != nil {
+				predicate := *deferred.Predicate
+				predicate.Arguments = slices.Clone(predicate.Arguments)
+				for index := range predicate.Arguments {
+					predicate.Arguments[index] = state.clone(predicate.Arguments[index])
+				}
+				deferred.Predicate = &predicate
 			}
-			call.Names = slices.Clone(call.Names)
-			deferred.Call = &call
-		}
-		if deferred.Unary != nil {
-			unary := *deferred.Unary
-			unary.Operand = cloneRuntimeValueGraphInto(unary.Operand, identities, references)
-			deferred.Unary = &unary
-		}
-		if deferred.Index != nil {
-			index := *deferred.Index
-			index.Base = cloneRuntimeValueGraphInto(index.Base, identities, references)
-			index.Key = cloneRuntimeValueGraphInto(index.Key, identities, references)
-			deferred.Index = &index
-		}
-		if deferred.For != nil {
-			loop := *deferred.For
-			loop.Source = cloneRuntimeValueGraphInto(loop.Source, identities, references)
-			loop.Body = cloneTypedExpression(loop.Body)
-			loop.Scope = maps.Clone(loop.Scope)
-			for name, captured := range loop.Scope {
-				loop.Scope[name] = cloneRuntimeValueGraphInto(captured, identities, references)
+			if deferred.Call != nil {
+				call := *deferred.Call
+				call.Callee = state.clone(call.Callee)
+				call.Arguments = slices.Clone(call.Arguments)
+				for index := range call.Arguments {
+					call.Arguments[index] = state.clone(call.Arguments[index])
+				}
+				call.Names = slices.Clone(call.Names)
+				deferred.Call = &call
 			}
-			deferred.For = &loop
+			if deferred.Unary != nil {
+				unary := *deferred.Unary
+				unary.Operand = state.clone(unary.Operand)
+				deferred.Unary = &unary
+			}
+			if deferred.Index != nil {
+				index := *deferred.Index
+				index.Base = state.clone(index.Base)
+				index.Key = state.clone(index.Key)
+				deferred.Index = &index
+			}
+			if deferred.For != nil {
+				loop := *deferred.For
+				loop.Source = state.clone(loop.Source)
+				loop.Body = cloneTypedExpression(loop.Body)
+				loop.Scope = maps.Clone(loop.Scope)
+				for name, captured := range loop.Scope {
+					loop.Scope[name] = state.clone(captured)
+				}
+				deferred.For = &loop
+			}
+			if deferred.Overlay != nil {
+				overlay := *deferred.Overlay
+				overlay.Base = state.clone(overlay.Base)
+				overlay.Patch = state.clone(overlay.Patch)
+				deferred.Overlay = &overlay
+			}
+			if deferred.Removal != nil {
+				removal := *deferred.Removal
+				removal.Value = state.clone(removal.Value)
+				removal.Paths = slices.Clone(removal.Paths)
+				deferred.Removal = &removal
+			}
+			for index := range deferred.Arguments {
+				deferred.Arguments[index] = state.clone(deferred.Arguments[index])
+			}
+			if deferred.Rule != nil {
+				deferred.Rule = state.cloneRule(deferred.Rule)
+			}
+			if deferred.Reference != nil {
+				reference := *deferred.Reference
+				reference.Targets = slices.Clone(reference.Targets)
+				reference.Path = slices.Clone(reference.Path)
+				deferred.Reference = &reference
+				*references = append(*references, deferred.Reference)
+			}
+			deferred.Scope = maps.Clone(deferred.Scope)
+			for name, captured := range deferred.Scope {
+				deferred.Scope[name] = state.clone(captured)
+			}
+			value.Deferred = &deferred
 		}
-		if deferred.Overlay != nil {
-			overlay := *deferred.Overlay
-			overlay.Base = cloneRuntimeValueGraphInto(overlay.Base, identities, references)
-			overlay.Patch = cloneRuntimeValueGraphInto(overlay.Patch, identities, references)
-			deferred.Overlay = &overlay
-		}
-		if deferred.Removal != nil {
-			removal := *deferred.Removal
-			removal.Value = cloneRuntimeValueGraphInto(removal.Value, identities, references)
-			removal.Paths = slices.Clone(removal.Paths)
-			deferred.Removal = &removal
-		}
-		for index := range deferred.Arguments {
-			deferred.Arguments[index] = cloneRuntimeValueGraphInto(deferred.Arguments[index], identities, references)
-		}
-		if deferred.Rule != nil {
-			rule := cloneRuntimeRule(*deferred.Rule, identities, references)
-			deferred.Rule = &rule
-		}
-		if deferred.Reference != nil {
-			reference := *deferred.Reference
-			reference.Targets = slices.Clone(reference.Targets)
-			reference.Path = slices.Clone(reference.Path)
-			deferred.Reference = &reference
-			*references = append(*references, deferred.Reference)
-		}
-		deferred.Scope = maps.Clone(deferred.Scope)
-		for name, captured := range deferred.Scope {
-			deferred.Scope[name] = cloneRuntimeValueGraphInto(captured, identities, references)
-		}
-		value.Deferred = &deferred
 	}
 	if value.RuleResult != nil {
 		result := *value.RuleResult
@@ -574,47 +602,56 @@ func cloneRuntimeValueGraphInto(value RuntimeValue, identities map[*NodeIdentity
 		value.RuleResult = &result
 	}
 	if value.Lambda != nil {
-		lambda := *value.Lambda
-		lambda.Parameters = slices.Clone(lambda.Parameters)
-		lambda.ParameterSpans = slices.Clone(lambda.ParameterSpans)
-		lambda.Body = cloneTypedExpression(lambda.Body)
-		lambda.Scope = maps.Clone(lambda.Scope)
-		for name, captured := range lambda.Scope {
-			lambda.Scope[name] = cloneRuntimeValueGraphInto(captured, identities, references)
-		}
-		if lambda.Typing != nil {
-			typing := *lambda.Typing
-			typing.ParameterTypes = slices.Clone(typing.ParameterTypes)
-			typing.TypeScope = maps.Clone(typing.TypeScope)
-			if typing.ReturnType != nil {
-				returnType := *typing.ReturnType
-				typing.ReturnType = &returnType
+		if cloned, exists := state.lambdas[value.Lambda]; exists {
+			value.Lambda = cloned
+		} else {
+			lambda := *value.Lambda
+			state.lambdas[value.Lambda] = &lambda
+			lambda.Parameters = slices.Clone(lambda.Parameters)
+			lambda.ParameterSpans = slices.Clone(lambda.ParameterSpans)
+			lambda.Body = cloneTypedExpression(lambda.Body)
+			lambda.Scope = maps.Clone(lambda.Scope)
+			for name, captured := range lambda.Scope {
+				lambda.Scope[name] = state.clone(captured)
 			}
-			if typing.InferenceBody != nil {
-				inferenceBody := cloneTypedExpression(*typing.InferenceBody)
-				typing.InferenceBody = &inferenceBody
+			if lambda.Typing != nil {
+				typing := *lambda.Typing
+				typing.ParameterTypes = slices.Clone(typing.ParameterTypes)
+				typing.TypeScope = maps.Clone(typing.TypeScope)
+				if typing.ReturnType != nil {
+					returnType := *typing.ReturnType
+					typing.ReturnType = &returnType
+				}
+				if typing.InferenceBody != nil {
+					inferenceBody := cloneTypedExpression(*typing.InferenceBody)
+					typing.InferenceBody = &inferenceBody
+				}
+				lambda.Typing = &typing
 			}
-			lambda.Typing = &typing
+			if lambda.ModuleContext != nil {
+				moduleContext := *lambda.ModuleContext
+				lambda.ModuleContext = &moduleContext
+			}
+			value.Lambda = &lambda
 		}
-		if lambda.ModuleContext != nil {
-			moduleContext := *lambda.ModuleContext
-			lambda.ModuleContext = &moduleContext
-		}
-		value.Lambda = &lambda
 	}
 	if value.ModuleContext != nil {
 		moduleContext := *value.ModuleContext
 		value.ModuleContext = &moduleContext
 	}
 	if value.Rule != nil {
-		rule := cloneRuntimeRule(*value.Rule, identities, references)
-		value.Rule = &rule
+		value.Rule = state.cloneRule(value.Rule)
 	}
 
 	return value
 }
 
-func cloneRuntimeRule(rule RuntimeRule, identities map[*NodeIdentity]*NodeIdentity, references *[]*runtimeReference) RuntimeRule {
+func (state *runtimeValueCloneState) cloneRule(source *RuntimeRule) *RuntimeRule {
+	if cloned, exists := state.rules[source]; exists {
+		return cloned
+	}
+	rule := *source
+	state.rules[source] = &rule
 	rule.ParameterDefinitions = slices.Clone(rule.ParameterDefinitions)
 	rule.Requirements = slices.Clone(rule.Requirements)
 	for index := range rule.Requirements {
@@ -622,7 +659,7 @@ func cloneRuntimeRule(rule RuntimeRule, identities map[*NodeIdentity]*NodeIdenti
 	}
 	rule.Closure = maps.Clone(rule.Closure)
 	for name, captured := range rule.Closure {
-		rule.Closure[name] = cloneRuntimeValueGraphInto(captured, identities, references)
+		rule.Closure[name] = state.clone(captured)
 	}
 	rule.StaticTypes = maps.Clone(rule.StaticTypes)
 	rule.Types = maps.Clone(rule.Types)
@@ -631,7 +668,7 @@ func cloneRuntimeRule(rule RuntimeRule, identities map[*NodeIdentity]*NodeIdenti
 		rule.ModuleContext = &moduleContext
 	}
 
-	return rule
+	return &rule
 }
 
 func cloneValueTyping(value *ValueTyping) *ValueTyping {

@@ -7,7 +7,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
 
-var ToolchainVersion = "main"
+var ToolchainVersion = currentModuleVersion()
 
 var toolchainVersionProvider = func() string { return ToolchainVersion }
 
@@ -15,6 +15,34 @@ func SetToolchainVersionProvider(provider func() string) {
 	if provider != nil {
 		toolchainVersionProvider = provider
 	}
+}
+
+func currentModuleVersion() string {
+	buildInfo, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "main"
+	}
+	const modulePath = "github.com/manifest-configuration-language/mcl"
+	version := ""
+	if buildInfo.Main.Path == modulePath {
+		version = buildInfo.Main.Version
+	} else {
+		for _, module := range buildInfo.Deps {
+			if module.Path == modulePath {
+				version = module.Version
+				if module.Replace != nil {
+					version = module.Replace.Version
+				}
+
+				break
+			}
+		}
+	}
+	if version == "" || version == "(devel)" {
+		return "main"
+	}
+
+	return version
 }
 
 type BuildIdentity struct {

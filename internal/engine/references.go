@@ -255,6 +255,17 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 	for index := range bundle.Artifacts {
 		annotateBuiltinSchemaProvenanceRuntime(&bundle.Artifacts[index].Value)
 	}
+	var validationContext context.Context
+	if state.Module != nil {
+		validationContext = state.Module.Context
+	}
+	if validationContext == nil {
+		validationContext = context.Background()
+	}
+	customSchemas, err := validateRuntimeBundleCustomResources(validationContext, bundle.Artifacts)
+	if err != nil {
+		return err
+	}
 	for _, validation := range bundle.PendingValidations {
 		if validation.Output {
 			if err := state.Allocations.consume(len(bundle.Artifacts) + 1); err != nil {
@@ -317,7 +328,11 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 						selected = checkRuntimeType(candidate, *validation.QueryType, validation.Types, make(map[string]bool)) == nil
 					}
 				} else if validation.QuerySchema != nil {
-					selected = checkRuntimeType(candidate, *validation.QuerySchema, validation.Types, make(map[string]bool)) == nil
+					if hasProvenance, matches := runtimeValueTypeProvenance(candidate, *validation.QuerySchema, validation.Types); hasProvenance {
+						selected = matches
+					} else {
+						selected = checkRuntimeType(candidate, *validation.QuerySchema, validation.Types, make(map[string]bool)) == nil
+					}
 				}
 				if !selected {
 					continue
@@ -336,19 +351,9 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 			return err
 		}
 	}
-	var validationContext context.Context
-	if state.Module != nil {
-		validationContext = state.Module.Context
-	}
-	if validationContext == nil {
-		validationContext = context.Background()
-	}
-	if err := validateRuntimeBundleCustomResources(validationContext, bundle.Artifacts); err != nil {
-		return err
-	}
 	for index := range bundle.Artifacts {
 		artifact := &bundle.Artifacts[index]
-		if err := validateBuiltinKubernetesResource(artifact.Value); err != nil {
+		if err := validateBuiltinKubernetesResource(artifact.Value, customSchemas); err != nil {
 			metadata := artifact.Value.Metadata()
 
 			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("emitted value %d: %w", index+1, err))
@@ -612,10 +617,12 @@ func unresolvedRuntimeNodeLocations(reference *runtimeReference) []SourceDiagnos
 
 func runtimeValueTypeProvenance(value RuntimeValue, typeExpr ResolvedType, types map[string]ResolvedType) (bool, bool) {
 	typing := value.Metadata().Typing
-	if typing == nil || len(typing.TypeProvenance) == 0 {
+	if typing == nil {
 		return false, false
 	}
+	hasProvenance := false
 	for _, provenance := range typing.TypeProvenance {
+		hasProvenance = true
 		matches, compatible := staticTypeAssignable(provenance.Type, typeExpr, provenance.Types)
 		if compatible && matches {
 			return true, true
@@ -625,8 +632,17 @@ func runtimeValueTypeProvenance(value RuntimeValue, typeExpr ResolvedType, types
 			return true, true
 		}
 	}
+	if provenance := typing.SchemaProvenance; provenance != nil {
+		hasProvenance = true
+		if !provenance.Unknown && provenance.Type != nil {
+			matches, compatible := staticTypeAssignable(*provenance.Type, typeExpr, types)
+			if compatible && matches {
+				return true, true
+			}
+		}
+	}
 
-	return true, false
+	return hasProvenance, false
 }
 
 func runtimeBundleDescendants(bundle RuntimeBundle) []RuntimeValue {

@@ -254,6 +254,7 @@ export interface RequestOptions {
 
 export interface ProjectOperationOptions extends RequestOptions {
   entrypoint?: string;
+  parameters?: Record<string, string>;
 }
 
 export interface PositionOptions {

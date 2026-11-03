@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
@@ -20,6 +23,11 @@ const (
 )
 
 var builtinValidators sync.Map //nolint:gochecknoglobals
+
+type builtinValidator struct {
+	schema     *jsonschema.Schema
+	structural *structuralschema.Structural
+}
 
 type Type struct {
 	Kind                 string
@@ -49,122 +57,19 @@ func ValidateBuiltin(apiVersion, kind string, value any) []error {
 		stored, _ := builtinValidators.LoadOrStore(key, created)
 		compiled = stored
 	}
-	validator := compiled.(*jsonschema.Schema)
-	if err := validator.Validate(omitNullObjectFields([]*jsonschema.Schema{validator}, value)); err != nil {
-		return []error{err}
+	validator := compiled.(*builtinValidator)
+	var validationErrors []error
+	if err := validator.schema.Validate(value); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
+	validationErrors = append(validationErrors, validateBuiltinUnknownFields(resource.Schema, resource.Definitions, value)...)
+	if object, ok := value.(map[string]any); ok {
+		for _, err := range listtype.ValidateListSetsAndMaps(field.NewPath("resource"), validator.structural, object) {
+			validationErrors = append(validationErrors, err)
+		}
 	}
 
-	return nil
-}
-
-func omitNullObjectFields(schemas []*jsonschema.Schema, value any) any {
-	switch value := value.(type) {
-	case map[string]any:
-		fields := make(map[string]any, len(value))
-		for key, field := range value {
-			propertySchemas := propertySchemasFor(schemas, key)
-			if field == nil && len(propertySchemas) > 0 {
-				continue
-			}
-			if len(propertySchemas) == 0 {
-				fields[key] = field
-
-				continue
-			}
-			fields[key] = omitNullObjectFields(propertySchemas, field)
-		}
-
-		return fields
-	case []any:
-		items := make([]any, len(value))
-		for index, item := range value {
-			itemSchemas := itemSchemasFor(schemas, index)
-			if len(itemSchemas) > 0 {
-				items[index] = omitNullObjectFields(itemSchemas, item)
-			} else {
-				items[index] = item
-			}
-		}
-
-		return items
-	default:
-		return value
-	}
-}
-
-func propertySchemasFor(schemas []*jsonschema.Schema, name string) []*jsonschema.Schema {
-	visited := make(map[*jsonschema.Schema]struct{})
-	var properties []*jsonschema.Schema
-	var visit func(*jsonschema.Schema)
-	visit = func(schema *jsonschema.Schema) {
-		if schema == nil {
-			return
-		}
-		if _, exists := visited[schema]; exists {
-			return
-		}
-		visited[schema] = struct{}{}
-		if property := schema.Properties[name]; property != nil {
-			properties = append(properties, property)
-		}
-		visit(schema.Ref)
-		for _, child := range schema.AllOf {
-			visit(child)
-		}
-		for _, child := range schema.AnyOf {
-			visit(child)
-		}
-		for _, child := range schema.OneOf {
-			visit(child)
-		}
-	}
-	for _, schema := range schemas {
-		visit(schema)
-	}
-
-	return properties
-}
-
-func itemSchemasFor(schemas []*jsonschema.Schema, index int) []*jsonschema.Schema {
-	visited := make(map[*jsonschema.Schema]struct{})
-	var itemSchemas []*jsonschema.Schema
-	var visit func(*jsonschema.Schema)
-	visit = func(schema *jsonschema.Schema) {
-		if schema == nil {
-			return
-		}
-		if _, exists := visited[schema]; exists {
-			return
-		}
-		visited[schema] = struct{}{}
-		switch items := schema.Items.(type) {
-		case *jsonschema.Schema:
-			itemSchemas = append(itemSchemas, items)
-		case []*jsonschema.Schema:
-			if index < len(items) {
-				itemSchemas = append(itemSchemas, items[index])
-			}
-		default:
-			if index < len(schema.PrefixItems) {
-				itemSchemas = append(itemSchemas, schema.PrefixItems[index])
-			}
-		}
-		visit(schema.Ref)
-		for _, child := range schema.AllOf {
-			visit(child)
-		}
-		for _, child := range schema.AnyOf {
-			visit(child)
-		}
-		for _, child := range schema.OneOf {
-			visit(child)
-		}
-	}
-	for _, schema := range schemas {
-		visit(schema)
-	}
-
-	return itemSchemas
+	return validationErrors
 }
 
 // HasBuiltinSchemaは組み込みSchemaが指定したGVKに登録されているかを返します。
@@ -174,7 +79,7 @@ func HasBuiltinSchema(apiVersion, kind string) bool {
 	return exists || err != nil
 }
 
-func compileBuiltinValidator(resource *spec.Schema, definitions spec.Definitions) (*jsonschema.Schema, error) {
+func compileBuiltinValidator(resource *spec.Schema, definitions spec.Definitions) (*builtinValidator, error) {
 	document, err := json.Marshal(struct {
 		Schema      string           `json:"$schema"`
 		Definitions spec.Definitions `json:"definitions"`
@@ -209,8 +114,9 @@ func compileBuiltinValidator(resource *spec.Schema, definitions spec.Definitions
 	if err != nil {
 		return nil, fmt.Errorf("compile built-in Kubernetes schema: %w", err)
 	}
+	structural := builtinStructuralSchema(resource, definitions, 0)
 
-	return compiled, nil
+	return &builtinValidator{schema: compiled, structural: structural}, nil
 }
 
 func normalizeKubernetesSchemaExtensions(value any) {
@@ -223,6 +129,13 @@ func normalizeKubernetesSchemaExtensions(value any) {
 		}
 		for _, child := range value {
 			normalizeKubernetesSchemaExtensions(child)
+		}
+		if value["nullable"] == true {
+			delete(value, "nullable")
+			constraints := make(map[string]any, len(value))
+			maps.Copy(constraints, value)
+			clear(value)
+			value["anyOf"] = []any{constraints, map[string]any{"type": "null"}}
 		}
 	case []any:
 		for _, child := range value {

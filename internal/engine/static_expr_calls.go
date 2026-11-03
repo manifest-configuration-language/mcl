@@ -386,6 +386,9 @@ func inferStaticMergeByKeyBuiltinWithAnalysis(arguments []Expr, argumentTypes []
 		key, constant = analyses[2].Facts.ConstantString, true
 	}
 	if constant {
+		if hasStaticMissingExprMergeKey(arguments[0], arguments[1], key) {
+			return ResolvedType{}, false, fmt.Errorf("mergeByKey override has no matching base item for key %q", key)
+		}
 		for _, itemType := range []ResolvedType{leftMap, rightMap} {
 			_, known, exists, optional := staticField(itemType, key, types, make(map[string]bool))
 			if known && (!exists || optional) {
@@ -919,6 +922,63 @@ func hasStaticDuplicateExprMergeKey(list Expr, key string) bool {
 			}
 
 			break
+		}
+	}
+
+	return false
+}
+
+func hasStaticMissingExprMergeKey(base, overrides Expr, key string) bool {
+	baseNode, baseIsList := base.(*ListExpr)
+	overrideNode, overridesAreList := overrides.(*ListExpr)
+	if !baseIsList || !overridesAreList {
+		return false
+	}
+	baseKeys := make([]Value, 0, len(baseNode.Items))
+	for _, item := range baseNode.Items {
+		mapNode, ok := item.(*MapExpr)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, entry := range mapNode.Entries {
+			if entry.Key != key {
+				continue
+			}
+			value, known := staticMergeKeyExprValue(entry.Value)
+			if !known {
+				return false
+			}
+			baseKeys = append(baseKeys, value)
+			found = true
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+	for _, item := range overrideNode.Items {
+		mapNode, ok := item.(*MapExpr)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, entry := range mapNode.Entries {
+			if entry.Key != key {
+				continue
+			}
+			value, known := staticMergeKeyExprValue(entry.Value)
+			if !known {
+				return false
+			}
+			if !slices.ContainsFunc(baseKeys, func(baseKey Value) bool { return equalValues(baseKey, value) }) {
+				return true
+			}
+			found = true
+			break
+		}
+		if !found {
+			return false
 		}
 	}
 

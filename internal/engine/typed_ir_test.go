@@ -123,22 +123,16 @@ func TestTypedEvaluatorPropagatesExpectedTypeToEmptyNodeConfigFields(t *testing.
 	t.Parallel()
 
 	const source = `type NodeConfigBody =
-  apiVersion: String
-  kind: String
   metadata: Map<String, Any>
   nodeSelector: Map<String, String>
   tolerations: List<Map<String, Any>>
 type NodeConfig = Node<NodeConfigBody>
 let config: NodeConfig = node:
-  apiVersion: "example.test/v1"
-  kind: "NodeConfig"
   metadata:
     name: "default"
   nodeSelector: {}
   tolerations: []
 fn newNodeConfig() -> NodeConfig = node:
-  apiVersion: "example.test/v1"
-  kind: "NodeConfig"
   metadata:
     name: "default"
   nodeSelector: {}

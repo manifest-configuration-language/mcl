@@ -524,9 +524,33 @@ func evaluateListCombinationBuiltin(name string, arguments []RuntimeValue, dedup
 		return RuntimeValue{}, fmt.Errorf("%s expects two Lists", name)
 	}
 	result := RuntimeValue{Value: runtimeListResultMetadata(left), List: make([]RuntimeValue, 0, len(leftItems.List)+len(rightItems.List))}
+	seen := make(map[string][]RuntimeValue)
+	unindexed := make([]RuntimeValue, 0)
 	for _, item := range append(slices.Clone(leftItems.List), rightItems.List...) {
-		if deduplicate && slices.ContainsFunc(result.List, func(existing RuntimeValue) bool { return equalRuntimeValues(existing, item) }) {
-			continue
+		if deduplicate {
+			fingerprint, indexable := runtimeMergeKeyFingerprint(item)
+			duplicate := false
+			if indexable {
+				for _, existing := range seen[fingerprint] {
+					if equalRuntimeValues(existing, item) {
+						duplicate = true
+						break
+					}
+				}
+				if !duplicate {
+					duplicate = slices.ContainsFunc(unindexed, func(existing RuntimeValue) bool { return equalRuntimeValues(existing, item) })
+				}
+			} else {
+				duplicate = slices.ContainsFunc(result.List, func(existing RuntimeValue) bool { return equalRuntimeValues(existing, item) })
+			}
+			if duplicate {
+				continue
+			}
+			if indexable {
+				seen[fingerprint] = append(seen[fingerprint], item)
+			} else {
+				unindexed = append(unindexed, item)
+			}
 		}
 		result.List = append(result.List, item)
 	}
@@ -689,10 +713,7 @@ func mergeByKey(base, overrides, key RuntimeValue) (RuntimeValue, error) {
 			}
 		}
 		if !found {
-			if indexable && !linear {
-				indices[fingerprint] = append(indices[fingerprint], len(result.List))
-			}
-			result.List = append(result.List, override)
+			return RuntimeValue{}, fmt.Errorf("mergeByKey override has no matching base item for key %q", key.Value.Text)
 		}
 	}
 

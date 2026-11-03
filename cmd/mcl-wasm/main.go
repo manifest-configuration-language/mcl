@@ -80,6 +80,27 @@ func main() {
 }
 
 func handle(raw string, binaryArgument js.Value, projectID string) string {
+	var rawRequest map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &rawRequest); err != nil {
+		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
+	}
+	if parameterJSON, exists := rawRequest["parameters"]; exists {
+		var operation string
+		if err := json.Unmarshal(rawRequest["operation"], &operation); err != nil || (operation != "check" && operation != "evaluate" && operation != "render") {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters are only valid for check, evaluate, and render operations"}})
+		}
+		var parameters map[string]json.RawMessage
+		trimmedParameters := strings.TrimSpace(string(parameterJSON))
+		if len(trimmedParameters) == 0 || trimmedParameters[0] != '{' || json.Unmarshal(parameterJSON, &parameters) != nil {
+			return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters must be an object with string values"}})
+		}
+		for _, value := range parameters {
+			var parameter string
+			if err := json.Unmarshal(value, &parameter); err != nil || strings.TrimSpace(string(value)) == "null" {
+				return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "parameters must be an object with string values"}})
+			}
+		}
+	}
 	var input request
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		return marshal(response{Ok: false, Error: &responseError{Code: "MCL-WASM-REQUEST", Message: "request must be valid JSON"}})
@@ -164,7 +185,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 				return marshal(result)
 			}
 		}
-		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint)
+		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint, input.Parameters)
 		if evalErr != nil {
 			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, evalErr)
 			return marshal(result)
@@ -263,11 +284,11 @@ func projectFilesForSession(projectID, entrypoint, source string) (*projectFiles
 	return activeProject, nil
 }
 
-func evaluate(source string, files fs.FS, entrypoint string) (engine.Bundle, error) {
+func evaluate(source string, files fs.FS, entrypoint string, parameters map[string]string) (engine.Bundle, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
 	defer cancel()
 
-	return engine.EvaluateProjectSourceContext(ctx, browserProjectRoot(), entrypoint, source, files, nil)
+	return engine.EvaluateProjectSourceWithParametersContext(ctx, browserProjectRoot(), entrypoint, source, files, nil, parameters)
 }
 
 func copyBinaryFiles(value js.Value, source string, files map[string]fileInput) (map[string][]byte, error) {
