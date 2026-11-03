@@ -144,9 +144,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          ( goreleaser check --snapshot ) &
-          goreleaser_pid=$!
-
           ( mise run lint:gha ) &
           lint_gha_pid=$!
 
@@ -159,7 +156,6 @@ jobs:
           ( mise run release:reference ) &
           reference_pid=$!
 
-          wait "$goreleaser_pid" || exit $?
           wait "$lint_gha_pid" || exit $?
           wait "$browser_test_pid" || exit $?
           wait "$parity_pid" || exit $?

@@ -3,7 +3,6 @@ go = "1.27.3"
 golangci-lint = "2.15.0"
 node = "26.13.0"
 jactionlint = "2.4.0"
-goreleaser = "2.19.0"
 "aqua:WebAssembly/binaryen" = "133"
 "aqua:anchore/syft" = "1.56.0"
 

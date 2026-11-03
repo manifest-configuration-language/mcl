@@ -30,9 +30,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.target.outputs.version }}
       release_tag: ${{ steps.target.outputs.tag }}
@@ -98,6 +98,7 @@ jobs:
         env:
           BUMP: ${{ inputs.bump }}
           CHANNEL: ${{ inputs.channel }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           latest="$(git tag --list 'v*' |
@@ -108,16 +109,14 @@ jobs:
             exit 1
           fi
 
-          # If the target SHA already has a published release, reuse that version.
-          released_version="$(gh release view --json tagName --jq '.tagName' "$latest" 2>/dev/null || true)"
-          if [[ "$released_version" == "v${latest}" ]]; then
-            existing_sha="$(git rev-list -n 1 "$latest")"
-            if [[ "$existing_sha" == "$GITHUB_SHA" ]]; then
-              printf 'Commit %s is already released as %s.\n' "$GITHUB_SHA" "$latest" >&2
-              echo "version=$latest" >> "$GITHUB_OUTPUT"
-              echo "tag=v$latest" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          # Reuse the release version when rerunning the same commit after a partial publish.
+          existing_release_tag="$(gh release view "$latest" --json tagName --jq '.tagName' 2>/dev/null || true)"
+          if [[ "$CHANNEL" == stable && "$existing_release_tag" == "$latest" && "$(git rev-list -n 1 "$latest")" == "$GITHUB_SHA" ]]; then
+            version="${latest#v}"
+            printf 'Commit %s already has release %s; resuming publication.\n' "$GITHUB_SHA" "$latest" >&2
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "tag=$latest" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           IFS=. read -r major minor patch <<< "${latest#v}"
@@ -145,7 +144,15 @@ jobs:
             number=1
             if [[ -n "$previous" ]]; then
               if [[ "$(git rev-list -n 1 "$previous")" == "$GITHUB_SHA" ]]; then
-                printf 'Commit %s is already released as %s.\n' "$GITHUB_SHA" "$previous" >&2
+                existing_release_tag="$(gh release view "$previous" --json tagName --jq '.tagName' 2>/dev/null || true)"
+                if [[ "$existing_release_tag" == "$previous" ]]; then
+                  version="${previous#v}"
+                  printf 'Commit %s already has release %s; resuming publication.\n' "$GITHUB_SHA" "$previous" >&2
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+                  echo "tag=$previous" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                printf 'Tag %s already points to commit %s but has no release.\n' "$previous" "$GITHUB_SHA" >&2
                 exit 1
               fi
               number=$((${previous##*.} + 1))
@@ -167,126 +174,201 @@ jobs:
           RELEASE_TAG: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            existing_sha="$(git rev-list -n 1 "$RELEASE_TAG")"
+            if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
+              printf 'Tag %s already points to %s, expected %s.\n' \
+                "$RELEASE_TAG" "$existing_sha" "$GITHUB_SHA" >&2
+              exit 1
+            fi
+            printf 'Tag %s already points to this commit; reusing it.\n' "$RELEASE_TAG"
+            exit 0
+          fi
           git tag "$RELEASE_TAG"
+
+  build-cli:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64]
+    permissions:
+      contents: read
+    env:
+      GOOS: ${{ matrix.os }}
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: "0"
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: jdx/mise-action@v5.2.6
+        with:
+          install: true
+          install_args: go
+          cache: true
+
+      - name: Build CLI
+        run: |
+          go build -trimpath \
+            -ldflags="-s -w -X=github.com/manifest-configuration-language/mcl/internal/engine.ToolchainVersion=${VERSION}" \
+            -o "mcl${{ matrix.os == 'windows' && '.exe' || '' }}" \
+            ./cmd/mcl
+
+      - name: Create archive
+        run: |
+          mkdir -p dist
+          if [[ "${GOOS}" == "windows" ]]; then
+            zip -q "dist/mcl_${VERSION}_${GOOS}_${GOARCH}.zip" mcl.exe
+          else
+            tar -czf "dist/mcl_${VERSION}_${GOOS}_${GOARCH}.tar.gz" mcl
+          fi
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          file: dist/mcl_${{ env.VERSION }}_${{ env.GOOS }}_${{ env.GOARCH }}.${{ matrix.os == 'windows' && 'zip' || 'tar.gz' }}
+          format: spdx-json
+          output-file: dist/mcl_${{ env.VERSION }}_${{ env.GOOS }}_${{ env.GOARCH }}.sbom.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: cli-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
+
+  build-wasm:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up mise
         uses: jdx/mise-action@v5.2.6
         with:
           install: true
           install_args: >-
-            go
-            node
-            goreleaser
+            go node
             aqua:WebAssembly/binaryen
             aqua:anchore/syft
-          cache: false
+          cache: true
 
-      - name: Get Go cache paths
-        id: go-cache-paths
-        run: |
-          {
-            echo "build=$(go env GOCACHE)"
-            echo "modules=$(go env GOMODCACHE)"
-            echo "version=$(go env GOVERSION)"
-          } >> "$GITHUB_OUTPUT"
+      - name: Install npm package workspace
+        run: pnpm install --frozen-lockfile
 
-      - name: Cache Release Go builds (restore)
-        # jactionlint ignore=cache-poisoning
-        uses: actions/cache/restore@v6.1.0
-        with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.build }}
-            ${{ steps.go-cache-paths.outputs.modules }}
-          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.run_id }}
-          restore-keys: |
-            release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-
-            release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
-            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
-
-      - name: Build release browser WASM
-        # 公開用WASMにはリリースバージョンを埋め込むため、共有WASMキャッシュを使わずにビルドする
-        env:
-          MCL_VERSION: ${{ steps.target.outputs.version }}
+      - name: Build browser WASM
         run: mise run wasm:build
 
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
 
-      - name: Build release assets
-        run: |
-          set -euo pipefail
-          goreleaser release --skip=publish --clean
-          (cd dist && sha256sum --check SHA256SUMS)
-
-      - name: Verify released CLI version
-        env:
-          VERSION: ${{ steps.target.outputs.version }}
-        run: |
-          set -euo pipefail
-          tar -xOzf "dist/mcl_${VERSION}_linux_amd64.tar.gz" mcl > "$RUNNER_TEMP/mcl"
-          chmod +x "$RUNNER_TEMP/mcl"
-          actual="$("$RUNNER_TEMP/mcl" version | awk '{print $2}')"
-          if [[ "$actual" != "$VERSION" ]]; then
-            printf 'The release binary reports version %s, expected %s.\n' "$actual" "$VERSION" >&2
-            exit 1
-          fi
-
-      - name: Cache Release Go builds (save)
-        # GoReleaser の6ターゲットビルド完了直後に保存。npm パッケージ処理が失敗しても
-        # クロスコンパイル結果を次回の Release で再利用できる
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.build }}
-            ${{ steps.go-cache-paths.outputs.modules }}
-          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.run_id }}
-
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: mcl-${{ steps.target.outputs.version }}
-          path: |
-            dist/mcl_*
-            dist/SHA256SUMS
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 30
-          overwrite: true
-
-      - name: Set up pnpm
-        run: corepack enable && pnpm --version
-
-      - name: Install npm package workspace
-        run: pnpm install --frozen-lockfile
-
       - name: Set npm package versions
-        env:
-          VERSION: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
           npm --prefix packages/browser pkg set "version=$VERSION"
           npm --prefix packages/language pkg set "version=$VERSION"
 
       - name: Generate reference package contents
-        env:
-          MCL_VERSION: ${{ steps.target.outputs.version }}
         run: mise run release:reference
 
       - name: Pack and verify npm packages
-        env:
-          MCL_VERSION: ${{ steps.target.outputs.version }}
         run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-npm-packages"
 
-      - uses: actions/upload-artifact@v7.0.2
+      - name: Package WASM release assets
+        run: |
+          mkdir -p dist
+          tar -czf "dist/mcl_${VERSION}_wasm.tar.gz" \
+            -C .build/release-assets mcl.wasm.gz wasm_exec.js
+
+      - name: Generate SBOM for WASM
+        uses: anchore/sbom-action@v0.24.0
         with:
-          name: mcl-npm-${{ steps.target.outputs.version }}
+          file: dist/mcl_${{ env.VERSION }}_wasm.tar.gz
+          format: spdx-json
+          output-file: dist/mcl_${{ env.VERSION }}_wasm.sbom.json
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: wasm-release
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload npm packages
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: mcl-npm-${{ env.VERSION }}
           path: ${{ runner.temp }}/mcl-npm-packages/
           compression-level: 0
           if-no-files-found: error
-          retention-days: 90
-          overwrite: true
+
+  assemble:
+    needs: [prepare, build-cli, build-wasm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Download all CLI artifacts
+        uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download WASM release assets
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: wasm-release
+          path: dist
+
+      - name: Verify release artifacts
+        run: |
+          set -euo pipefail
+          tar -xOzf "dist/mcl_${VERSION}_linux_amd64.tar.gz" mcl > "$RUNNER_TEMP/mcl"
+          chmod +x "$RUNNER_TEMP/mcl"
+          version="$("$RUNNER_TEMP/mcl" version | awk '{print $2}')"
+          if [ "$version" != "${VERSION}" ]; then
+            printf 'Release binary version %s does not match expected %s.\n' \
+              "$version" "${VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- * > SHA256SUMS)
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: mcl-${{ env.VERSION }}
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
 
   attest:
-    needs: release
+    needs: [prepare, assemble]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -294,10 +376,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Download release assets
+      - name: Download release bundle
         uses: actions/download-artifact@v8.0.2
         with:
-          name: mcl-${{ needs.release.outputs.version }}
+          name: mcl-${{ needs.prepare.outputs.version }}
           path: dist
 
       - name: Attest release assets
@@ -306,7 +388,7 @@ jobs:
           subject-path: dist/mcl_*
 
   publish_release:
-    needs: [release, attest]
+    needs: [prepare, assemble, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -314,17 +396,17 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Download release assets
+      - name: Download release bundle
         uses: actions/download-artifact@v8.0.2
         with:
-          name: mcl-${{ needs.release.outputs.version }}
+          name: mcl-${{ needs.prepare.outputs.version }}
           path: dist
 
       - name: Check existing draft for re-run
         id: existing-release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           set -euo pipefail
 
@@ -351,8 +433,8 @@ jobs:
         if: steps.existing-release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
-          RELEASE_TITLE: MCL ${{ needs.release.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_TITLE: MCL ${{ needs.prepare.outputs.version }}
           CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
@@ -373,23 +455,41 @@ jobs:
           gh release create "${args[@]}"
 
   publish_npm:
-    needs: [release, publish_release]
+    needs: [prepare, publish_release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
     steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node and npm
+        uses: jdx/mise-action@v5.2.6
+        with:
+          install: true
+          install_args: node
+          cache: false
+
+      - name: Verify Node and npm versions
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+
       - name: Download npm packages
         uses: actions/download-artifact@v8.0.2
         with:
-          name: mcl-npm-${{ needs.release.outputs.version }}
+          name: mcl-npm-${{ needs.prepare.outputs.version }}
           path: ${{ runner.temp }}/mcl-npm-packages
 
       - name: Publish Browser SDK to npm
         uses: JS-DevTools/npm-publish@v4.1.5
         with:
-          package: ${{ runner.temp }}/mcl-npm-packages/manifest-configuration-language-browser-${{ needs.release.outputs.version }}.tgz
+          package: ${{ runner.temp }}/mcl-npm-packages/manifest-configuration-language-browser-${{ needs.prepare.outputs.version }}.tgz
           access: public
           provenance: true
           strategy: all
@@ -398,7 +498,7 @@ jobs:
       - name: Publish Language Package to npm
         uses: JS-DevTools/npm-publish@v4.1.5
         with:
-          package: ${{ runner.temp }}/mcl-npm-packages/manifest-configuration-language-language-${{ needs.release.outputs.version }}.tgz
+          package: ${{ runner.temp }}/mcl-npm-packages/manifest-configuration-language-language-${{ needs.prepare.outputs.version }}.tgz
           access: public
           provenance: true
           strategy: all
