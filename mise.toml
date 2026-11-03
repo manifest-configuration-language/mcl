@@ -5,7 +5,7 @@ node = "24.22.0"
 jactionlint = "2.2.0"
 goreleaser = "2.18.3"
 "aqua:WebAssembly/binaryen" = "133"
-"aqua:anchore/syft" = "1.54.1"
+"aqua:anchore/syft" = "1.56.0"
 
 [tasks."lint:gha"]
 description = "Lint GitHub Actions workflows"
