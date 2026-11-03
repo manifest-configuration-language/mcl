@@ -114,6 +114,7 @@ func TestHelmRenderBuildsManifestHookAndCRDBundle(t *testing.T) {
 	files := map[string]string{
 		"Chart.yaml":          "apiVersion: v2\nname: sample\nversion: 1.0.0\n",
 		"templates/hook.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n  annotations:\n    helm.sh/hook: pre-install\n    helm.sh/hook-weight: \"-2\"\n    helm.sh/hook-delete-policy: hook-succeeded\n",
+		"templates/NOTES.txt": `{{ lookup "v1" "Secret" "default" "credentials" }}`,
 		"crds/sample.yaml":    "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: samples.example.test\nspec:\n  group: example.test\n  scope: Namespaced\n  names:\n    plural: samples\n    singular: sample\n    kind: Sample\n    listKind: SampleList\n  versions:\n    - name: v1\n      served: true\n      storage: true\n      schema:\n        openAPIV3Schema:\n          type: object\n",
 	}
 	for name, content := range files {

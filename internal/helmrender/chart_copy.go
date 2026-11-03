@@ -3,7 +3,9 @@ package helmrender
 import (
 	"maps"
 	"slices"
+	"strings"
 
+	"helm.sh/helm/v4/pkg/chart/common"
 	v2 "helm.sh/helm/v4/pkg/chart/v2"
 )
 
@@ -36,6 +38,22 @@ func cloneChart(source *v2.Chart) *v2.Chart {
 	clone.SetDependencies(clonedDependencies...)
 
 	return &clone
+}
+
+func cloneChartWithoutNotes(source *v2.Chart) *v2.Chart {
+	clone := cloneChart(source)
+	removeNotesTemplates(clone)
+
+	return clone
+}
+
+func removeNotesTemplates(source *v2.Chart) {
+	source.Templates = slices.DeleteFunc(source.Templates, func(file *common.File) bool {
+		return file == nil || strings.HasSuffix(file.Name, "NOTES.txt")
+	})
+	for _, dependency := range source.Dependencies() {
+		removeNotesTemplates(dependency)
+	}
 }
 
 func cloneChartValues(values map[string]any) map[string]any {

@@ -446,6 +446,10 @@ func Render(ctx context.Context, source Chart, values map[string]any) (map[strin
 }
 
 func renderSource(ctx context.Context, source chart.Charter, values map[string]any) (map[string]string, error) {
+	if helmChart, ok := source.(*v2.Chart); ok {
+		source = cloneChartWithoutNotes(helmChart)
+	}
+
 	return (engine.Engine{
 		Strict: false, EnableDNS: false, CustomTemplateFuncs: hermeticFunctions(),
 	}).RenderWithContext(ctx, source, values)
