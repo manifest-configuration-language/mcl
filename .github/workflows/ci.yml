@@ -154,3 +154,13 @@ jobs:
             packages/browser/src/limits.ts
       - name: Pack and verify npm packages
         run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
+      - name: Save Go module cache
+        if: >-
+          ${{
+            success() &&
+            steps.browser-go-cache-restore.outputs.cache-hit != 'true'
+          }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ steps.browser-go-cache-paths.outputs.modules }}
+          key: ${{ steps.browser-go-cache-restore.outputs.cache-primary-key }}
