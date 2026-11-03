@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag (e.g. v1.2.3). Empty uses the next patch after the latest stable vX.Y.Z tag."
+        description: "リリースタグ(v1.2.3など)。未指定の場合は、最新の安定版vX.Y.Zタグの次のパッチバージョンを使用します。"
         required: false
         type: string
       release_type:
-        description: GitHub Release type
+        description: GitHub Releaseの公開種別
         required: true
         default: latest
         type: choice
@@ -113,7 +113,7 @@ jobs:
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
 
       - name: Restore Go cache
-        # The cache is populated only by the trusted default-branch CI run.
+        # キャッシュは信頼できるデフォルトブランチのCI実行でのみ作成されます。
         # jactionlint ignore=cache-poisoning
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
