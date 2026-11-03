@@ -51,13 +51,25 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-
-      - name: Prepare browser WASM
-        uses: ./.github/actions/prepare-wasm
+      - name: Cache browser WebAssembly output
+        # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
+        # jactionlint ignore=cache-poisoning
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/browser/dist/
+          key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum', '**/*.go', 'internal/k8sschema/data/**', 'packages/browser/scripts/build-wasm.mjs') }}
+
+      - name: Build browser WebAssembly
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: mise run wasm:build
+
+      - name: Prepare release WebAssembly assets
+        run: mise run release:wasm
 
       - name: Run project quality checks
         run: mise run quality:check
-      - name: Prepare release WebAssembly assets
-        run: mise run release:wasm
+      - name: Validate GoReleaser configuration
+        run: goreleaser check
       - name: Lint GitHub Actions workflows
         run: mise run lint:gha
       - name: Run Browser SDK unit tests
@@ -73,7 +85,7 @@ jobs:
       - name: Pack and verify npm packages
         env:
           MCL_VERSION: ${{ steps.package-version.outputs.version }}
-        run: scripts/verify-package-tarballs.sh --prebuilt-browser-wasm
+        run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
       - name: Check generated protocol sources are current
         run: |
           go generate ./cmd/mcl-wasm

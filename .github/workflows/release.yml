@@ -210,9 +210,6 @@ jobs:
             exit 1
           fi
 
-      - name: Validate GoReleaser configuration
-        run: goreleaser check
-
       - name: Build release assets
         run: |
           set -euo pipefail
@@ -264,7 +261,7 @@ jobs:
       - name: Pack and verify npm packages
         env:
           MCL_VERSION: ${{ steps.target.outputs.version }}
-        run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-npm-packages" --prebuilt-browser-wasm
+        run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-npm-packages"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -391,7 +388,7 @@ jobs:
       - name: Set up Node.js for npm Trusted Publishing
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.22.0
+          node-version-file: mise.toml
 
       - name: Download npm packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

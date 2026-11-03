@@ -51,19 +51,6 @@ gzip -9 -n -f .build/release-assets/mcl.wasm
 gzip -dc .build/release-assets/mcl.wasm.gz | cmp - packages/browser/dist/mcl.wasm
 '''
 
-[tasks."release:package"]
-description = "Package CLI and WebAssembly release assets with checksums"
-run = '''
-set -eu
-if [ "${MCL_RELEASE_ASSETS_STAGED:-false}" != true ]; then
-  mise run wasm:build
-  mise run release:wasm
-fi
-: "${MCL_VERSION:?MCL_VERSION must be set to a release version}"
-goreleaser release --snapshot --clean
-(cd dist && sha256sum --check SHA256SUMS)
-'''
-
 [tasks."release:reference"]
 description = "Generate CLI and standard library reference release assets"
 run = '''

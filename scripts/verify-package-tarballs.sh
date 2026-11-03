@@ -5,12 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 output_directory="$temporary_directory/packages"
-prebuilt_browser_wasm=false
 for argument in "$@"; do
-  case "$argument" in
-    --prebuilt-browser-wasm) prebuilt_browser_wasm=true ;;
-    *) output_directory="$argument" ;;
-  esac
+  output_directory="$argument"
 done
 mkdir -p "$output_directory"
 output_directory="$(cd "$output_directory" && pwd)"
@@ -39,14 +35,10 @@ for package in browser language; do
   archive_name="${archive_name//\//-}-$package_version.tgz"
   (
     cd "$source_directory"
-    if [[ "$package" == browser && "$prebuilt_browser_wasm" == true ]]; then
-      MCL_BROWSER_WASM_PREBUILT=true pnpm pack --pack-destination "$output_directory" >/dev/null
-    else
-      pnpm pack --pack-destination "$output_directory" >/dev/null
-    fi
+    pnpm pack --pack-destination "$output_directory" >/dev/null
   )
   archive="$archive_name"
-  if [[ "$package" == browser && "$prebuilt_browser_wasm" == true ]]; then
+  if [[ "$package" == browser ]]; then
     if [[ ! -f "$root/.build/release-assets/mcl.wasm.gz" ]]; then
       printf 'The staged GitHub Release WASM is missing.\n' >&2
       exit 1

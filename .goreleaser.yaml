@@ -52,16 +52,5 @@ checksum:
   name_template: SHA256SUMS
   algorithm: sha256
 
-release:
-  github:
-    owner: manifest-configuration-language
-    name: mcl
-  name_template: "MCL {{ .Version }}"
-  draft: true
-  replace_existing_draft: true
-
 changelog:
   use: git
-
-snapshot:
-  version_template: "{{ .Env.MCL_VERSION }}"
