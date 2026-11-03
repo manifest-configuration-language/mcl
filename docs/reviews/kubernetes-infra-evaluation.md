@@ -1,0 +1,40 @@
+# Kubernetesインフラ評価で見つかったMCLの課題
+
+## 対象
+
+この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、アプリケーションのdeployment record、ApplicationSet Plugin Generatorの設計、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
+
+各項目では、評価で確認した挙動、実装済みの変更、未解決の改善候補を区別します。MCLの実装やrelease状況が変わった場合は該当項目を更新します。
+
+## 実装済みの変更
+
+- Helm Adapterは、Helm templateを評価する前にchartの依存条件を処理する必要があります。無効なsubchartもtemplate対象に含めていたため、無効subchart内の重複YAML keyでrenderが失敗することがありました。読み込み済みchartを複製してからHelmの依存条件を適用し、処理済みchartでrenderする変更をMCL作業treeに実装しました。
+- Kubernetes組み込みschema validationは、schemaで宣言されたobject propertyのnullを省略値として扱い、`additionalProperties` map内のnull値はvalidation対象に残す必要があります。caretta chartではoptional annotationのnullが出力され、この区別がないとvalidationに失敗しました。schemaに基づくnull正規化をMCL作業treeに実装しました。
+- MCL project rootで共有する`mcl.lock`をentrypointごとに更新しても、別entrypointが使う依存情報を保持する必要があります。以前の`mcl update <entrypoint>`はlockfile全体をentrypoint到達依存だけで置き換えていたため、appを順に更新すると別appのchart hashが消えました。到達した依存だけを更新し、ほかのentrypointの記録を保持する変更をMCL作業treeに実装しました。未使用依存を明示的に削除する機能は未実装です。
+- MCL 0.3.14では、Helm chart取得時にHTTPS redirectを最大10回まで追従し、HTTPへの降格を拒否する変更が入りました。external-dns-cloudflareの公式archive取得でこの挙動を確認しました。
+
+上記の変更はMCL作業treeで確認した状態です。releaseに含まれたことを確認した場合は、そのrelease versionとCI結果をこの節に追記します。
+
+## 未解決の機能不足
+
+### 内容から決定するimmutable resource名
+
+既存JsonnetはTalos patchやmachine設定の内容からdigestを計算し、immutable SecretやTemplateの名前に使います。MCL化したCAPI resourceとactions-runnersのConfigMapでは既存のdigest suffixを固定値で記述しており、入力を変更した場合はresource名も手動で更新する必要があります。
+
+MCL標準ライブラリに、正規化JSON bytesを入力とする`std:crypto.sha256`を追加し、digest長を呼び出し側で明示できる形が改善案です。PluginがManifest値を暗黙に書き換える方法は採用しません。
+
+### module間の型参照
+
+`import "./types.mcl" as types`で読み込んだmoduleがexportする型を、別moduleの型定義から`types.Power`のように参照すると、現行MCLはunknown typeとして拒否します。複数clusterのTart Power Unionを共有できず、同じ型定義を複数moduleに重複しています。qualified type importを実装するか、共有型を展開できる機能が必要です。
+
+### 空のMapとListの型推論
+
+MCLは空のMapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
+
+### Helm YAML parserのplain scalar
+
+有効なcert-manager subchartが出力するRBAC名の一部には、plain scalar内にコロンを含む値があります。現行MCLのYAML parserはその値を拒否します。Topolvm 17.2.0ではcert-manager subchartが無効で、Helm依存条件処理によってtemplate評価前に除外されるため、この問題は発生しません。YAML仕様に沿ってplain scalarをparseできるようにする必要があります。
+
+### 再現性と証明書生成
+
+trust-manager 0.24.0はHelm template内で`genCA`を使ってランダムな証明書を生成します。MCLは再現可能な評価を保つため、このようなrandom関数を無効にしています。決定性を損なわずに生成結果を固定する入力方法が必要か、chart側の値で証明書生成を無効にできるかを個別に評価します。random関数を無条件に許可する変更は改善案に含めません。

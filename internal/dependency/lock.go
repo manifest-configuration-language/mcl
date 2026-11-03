@@ -202,6 +202,7 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 		}
 		lock.gitSources[key] = entry
 	}
+
 	return lock, nil
 }
 

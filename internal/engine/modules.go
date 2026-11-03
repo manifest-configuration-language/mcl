@@ -1030,10 +1030,6 @@ func dependentModuleSourcesWithContext(ctx context.Context, target string, sourc
 	return result, nil
 }
 
-func evaluateFile(ctx context.Context, path string, update bool, operation string) (Bundle, error) {
-	return evaluateFileWithParameters(ctx, path, update, operation, nil)
-}
-
 func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]string) (Bundle, error) {
 	return evaluateFileWithFilesystem(ctx, path, update, operation, parameters, nil)
 }

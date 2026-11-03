@@ -68,6 +68,7 @@ func omitNullObjectFields(schemas []*jsonschema.Schema, value any) any {
 			}
 			if len(propertySchemas) == 0 {
 				fields[key] = field
+
 				continue
 			}
 			fields[key] = omitNullObjectFields(propertySchemas, field)
@@ -162,6 +163,7 @@ func itemSchemasFor(schemas []*jsonschema.Schema, index int) []*jsonschema.Schem
 	for _, schema := range schemas {
 		visit(schema)
 	}
+
 	return itemSchemas
 }
 

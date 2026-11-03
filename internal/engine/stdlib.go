@@ -59,8 +59,10 @@ func LookupStandardLibraryFunction(module, name string) (StandardLibraryFunction
 	return StandardLibraryFunction{}, false
 }
 
-const stdlibListModule = "std:list"
-const stdlibContextModule = "std:context"
+const (
+	stdlibListModule    = "std:list"
+	stdlibContextModule = "std:context"
+)
 
 const fnParameter = "parameter"
 
