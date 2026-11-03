@@ -22,6 +22,10 @@ infraではExternalSecretが参照するremote値を公開せず、ローカル�
 
 MCLは空のMapやListの要素型を推論できない場合があります。Scylla NodeConfigの空の`nodeSelector`や`tolerations`では、それぞれの値にローカルな型注釈が必要でした。空collectionを含むrecordの型を宣言から推論するか、明示的な型注釈を簡潔に書ける構文が改善候補です。
 
+### Helm dependency metadataの不一致
+
+Scylla Manager chart v1.21.1の親chartは`scylla` dependencyのversion `1.0.0`を宣言しますが、同じarchiveに含まれる`scylla` subchartの`Chart.yaml`はversion `0.0.0`を記録しています。Helmはこのarchiveから7 resourceをrenderしますが、MCL 0.3.20の`mcl update`はdependency versionを照合し、matching subchartがないとして失敗します。確認したparent archiveのSHA-256は`2a2bdbda299dcb6314181fc285ec179a99d9b7009f23269be23cb24962981715`です。MCLがpackage内のsubchartをどのようにdependency constraintへ対応付けるかをHelmの挙動と照合し、親chart archiveのhash固定を保ったまま不一致を扱う選択肢を評価します。
+
 ### Helm chart内の証明書生成
 
 rabbitmq-topology-operator 0.4.1は`useCertManager: true`を指定しても、`templates/validating-webhook-configuration.yaml`で`genCA`を呼び出します。MCLのhermetic Helm renderingは`genCA`を無効にしているため、`mcl update`が失敗します。random関数を無条件に許可せずにこのchartをrenderできるよう、chartが既存の証明書を受け取る設定、または決定的な証明書入力を扱う方法を確認する必要があります。
