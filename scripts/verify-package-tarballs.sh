@@ -35,9 +35,33 @@ for package in browser language; do
   fi
 done
 
-cd "$output_directory"
-for archive in ./*.tgz; do
+for archive in "$output_directory"/*.tgz; do
   echo "Validating $archive ..."
   pnpm --dir "$root/packages/browser" exec publint --strict "$archive"
   pnpm --dir "$root/packages/browser" exec attw --ignore-missing-peer "$archive"
+done
+
+# Import each public entrypoint from the packed files. Keep the temporary
+# node_modules tree under the package workspace so its installed dependencies
+# remain available without fetching anything from the network.
+for package in browser language; do
+  source_directory="$root/packages/$package"
+  package_name="$(node -p "require('$source_directory/package.json').name")"
+  package_version="$(node -p "require('$source_directory/package.json').version")"
+  archive_name="${package_name#@}"
+  archive_name="${archive_name//\//-}-$package_version.tgz"
+  verify_directory="$(mktemp -d "$source_directory/.package-verify.XXXXXX")"
+  trap 'rm -rf "$verify_directory"' EXIT
+  mkdir -p "$verify_directory/node_modules/$package_name"
+  tar -xzf "$output_directory/$archive_name" -C "$verify_directory/node_modules/$package_name" --strip-components=1
+  (
+    cd "$verify_directory"
+    if [[ "$package" == browser ]]; then
+      node --input-type=module -e "await import('$package_name')"
+    else
+      node --input-type=module -e "await import('$package_name'); await import('$package_name/textmate', { with: { type: 'json' } })"
+    fi
+  )
+  rm -rf "$verify_directory"
+  trap - EXIT
 done
