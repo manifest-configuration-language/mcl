@@ -68,7 +68,10 @@ const (
 	stdlibContextModule = "std:context"
 )
 
-const fnParameter = "parameter"
+const (
+	fnParameter    = "parameter"
+	fnIntParameter = "intParameter"
+)
 
 type builtinInference uint8
 
@@ -115,6 +118,7 @@ var builtinRegistry = []builtin{
 	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, documentation: "指定したHelmチャートをレンダリングします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, documentation: "値にLifecycleイベントを関連付けます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
 	{name: fnParameter, module: stdlibContextModule, exportName: fnParameter, parameters: []string{"name"}, documentation: "明示的に指定された実行parameterを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContextParameter, contextEvaluation: evaluateContextParameter},
+	{name: fnIntParameter, module: stdlibContextModule, exportName: fnIntParameter, parameters: []string{"name"}, documentation: "明示的に指定された10進整数parameterをIntとして返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContextIntParameter, contextEvaluation: evaluateContextIntParameter},
 }
 
 var standardFunctions = func() map[string]struct{} {
@@ -257,6 +261,26 @@ func evaluateContextParameter(arguments []RuntimeValue, state *EvaluationState) 
 	}
 
 	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: value}}, nil
+}
+
+func evaluateContextIntParameter(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
+	if len(arguments) != 1 || arguments[0].Kind() != String {
+		return RuntimeValue{}, errors.New("context.intParameter expects a String name")
+	}
+	if state == nil || state.Module == nil {
+		return RuntimeValue{}, errors.New("context.intParameter requires module context")
+	}
+	name := arguments[0].Value.Text
+	value, exists := state.Module.Parameters[name]
+	if !exists {
+		return RuntimeValue{}, fmt.Errorf("parameter %q is not set; pass --parameter %s=<value>", name, name)
+	}
+	integer, err := parseRuntimeInteger(value)
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("context.intParameter parameter %q must be a decimal integer: %w", name, err)
+	}
+
+	return RuntimeValue{Value: runtimeValueData{Kind: Integer, Text: integer.String()}}, nil
 }
 
 func evaluateCryptoSHA256(arguments []RuntimeValue) (RuntimeValue, error) {

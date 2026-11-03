@@ -2,7 +2,7 @@
 
 ## 対象
 
-この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、`app.json5`のcluster metadataに保存するprofile selector、既存Git file generatorとConfig Management Pluginの連携、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
+この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、`app.json5`のcluster metadataに保存するfeature list、既存Git file generatorとConfig Management Pluginの連携、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
 
 各項目では、評価で確認した挙動と未解決の改善候補を記載します。MCLの実装状況が変わり課題が解消した場合は、この文書から該当項目を削除します。
 
@@ -45,3 +45,7 @@ Helmがrender済みtemplateをmanifestへまとめる際に末尾改行を加え
 ### moduleからimportした型alias
 
 module alias経由でimportした型を別moduleの型定義で参照できるようにしました。型aliasを使ったunionのscope情報も型解析とhigher-order callbackの型比較まで維持します。KurumiとBiscuitのTart host設定でPower unionを共有し、重複定義を削除しました。MCLの全Go testとinfraのcluster設定checkで確認しました。
+
+### context.intParameterによるInt設定値
+
+Argo CD ApplicationSetは各clusterの`settings`値をstring environment variablesとしてCMPへ渡します。MCLの`context.parameter`はStringを返すため、Kubernetes schemaでIntを要求する設定値をそのまま渡すと型検証に失敗します。`std:context.intParameter(name)`は明示parameterをMCL `Int`として返し、`context.parameter`のString挙動を維持します。MCLのdecimal integer規則と数値桁数上限を適用し、浮動小数点、基数prefix、上限を超えた入力を拒否します。infraのCilium chartでは`cluster.id`をこの関数で受け取ります。

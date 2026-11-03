@@ -279,6 +279,21 @@ func inferStaticContextParameter(_ []Expr, argumentTypes []ResolvedType, known [
 	return ResolvedType{Name: typeString}, true, nil
 }
 
+func inferStaticContextIntParameter(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 1 || len(known) != 1 {
+		return ResolvedType{}, false, nil
+	}
+	if known[0] {
+		stringType := ResolvedType{Name: typeString}
+		matches, compatible := staticTypeAssignable(argumentTypes[0], stringType, types)
+		if compatible && !matches {
+			return ResolvedType{}, false, errors.New("context.intParameter name must be a String")
+		}
+	}
+
+	return ResolvedType{Name: typeInt}, true, nil
+}
+
 func inferStaticCryptoSHA256(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	if len(argumentTypes) != 2 || len(known) != 2 {
 		return ResolvedType{}, false, nil
