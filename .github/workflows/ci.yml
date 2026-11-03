@@ -35,8 +35,8 @@ jobs:
             echo "version=$(go env GOVERSION)"
           } >> "$GITHUB_OUTPUT"
       - name: Cache Go build and module data
-        id: go-cache-restore
-        uses: actions/cache/restore@v6.1.0
+        id: go-cache
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
@@ -52,19 +52,6 @@ jobs:
         - name: Lint Go source with golangci-lint
           timeout-minutes: 25
           run: golangci-lint run ./...
-      - name: Save Go build and module data
-        uses: actions/cache/save@v6.1.0
-        if: >-
-          ${{
-            !cancelled() &&
-            (steps.go-cache-restore.outputs.cache-hit != 'true' ||
-             steps.go-cache-restore.outputs.cache-primary-key != steps.go-cache-restore.outputs.cache-matched-key)
-          }}
-        with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.build }}
-            ${{ steps.go-cache-paths.outputs.modules }}
-          key: ${{ steps.go-cache-restore.outputs.cache-primary-key || format('go-{0}-{1}-{2}-{3}', runner.os, runner.arch, steps.go-cache-paths.outputs.version, hashFiles('go.mod', 'go.sum')) }}
 
   browser:
     runs-on: ubuntu-latest
@@ -82,17 +69,13 @@ jobs:
             go node jactionlint
             aqua:WebAssembly/binaryen
           cache: true
-      - name: Get Go cache paths
-        id: browser-go-cache-paths
-        run: |
-          {
-            echo "modules=$(go env GOMODCACHE)"
-          } >> "$GITHUB_OUTPUT"
+      - name: Get Go module cache path
+        id: browser-go-modules
+        run: echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
       - name: Cache Go module data
-        id: browser-go-cache-restore
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache@v6.1.0
         with:
-          path: ${{ steps.browser-go-cache-paths.outputs.modules }}
+          path: ${{ steps.browser-go-modules.outputs.modules }}
           key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
           restore-keys: |
             go-mod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-
@@ -154,13 +137,3 @@ jobs:
             packages/browser/src/limits.ts
       - name: Pack and verify npm packages
         run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
-      - name: Save Go module cache
-        if: >-
-          ${{
-            success() &&
-            steps.browser-go-cache-restore.outputs.cache-hit != 'true'
-          }}
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: ${{ steps.browser-go-cache-paths.outputs.modules }}
-          key: ${{ steps.browser-go-cache-restore.outputs.cache-primary-key }}
