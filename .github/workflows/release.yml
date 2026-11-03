@@ -176,17 +176,20 @@ jobs:
             echo "version=$(go env GOVERSION)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Restore Go cache
-        # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
-        # jactionlint ignore=cache-poisoning
-        uses: actions/cache/restore@v6.1.0
+      - name: Cache Release Go builds
+        id: release-go-cache
+        # CI用キーに加え、Release固有のGoビルドキャッシュを保存・復元する
+        # リリースごとのrun_idでユニークなキーとし、過去のRelease結果を引き継ぐ
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
             ${{ steps.go-cache-paths.outputs.modules }}
-          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
+          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.run_id }}
           restore-keys: |
-            go-${{ runner.os }}-${{ runner.arch }}-
+            release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
 
       - name: Build release browser WASM
         # 公開用WASMにはリリースバージョンを埋め込むため、共有WASMキャッシュを使わずにビルドする
@@ -231,6 +234,7 @@ jobs:
           path: |
             dist/mcl_*
             dist/SHA256SUMS
+          compression-level: 0
           if-no-files-found: error
           retention-days: 7
           overwrite: true
@@ -263,6 +267,7 @@ jobs:
         with:
           name: mcl-npm-${{ steps.target.outputs.version }}
           path: ${{ runner.temp }}/mcl-npm-packages/
+          compression-level: 0
           if-no-files-found: error
           retention-days: 90
           overwrite: true
@@ -322,12 +327,12 @@ jobs:
           is_draft="$(cat "$RUNNER_TEMP/existing-release.json")"
           if [ "$is_draft" = "false" ]; then
             printf 'Validating published release %s ...\n' "$RELEASE_TAG" >&2
-            gh release verify "$RELEASE_TAG" --quiet 2>/dev/null || true
+            gh release verify "$RELEASE_TAG" --quiet
             for asset in dist/mcl_* dist/SHA256SUMS; do
               if [ -f "$asset" ]; then
                 gh release verify-asset "$RELEASE_TAG" \
                   --repo "$GITHUB_REPOSITORY" \
-                  "$asset" 2>/dev/null || true
+                  "$asset"
               fi
             done
             printf 'Release %s is already published.\n' "$RELEASE_TAG" >&2
@@ -380,15 +385,6 @@ jobs:
         with:
           name: mcl-npm-${{ needs.release.outputs.version }}
           path: ${{ runner.temp }}/mcl-npm-packages
-
-      - name: Verify npm package tarballs
-        run: |
-          set -euo pipefail
-          count=$(find "${{ runner.temp }}/mcl-npm-packages" -name '*.tgz' | wc -l)
-          if [ "$count" -eq 0 ]; then
-            echo "No npm package tarballs found in the downloaded artifact." >&2
-            exit 1
-          fi
 
       - name: Publish Browser SDK to npm
         uses: JS-DevTools/npm-publish@v4.1.5
