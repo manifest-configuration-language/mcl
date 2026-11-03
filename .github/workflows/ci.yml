@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.sha }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   go:
@@ -44,12 +44,12 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
       - parallel:
-        - name: Run Go tests
-          timeout-minutes: 25
-          run: go test ./...
-        - name: Lint Go source with golangci-lint
-          timeout-minutes: 25
-          run: golangci-lint run ./...
+          - name: Run Go tests
+            timeout-minutes: 25
+            run: go test ./...
+          - name: Lint Go source with golangci-lint
+            timeout-minutes: 25
+            run: golangci-lint run ./...
 
   browser:
     runs-on: ubuntu-latest
@@ -111,18 +111,18 @@ jobs:
           npm --prefix packages/browser pkg set "version=$version"
           npm --prefix packages/language pkg set "version=$version"
       - parallel:
-        - name: Lint GitHub Actions
-          timeout-minutes: 15
-          run: mise run lint:gha
-        - name: Browser SDK tests
-          timeout-minutes: 15
-          run: pnpm --filter @manifest-configuration-language/browser run test:unit
-        - name: Language grammar parity
-          timeout-minutes: 15
-          run: pnpm --filter @manifest-configuration-language/language run check:parity
-        - name: Generate package references
-          timeout-minutes: 15
-          run: mise run release:reference
+          - name: Lint GitHub Actions
+            timeout-minutes: 15
+            run: mise run lint:gha
+          - name: Browser SDK tests
+            timeout-minutes: 15
+            run: pnpm --filter @manifest-configuration-language/browser run test:unit
+          - name: Language grammar parity
+            timeout-minutes: 15
+            run: pnpm --filter @manifest-configuration-language/language run check:parity
+          - name: Generate package references
+            timeout-minutes: 15
+            run: mise run release:reference
       - name: Check generated sources
         run: |
           git diff --exit-code -- packages/language/src/parser.js \

@@ -430,7 +430,7 @@ jobs:
             printf 'Removing incomplete draft for %s before retrying ...\n' "$RELEASE_TAG" >&2
             gh release delete "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --yes 2>/dev/null || true
+              --yes
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
