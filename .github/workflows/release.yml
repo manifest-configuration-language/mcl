@@ -60,8 +60,10 @@ jobs:
           echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache Go build and module data
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Go cache
+        # The cache is populated only by the trusted default-branch CI run.
+        # jactionlint ignore=cache-poisoning
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
@@ -69,7 +71,6 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-
-          lookup-only: true
 
       - name: Set up pnpm
         run: corepack enable && pnpm --version
@@ -129,7 +130,6 @@ jobs:
 
   publish_release:
     needs: [release, attest]
-    if: ${{ always() && needs.release.result == 'success' && (needs.attest.result == 'success' || needs.attest.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -187,7 +187,6 @@ jobs:
 
   publish_npm:
     needs: [release, publish_release]
-    if: ${{ always() && needs.release.result == 'success' && needs.publish_release.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

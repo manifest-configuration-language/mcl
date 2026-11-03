@@ -45,6 +45,17 @@ runs:
       shell: bash
       run: pnpm --filter @manifest-configuration-language/language run check:parity
 
+    - name: Run Browser SDK unit tests
+      shell: bash
+      run: pnpm --filter @manifest-configuration-language/browser run test:unit
+
+    - name: Check generated protocol sources are current
+      shell: bash
+      run: |
+        go generate ./cmd/mcl-wasm
+        pnpm --filter @manifest-configuration-language/browser run generate:protocol
+        git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.d.ts packages/browser/src/limits.js
+
     - name: Pack and verify npm packages
       shell: bash
       env:
