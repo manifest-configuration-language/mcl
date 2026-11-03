@@ -38,4 +38,6 @@ CLIのバイナリは`go build -o ./mcl ./cmd/mcl`で生成します。
 
 ## リリース
 
-リリースはGitHub Actionsの`Release`ワークフローを`main`から実行します。`version`を省略した場合は、最新の安定版タグから`patch`、`minor`、`major`のいずれかで次のバージョンを計算します。`pre-release`はnpmの`next`タグ、`latest`はnpmの`latest`タグとして公開されます。
+バージョンはGitタグから自動決定されます。`packages/browser/package.json`と`packages/language/package.json`の`0.0.0-development`は開発用の固定値で、CIとリリースの各ワークフローがビルド時に実際のバージョンを書き込みます。この値を手動で更新しないでください。
+
+リリースはGitHub Actionsの`Release`ワークフローを`main`から実行します。`bump`で`patch`、`minor`、`major`を選び、`channel`で`stable`または`rc`を選びます。`rc`はnpmの`next`タグ、`stable`はnpmの`latest`タグに公開されます。`rc`の連番（`-rc.N`）は既存のタグから自動採番されます。

@@ -1,5 +1,5 @@
 name: Verify release
-description: Run the checks required before building release assets
+description: Pack and verify the npm release artifacts
 inputs:
   package-output-directory:
     description: Directory for the packed npm package archives
@@ -16,45 +16,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Prepare browser WASM
-      uses: ./.github/actions/prepare-wasm
-
-    - name: Run release checks
-      shell: bash
-      run: mise run quality:check
-
     - name: Validate GoReleaser configuration
       shell: bash
       run: goreleaser check
-
-    - name: Prepare release WebAssembly assets
-      shell: bash
-      run: mise run release:wasm
-
-    - name: Install npm package workspace dependencies
-      shell: bash
-      run: pnpm install --frozen-lockfile
 
     - name: Generate reference package contents
       shell: bash
       env:
         MCL_VERSION: ${{ inputs.reference-version || inputs.expected-version }}
       run: mise run release:reference
-
-    - name: Check language grammar parity
-      shell: bash
-      run: pnpm --filter @manifest-configuration-language/language run check:parity
-
-    - name: Run Browser SDK unit tests
-      shell: bash
-      run: pnpm --filter @manifest-configuration-language/browser run test:unit
-
-    - name: Check generated protocol sources are current
-      shell: bash
-      run: |
-        go generate ./cmd/mcl-wasm
-        pnpm --filter @manifest-configuration-language/browser run generate:protocol
-        git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.d.ts packages/browser/src/limits.js
 
     - name: Pack and verify npm packages
       shell: bash

@@ -1,6 +1,6 @@
 {
   "name": "@manifest-configuration-language/language",
-  "version": "0.0.0",
+  "version": "0.0.0-development",
   "description": "MCL TextMate grammar and CodeMirror language support.",
   "repository": {
     "type": "git",

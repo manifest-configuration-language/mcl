@@ -39,22 +39,33 @@ jobs:
             go-${{ runner.os }}-${{ runner.arch }}-
       - name: Set up pnpm
         run: corepack enable && pnpm --version
+      - name: Install npm package workspace
+        run: pnpm install --frozen-lockfile
       - name: Select candidate version
         id: version
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="$(node scripts/release-version.mjs --release-type none --version "$TAG" | jq -r '.version')"
+            version="${GITHUB_REF_NAME#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+              printf 'Invalid release tag: %s\n' "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
           else
             version="0.0.0-candidate.${GITHUB_SHA:0:12}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Apply candidate version
+      - name: Prepare browser WASM
+        uses: ./.github/actions/prepare-wasm
+      - name: Stage release WebAssembly assets
+        run: mise run release:wasm
+      - name: Set npm package versions
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: node scripts/set-package-version.mjs "$VERSION"
+        run: |
+          set -euo pipefail
+          npm --prefix packages/browser pkg set "version=$VERSION"
+          npm --prefix packages/language pkg set "version=$VERSION"
       - name: Verify release
         uses: ./.github/actions/verify-release
         with:

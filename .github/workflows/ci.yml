@@ -34,7 +34,8 @@ jobs:
         run: |
           set -euo pipefail
           version="0.0.0-ci.${GITHUB_SHA:0:12}"
-          node scripts/set-package-version.mjs "$version"
+          npm --prefix packages/browser pkg set "version=$version"
+          npm --prefix packages/language pkg set "version=$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Get Go cache paths
         id: go-cache-paths
