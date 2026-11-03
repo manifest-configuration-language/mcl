@@ -77,7 +77,7 @@ jobs:
         with:
           install: true
           install_args: >-
-            go node
+            go node jactionlint
             aqua:WebAssembly/binaryen
           cache: true
       - name: Cache browser WebAssembly output
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/cache/save@v6.1.0
         if: >-
           ${{
-            !cancelled() &&
+            success() &&
             steps.wasm-cache-restore.outputs.cache-hit != 'true'
           }}
         with:
@@ -126,10 +126,15 @@ jobs:
         - name: Generate package references
           timeout-minutes: 15
           run: mise run release:reference
-      - name: Check generated parser
+      - name: Check generated sources
         run: |
+          git diff --exit-code -- packages/language/src/parser.js \
+            packages/language/src/parser.terms.js
+
           go generate ./cmd/mcl-wasm
           pnpm --filter @manifest-configuration-language/browser run generate:protocol
-          git diff --exit-code -- internal/wasmprotocol/protocol.go internal/wasmprotocol/limits.go packages/browser/src/protocol.ts packages/browser/src/limits.ts
+          git diff --exit-code -- internal/wasmprotocol/protocol.go \
+            internal/wasmprotocol/limits.go packages/browser/src/protocol.ts \
+            packages/browser/src/limits.ts
       - name: Pack and verify npm packages
         run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
