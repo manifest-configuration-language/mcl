@@ -563,6 +563,34 @@ func TestEvaluateFileImportsOnlyExplicitExports(t *testing.T) {
 	}
 }
 
+func TestEvaluateFileTextImportPreservesContent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configs := filepath.Join(root, "_configs")
+	if err := os.MkdirAll(configs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := "first line\r\nsecond line\n"
+	if err := os.WriteFile(filepath.Join(configs, "settings.yaml"), []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := "import text \"./_configs/settings.yaml\" as settings\nemit settings\n"
+	bundle, err := EvaluateSource(filepath.Join(root, "main.mcl"), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("EvaluateSource() returned %d artifacts, want one", len(bundle.Artifacts))
+	}
+	got := bundle.Artifacts[0].Value
+	if got.Kind != String {
+		t.Fatalf("import text artifact kind = %s, want String", kindName(got.Kind))
+	}
+	if got.Text != want {
+		t.Fatalf("imported text = %q, want %q", got.Text, want)
+	}
+}
+
 func TestEvaluateFileRejectsImportCyclesAndPathEscapes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -577,6 +605,9 @@ func TestEvaluateFileRejectsImportCyclesAndPathEscapes(t *testing.T) {
 	}
 	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), "import \"../outside.mcl\" as outside\n"); err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("EvaluateSource() error = %v, want a path escape diagnostic", err)
+	}
+	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), "import text \"../outside.txt\" as outside\n"); err == nil || !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("EvaluateSource() error = %v, want a text import path escape diagnostic", err)
 	}
 }
 
