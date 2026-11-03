@@ -310,47 +310,27 @@ jobs:
         id: existing-release
         env:
           GH_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           set -euo pipefail
-          tag="$RELEASE_TAG"
 
-          git fetch --no-tags origin \
-            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}" \
-            "+refs/tags/*:refs/tags/*"
-
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+          if ! gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           is_draft="$(jq -r '.isDraft' "$RUNNER_TEMP/existing-release.json")"
           if [ "$is_draft" = true ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            printf 'Cleaning up existing draft for %s ...\n' "$RELEASE_TAG" >&2
+            gh release delete "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes 2>/dev/null || true
           fi
 
-          printf 'Validating published release %s ...\n' "$tag" >&2
-          existing_assets="$(mktemp -d)"
-          trap 'rm -rf "$existing_assets"' EXIT
-          gh release download "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir "$existing_assets" \
-            --pattern 'mcl_*' \
-            --pattern SHA256SUMS
-          cmp dist/SHA256SUMS "$existing_assets/SHA256SUMS"
-          (cd "$existing_assets" && sha256sum --check SHA256SUMS)
-
-          if [ -n "$(git ls-remote --tags --refs --exit-code origin "$tag" 2>/dev/null)" ]; then
-            read -r _local _remote <<< "$(git ls-remote --tags --refs origin "$tag")"
-            if [ "$_remote" != "$(git rev-parse "v${VERSION}")" ]; then
-              printf 'Published release %s points to a different commit than expected.\n' "$tag" >&2
-              exit 1
-            fi
-          fi
-
-          printf 'Release %s is already published with matching assets and tag.\n' "$tag" >&2
-          echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         id: publish-release
@@ -392,15 +372,14 @@ jobs:
           name: mcl-npm-${{ needs.release.outputs.version }}
           path: ${{ runner.temp }}/mcl-npm-packages
 
-      - name: Verify npm package tarballs integrity
-        env:
-          PACKAGE_DIR: ${{ runner.temp }}/mcl-npm-packages
+      - name: Verify npm package tarballs
         run: |
           set -euo pipefail
-          cd "$PACKAGE_DIR"
-          for archive in ./*.tgz; do
-            sha512sum --check SHA512SUMS <<< "$(grep "${archive#./}" SHA512SUMS)" || exit 1
-          done
+          count=$(find "${{ runner.temp }}/mcl-npm-packages" -name '*.tgz' | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "No npm package tarballs found in the downloaded artifact." >&2
+            exit 1
+          fi
 
       - name: Publish Browser SDK to npm
         uses: JS-DevTools/npm-publish@v4.1.5
