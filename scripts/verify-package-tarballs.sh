@@ -6,7 +6,8 @@ output_directory="$1"
 mkdir -p "$output_directory"
 output_directory="$(cd "$output_directory" && pwd)"
 for package in browser language; do
-  version="$(node -p "require('$root/packages/$package/package.json').version")"
+  source_directory="$root/packages/$package"
+  version="$(node -p "require('$source_directory/package.json').version")"
   if [[ -n "${MCL_VERSION:-}" && "$version" != "$MCL_VERSION" ]]; then
     printf 'Package @manifest-configuration-language/%s version %s does not match expected MCL version %s.\n' \
       "$package" "$version" "$MCL_VERSION" >&2
@@ -36,12 +37,7 @@ done
 
 cd "$output_directory"
 for archive in ./*.tgz; do
-  package_dir="$(mktemp -d)"
-  tar -xzf "$archive" -C "$package_dir"
-  (
-    cd "$package_dir/package"
-    echo "Validating $archive ..."
-    publint --strict
-    node_modules/.bin/attw --ignore-missing-peer
-  )
+  echo "Validating $archive ..."
+  pnpm --dir "$root/packages/browser" exec publint --strict "$archive"
+  pnpm --dir "$root/packages/browser" exec attw --ignore-missing-peer "$archive"
 done

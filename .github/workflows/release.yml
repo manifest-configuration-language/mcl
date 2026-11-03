@@ -33,7 +33,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    cache-mode: read
     outputs:
       version: ${{ steps.target.outputs.version }}
       release_tag: ${{ steps.target.outputs.tag }}
@@ -165,6 +164,12 @@ jobs:
         uses: jdx/mise-action@v5.2.6
         with:
           install: true
+          install_args: >-
+            go
+            node
+            goreleaser
+            aqua:WebAssembly/binaryen
+            aqua:anchore/syft
           cache: false
 
       - name: Get Go cache paths
@@ -176,11 +181,9 @@ jobs:
             echo "version=$(go env GOVERSION)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Cache Release Go builds
+      - name: Cache Release Go builds (restore)
         id: release-go-cache
-        # CI用キーに加え、Release固有のGoビルドキャッシュを保存・復元する
-        # リリースごとのrun_idでユニークなキーとし、過去のRelease結果を引き継ぐ
-        uses: actions/cache@v6.1.0
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
@@ -199,6 +202,15 @@ jobs:
 
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
+
+      - name: Cache Release Go builds (save)
+        # GoReleaser 直後で明示的に保存。npm 処理の失敗でビルドキャッシュを失わない
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.build }}
+            ${{ steps.go-cache-paths.outputs.modules }}
+          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.run_id }}
 
       - name: Ensure default branch workflows are current
         run: |
@@ -304,12 +316,6 @@ jobs:
         with:
           name: mcl-${{ needs.release.outputs.version }}
           path: dist
-
-      - name: Check out release source
-        uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
 
       - name: Check existing release before publishing
         id: existing-release
