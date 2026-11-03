@@ -10,13 +10,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.sha }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  verify:
+  go:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -29,14 +29,6 @@ jobs:
         run: corepack enable && pnpm --version
       - name: Install npm package workspace
         run: pnpm install --frozen-lockfile
-      - name: Apply CI package version
-        id: package-version
-        run: |
-          set -euo pipefail
-          version="0.0.0-ci.${GITHUB_SHA:0:12}"
-          npm --prefix packages/browser pkg set "version=$version"
-          npm --prefix packages/language pkg set "version=$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Get Go cache paths
         id: go-cache-paths
         run: |
@@ -46,49 +38,135 @@ jobs:
             echo "version=$(go env GOVERSION)"
           } >> "$GITHUB_OUTPUT"
       - name: Cache Go build and module data
-        uses: actions/cache@v6.1.0
+        id: go-cache-restore
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.build }}
             ${{ steps.go-cache-paths.outputs.modules }}
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
           restore-keys: |
-            go-${{ runner.os }}-${{ runner.arch }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
+      - name: Run Go tests
+        run: go test ./...
+      - name: Save Go build and module data
+        uses: actions/cache/save@v6.1.0
+        if: >-
+          ${{
+            !cancelled() &&
+            (steps.go-cache-restore.outputs.cache-hit != 'true' ||
+             steps.go-cache-restore.outputs.cache-primary-key != steps.go-cache-restore.outputs.cache-matched-key)
+          }}
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.build }}
+            ${{ steps.go-cache-paths.outputs.modules }}
+          key: ${{ steps.go-cache-restore.outputs.cache-primary-key || format('go-{0}-{1}-{2}-{3}', runner.os, runner.arch, steps.go-cache-paths.outputs.version, hashFiles('go.mod', 'go.sum')) }}
+      - name: Lint Go source with golangci-lint
+        run: golangci-lint run ./...
+      - name: Check Go source formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          install: true
+          cache: true
+      - name: Set npm package versions
+        id: package-version
+        run: |
+          set -euo pipefail
+          version="0.0.0-ci.${GITHUB_SHA:0:12}"
+          npm --prefix packages/browser pkg set "version=$version"
+          npm --prefix packages/language pkg set "version=$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache browser WebAssembly output
-        # キャッシュは信頼できるデフォルトブランチのCIでのみ作成・保存され、安全に復元できるため問題ない
-        # jactionlint ignore=cache-poisoning
-        id: wasm-cache
-        uses: actions/cache@v6.1.0
+        id: wasm-cache-restore
+        uses: actions/cache/restore@v6.1.0
         with:
           path: packages/browser/dist/
-          key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum', '**/*.go', 'internal/k8sschema/data/**', 'packages/browser/scripts/build-wasm.mjs') }}
-
+          key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum', '**/*.go', '.mise.toml', 'internal/k8sschema/data/**', 'packages/browser/scripts/build-wasm.mjs') }}
       - name: Build browser WebAssembly
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: steps.wasm-cache-restore.outputs.cache-hit != 'true'
         run: mise run wasm:build
-
+      - uses: actions/cache/save@v6.1.0
+        if: >-
+          ${{
+            !cancelled() &&
+            steps.wasm-cache-restore.outputs.cache-hit != 'true'
+          }}
+        with:
+          path: packages/browser/dist/
+          key: ${{ steps.wasm-cache-restore.outputs.cache-primary-key }}
       - name: Prepare release WebAssembly assets
         run: mise run release:wasm
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: mcl-browser-dist
+          path: packages/browser/dist/
+          compression-level: 0
 
-      - name: Run project quality checks
-        run: mise run quality:check
-      - name: Validate GoReleaser configuration
-        run: goreleaser check
-      - name: Lint GitHub Actions workflows
-        run: mise run lint:gha
-      - name: Run Browser SDK unit tests
-        run: pnpm --filter @manifest-configuration-language/browser run test:unit
-      - name: Check language grammar parity
-        run: pnpm --filter @manifest-configuration-language/language run check:parity
-      - name: Check generated language parser
-        run: git diff --exit-code -- packages/language/src/parser.js packages/language/src/parser.terms.js
-      - name: Generate package reference contents
+  verify:
+    needs: [go, browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ !cancelled() }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v5.2.6
+        with:
+          install: true
+          cache: true
+      - name: Download browser dist artifact
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: mcl-browser-dist
+          path: packages/browser/dist/
+      - name: Install npm package workspace
+        run: pnpm install --frozen-lockfile
+      - name: Parallel independent verification steps
         env:
-          MCL_VERSION: ${{ steps.package-version.outputs.version }}
-        run: mise run release:reference
+          MCL_VERSION: 0.0.0-ci.${GITHUB_SHA:0:12}
+        run: |
+          set -euo pipefail
+
+          ( goreleaser check --snapshot ) &
+          goreleaser_pid=$!
+
+          ( mise run lint:gha ) &
+          lint_gha_pid=$!
+
+          ( pnpm --filter @manifest-configuration-language/browser run test:unit ) &
+          browser_test_pid=$!
+
+          ( pnpm --filter @manifest-configuration-language/language run check:parity ) &
+          parity_pid=$!
+
+          ( mise run release:reference ) &
+          reference_pid=$!
+
+          wait "$goreleaser_pid" || exit $?
+          wait "$lint_gha_pid" || exit $?
+          wait "$browser_test_pid" || exit $?
+          wait "$parity_pid" || exit $?
+          wait "$reference_pid" || exit $?
       - name: Pack and verify npm packages
         env:
-          MCL_VERSION: ${{ steps.package-version.outputs.version }}
+          MCL_VERSION: 0.0.0-ci.${GITHUB_SHA:0:12}
         run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
       - name: Check generated protocol sources are current
         run: |

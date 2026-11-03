@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.repository }}
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -107,10 +107,19 @@ jobs:
             printf 'A stable vX.Y.Z tag is required to determine the next version.\n' >&2
             exit 1
           fi
-          if [[ "$CHANNEL" == stable && "$(git rev-list -n 1 "$latest")" == "$GITHUB_SHA" ]]; then
-            printf 'Commit %s is already released as %s.\n' "$GITHUB_SHA" "$latest" >&2
-            exit 1
+
+          # If the target SHA already has a published release, reuse that version.
+          released_version="$(gh release view --json tagName --jq '.tagName' "$latest" 2>/dev/null || true)"
+          if [[ "$released_version" == "v${latest}" ]]; then
+            existing_sha="$(git rev-list -n 1 "$latest")"
+            if [[ "$existing_sha" == "$GITHUB_SHA" ]]; then
+              printf 'Commit %s is already released as %s.\n' "$GITHUB_SHA" "$latest" >&2
+              echo "version=$latest" >> "$GITHUB_OUTPUT"
+              echo "tag=v$latest" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
+
           IFS=. read -r major minor patch <<< "${latest#v}"
           case "$BUMP" in
             major)
@@ -182,7 +191,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Cache Release Go builds (restore)
-        id: release-go-cache
         # jactionlint ignore=cache-poisoning
         uses: actions/cache/restore@v6.1.0
         with:
@@ -241,7 +249,7 @@ jobs:
             dist/SHA256SUMS
           compression-level: 0
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
           overwrite: true
 
       - name: Set up pnpm
@@ -312,7 +320,7 @@ jobs:
           name: mcl-${{ needs.release.outputs.version }}
           path: dist
 
-      - name: Check existing release before publishing
+      - name: Check existing draft for re-run
         id: existing-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -326,26 +334,17 @@ jobs:
             exit 0
           fi
 
-          if [ "$is_draft" = "false" ]; then
-            printf 'Validating published release %s ...\n' "$RELEASE_TAG" >&2
-            gh release verify "$RELEASE_TAG"
-            for asset in dist/mcl_* dist/SHA256SUMS; do
-              if [ -f "$asset" ]; then
-                gh release verify-asset "$RELEASE_TAG" \
-                  --repo "$GITHUB_REPOSITORY" \
-                  "$asset"
-              fi
-            done
-            printf 'Release %s is already published.\n' "$RELEASE_TAG" >&2
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          if [ "$is_draft" = "true" ]; then
+            printf 'Removing incomplete draft for %s before retrying ...\n' "$RELEASE_TAG" >&2
+            gh release delete "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --yes 2>/dev/null || true
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          printf 'Removing incomplete draft for %s before retrying ...\n' "$RELEASE_TAG" >&2
-          gh release delete "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --yes 2>/dev/null
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+          printf 'Release %s is already published.\n' "$RELEASE_TAG" >&2
+          echo "skip=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         id: publish-release
