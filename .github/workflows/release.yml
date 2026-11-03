@@ -124,23 +124,15 @@ jobs:
             exit 0
           fi
 
-          # Search for any existing tag pointing to this SHA and resume.
-          prev="$(git tag --list 'v*' |
-            grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+(-rc\.[0-9]+))?$' |
-            while read -r tag; do
-              if [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]]; then
-                echo "$tag"
-                break
-              fi
-            done)
+          # Reuse channel-matched tag already pointing to this SHA.
+          case "$CHANNEL" in
+            stable) pattern='^v[0-9]+\.[0-9]+\.[0-9]+$' ;;
+            rc)     pattern='^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' ;;
+            *)      exit 1 ;;
+          esac
+          prev="$(git tag --points-at "$GITHUB_SHA" --list 'v*' |
+            grep -E "$pattern" | tail -n 1 || true)"
           if [ -n "$prev" ]; then
-            prev_release="$(gh release view "$prev" \
-              --json tagName --jq '.tagName' 2>/dev/null || true)"
-            if [[ "$CHANNEL" == stable && "$prev_release" != "$prev" ]]; then
-              printf 'Tag %s points to commit %s but has no release.\n' \
-                "$prev" "$GITHUB_SHA" >&2
-              exit 1
-            fi
             printf 'Commit %s already has tag %s; resuming publication.\n' \
               "$GITHUB_SHA" "$prev" >&2
             echo "version=${prev#v}" >> "$GITHUB_OUTPUT"
