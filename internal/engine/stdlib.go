@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -95,6 +98,7 @@ var builtinRegistry = []builtin{
 	{name: fnReplace, module: "std:core", exportName: fnReplace, parameters: []string{paramValue}, documentation: "マップのマージ時に値を置き換える指定をします。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceBuiltin, pureEvaluation: evaluateReplaceBuiltin},
 	{name: fnClone, module: "std:core", exportName: fnClone, parameters: []string{paramValue}, documentation: "値のディープコピーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCloneBuiltin, pureEvaluation: evaluateCloneBuiltin, deferred: builtinDeferredEvaluationClone},
 	{name: fnContains, module: stdlibListModule, exportName: fnContains, parameters: []string{paramValues, paramValue}, documentation: "リスト内の値、または文字列内の部分文字列を検索します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContainsBuiltin, pureEvaluation: evaluateContainsBuiltin},
+	{name: fnCryptoSHA256, module: "std:crypto", exportName: "sha256", parameters: []string{paramValue, "hexLength"}, documentation: "値を決定的なJSON bytesへ変換し、指定した16進文字数の小文字SHA-256 digestを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCryptoSHA256, pureEvaluation: evaluateCryptoSHA256},
 	{name: fnConcat, module: stdlibListModule, exportName: fnConcat, parameters: []string{"first", "second"}, documentation: "2つのリストを連結します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticConcatBuiltin, pureEvaluation: evaluateConcatBuiltin},
 	{name: fnUnion, module: stdlibListModule, exportName: fnUnion, parameters: []string{"first", "second"}, documentation: "重複を除きながら2つのリストを結合します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticUnionBuiltin, pureEvaluation: evaluateUnionBuiltin},
 	{name: fnReplaceAt, module: stdlibListModule, exportName: fnReplaceAt, parameters: []string{paramValues, paramIndex, paramValue}, documentation: "リストの指定位置にある要素を置き換えます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceAtBuiltin, pureEvaluation: evaluateReplaceAtBuiltin},
@@ -251,6 +255,30 @@ func evaluateContextParameter(arguments []RuntimeValue, state *EvaluationState) 
 	}
 
 	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: value}}, nil
+}
+
+func evaluateCryptoSHA256(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 2 {
+		return RuntimeValue{}, errors.New("crypto.sha256 expects a value and hexLength")
+	}
+	if arguments[1].Kind() != Integer {
+		return RuntimeValue{}, errors.New("crypto.sha256 hexLength must be an Integer")
+	}
+	length, err := strconv.Atoi(arguments[1].Value.Text)
+	if err != nil || length < 1 || length > sha256.Size*2 {
+		return RuntimeValue{}, fmt.Errorf("crypto.sha256 hexLength must be between 1 and %d", sha256.Size*2)
+	}
+	value, err := runtimeValueAsJSON(arguments[0])
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("crypto.sha256 value: %w", err)
+	}
+	encoded, err := jsonv2.Marshal(value, jsonv2.Deterministic(true))
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("encode crypto.sha256 value: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+
+	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: hex.EncodeToString(digest[:])[:length]}}, nil
 }
 
 func runtimeAllocationBudgetOf(state *EvaluationState) *runtimeAllocationBudget {

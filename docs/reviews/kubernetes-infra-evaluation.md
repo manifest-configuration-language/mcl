@@ -2,17 +2,11 @@
 
 ## 対象
 
-この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、アプリケーションのdeployment record、ApplicationSet Plugin Generatorの設計、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
+この文書は、infraリポジトリの`k8s/`をMCLへ移行する評価で再現または確認したMCL本体の課題と改善候補を記録します。クラスタ配置方針、アプリケーションのplacement record、ApplicationSet Plugin Generatorの設計、移行済みアプリケーションと残作業はinfraリポジトリの`docs/design/mcl-kubernetes-evaluation.md`で管理します。
 
 各項目では、評価で確認した挙動と未解決の改善候補を記載します。MCLの実装状況が変わり課題が解消した場合は、この文書から該当項目を削除します。
 
 ## 未解決の機能不足
-
-### 内容から決定するimmutable resource名
-
-既存JsonnetはTalos patchやmachine設定の内容からdigestを計算し、immutable SecretやTemplateの名前に使います。MCL化したCAPI resourceとactions-runnersのConfigMapでは既存のdigest suffixを固定値で記述しており、入力を変更した場合はresource名も手動で更新する必要があります。
-
-MCL標準ライブラリに、正規化JSON bytesを入力とする`std:crypto.sha256`を追加し、digest長を呼び出し側で明示できる形が改善案です。PluginがManifest値を暗黙に書き換える方法は採用しません。
 
 ### module間の型参照
 

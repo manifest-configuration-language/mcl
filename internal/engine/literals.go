@@ -32,6 +32,7 @@ const (
 	fnClone           = "clone"
 	fnConcat          = "concat"
 	fnContains        = "contains"
+	fnCryptoSHA256    = "crypto.sha256"
 	fnExactlyOne      = "exactlyOne"
 	fnFilter          = "filter"
 	fnFold            = "fold"

@@ -943,7 +943,8 @@ func TestListTransformationsReturnOrdinaryListsForAdapterBundles(t *testing.T) {
 
 func TestStandardFunctionsOperateOnGenericValues(t *testing.T) {
 	t.Parallel()
-	source := `import "std:map" as maps
+	source := `import "std:crypto" as crypto
+import "std:map" as maps
 import "std:list" as lists
 let config =
   data:
@@ -953,11 +954,23 @@ let names =
   - "worker"
 let extraNames =
   - "proxy"
+let identity =
+  name: "api"
+  replicas: 2
+let reorderedIdentity =
+  replicas: 2
+  name: "api"
+let orderedHash = crypto.sha256(identity, 12)
+let reorderedHash = crypto.sha256(reorderedIdentity, 12)
 let result =
   key: maps.keyOf(config.data, "APP_MODE")
   hasWorker: lists.contains(names, "worker")
   count: len(names)
   unique: lists.union(names, extraNames)
+  digest: crypto.sha256("hello", 12)
+  digest64: crypto.sha256(identity, 64)
+  digest1: crypto.sha256("hello", 1)
+  mapKeysAreDeterministic: orderedHash == reorderedHash
 emit result
 `
 	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
@@ -968,10 +981,25 @@ emit result
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`key: "APP_MODE"`, "hasWorker: true", "count: 2", `- "proxy"`} {
+	for _, expected := range []string{`key: "APP_MODE"`, "hasWorker: true", "count: 2", `- "proxy"`, `digest: "5aa762ae383f"`, `digest64: "5056774b028a193daeed54cbc98d728f2385133deced2d7ceba21ada6f0f2733"`, `digest1: "5"`, "mapKeysAreDeterministic: true"} {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("standard library output does not contain %q:\n%s", expected, output)
 		}
+	}
+}
+
+func TestCryptoSHA256RejectsInvalidHexLength(t *testing.T) {
+	t.Parallel()
+	for _, hexLength := range []string{"0", "65", `"12"`} {
+		t.Run(hexLength, func(t *testing.T) {
+			t.Parallel()
+			source := `import "std:crypto" as crypto
+emit crypto.sha256("value", ` + hexLength + `)
+`
+			if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err == nil || !strings.Contains(err.Error(), "crypto.sha256 hexLength") {
+				t.Fatalf("EvaluateSource() error = %v, want invalid hexLength diagnostic", err)
+			}
+		})
 	}
 }
 
