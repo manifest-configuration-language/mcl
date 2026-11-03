@@ -6,7 +6,6 @@ workflows:
     '.github/workflows/ci.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
-        - 'actions/upload-artifact@v7.0.2'
         - 'jdx/mise-action@v5.2.6'
     '.github/workflows/release.yml':
         - 'actions/attest@v4.2.2'

@@ -100,11 +100,6 @@ jobs:
           key: ${{ steps.wasm-cache-restore.outputs.cache-primary-key }}
       - name: Verify WebAssembly
         run: mise run wasm:check
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: mcl-browser-dist
-          path: packages/browser/dist/
-          compression-level: 0
       - name: Set up pnpm
         run: corepack enable && pnpm --version
       - name: Install npm package workspace
