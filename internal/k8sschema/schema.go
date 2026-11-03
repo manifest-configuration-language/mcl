@@ -50,11 +50,119 @@ func ValidateBuiltin(apiVersion, kind string, value any) []error {
 		compiled = stored
 	}
 	validator := compiled.(*jsonschema.Schema)
-	if err := validator.Validate(value); err != nil {
+	if err := validator.Validate(omitNullObjectFields([]*jsonschema.Schema{validator}, value)); err != nil {
 		return []error{err}
 	}
 
 	return nil
+}
+
+func omitNullObjectFields(schemas []*jsonschema.Schema, value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		fields := make(map[string]any, len(value))
+		for key, field := range value {
+			propertySchemas := propertySchemasFor(schemas, key)
+			if field == nil && len(propertySchemas) > 0 {
+				continue
+			}
+			if len(propertySchemas) == 0 {
+				fields[key] = field
+				continue
+			}
+			fields[key] = omitNullObjectFields(propertySchemas, field)
+		}
+
+		return fields
+	case []any:
+		items := make([]any, len(value))
+		for index, item := range value {
+			itemSchemas := itemSchemasFor(schemas, index)
+			if len(itemSchemas) > 0 {
+				items[index] = omitNullObjectFields(itemSchemas, item)
+			} else {
+				items[index] = item
+			}
+		}
+
+		return items
+	default:
+		return value
+	}
+}
+
+func propertySchemasFor(schemas []*jsonschema.Schema, name string) []*jsonschema.Schema {
+	visited := make(map[*jsonschema.Schema]struct{})
+	var properties []*jsonschema.Schema
+	var visit func(*jsonschema.Schema)
+	visit = func(schema *jsonschema.Schema) {
+		if schema == nil {
+			return
+		}
+		if _, exists := visited[schema]; exists {
+			return
+		}
+		visited[schema] = struct{}{}
+		if property := schema.Properties[name]; property != nil {
+			properties = append(properties, property)
+		}
+		visit(schema.Ref)
+		for _, child := range schema.AllOf {
+			visit(child)
+		}
+		for _, child := range schema.AnyOf {
+			visit(child)
+		}
+		for _, child := range schema.OneOf {
+			visit(child)
+		}
+	}
+	for _, schema := range schemas {
+		visit(schema)
+	}
+
+	return properties
+}
+
+func itemSchemasFor(schemas []*jsonschema.Schema, index int) []*jsonschema.Schema {
+	visited := make(map[*jsonschema.Schema]struct{})
+	var itemSchemas []*jsonschema.Schema
+	var visit func(*jsonschema.Schema)
+	visit = func(schema *jsonschema.Schema) {
+		if schema == nil {
+			return
+		}
+		if _, exists := visited[schema]; exists {
+			return
+		}
+		visited[schema] = struct{}{}
+		switch items := schema.Items.(type) {
+		case *jsonschema.Schema:
+			itemSchemas = append(itemSchemas, items)
+		case []*jsonschema.Schema:
+			if index < len(items) {
+				itemSchemas = append(itemSchemas, items[index])
+			}
+		default:
+			if index < len(schema.PrefixItems) {
+				itemSchemas = append(itemSchemas, schema.PrefixItems[index])
+			}
+		}
+		visit(schema.Ref)
+		for _, child := range schema.AllOf {
+			visit(child)
+		}
+		for _, child := range schema.AnyOf {
+			visit(child)
+		}
+		for _, child := range schema.OneOf {
+			visit(child)
+		}
+	}
+	for _, schema := range schemas {
+		visit(schema)
+	}
+	return itemSchemas
 }
 
 // HasBuiltinSchemaは組み込みSchemaが指定したGVKに登録されているかを返します。

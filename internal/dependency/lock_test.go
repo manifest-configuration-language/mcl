@@ -213,6 +213,42 @@ func TestOpenWithAtomicFilesystemWritesLockAndCacheWithinRoot(t *testing.T) {
 	}
 }
 
+func TestUpdatePreservesDependenciesForOtherEntryPoints(t *testing.T) {
+	t.Parallel()
+
+	files := &atomicMapFS{files: make(fstest.MapFS)}
+	initial, err := OpenWithFS(t.Context(), "/virtual/project", true, testToolchainIdentity(), files)
+	if err != nil {
+		t.Fatalf("open initial update: %v", err)
+	}
+	previousURL := "https://example.test/previous-chart.tgz"
+	previousDigest := contentutil.SHA256([]byte("previous chart"))
+	initial.charts[previousURL] = previousDigest
+	if err := initial.Save(); err != nil {
+		t.Fatalf("save initial lock: %v", err)
+	}
+
+	updated, err := OpenWithFS(t.Context(), "/virtual/project", true, testToolchainIdentity(), files)
+	if err != nil {
+		t.Fatalf("open update for another entrypoint: %v", err)
+	}
+	updated.manifests["https://example.test/next-manifest.yaml"] = contentutil.SHA256([]byte("next manifest"))
+	if err := updated.Save(); err != nil {
+		t.Fatalf("save updated lock: %v", err)
+	}
+
+	loaded, err := OpenWithFS(t.Context(), "/virtual/project", false, testToolchainIdentity(), files)
+	if err != nil {
+		t.Fatalf("reopen updated lock: %v", err)
+	}
+	if loaded.charts[previousURL] != previousDigest {
+		t.Fatal("update removed the previous entrypoint's locked chart")
+	}
+	if _, exists := loaded.manifests["https://example.test/next-manifest.yaml"]; !exists {
+		t.Fatal("update removed the new entrypoint's locked manifest")
+	}
+}
+
 func TestOpenWithFSUpdateRequiresAtomicWriter(t *testing.T) {
 	t.Parallel()
 	if _, err := OpenWithFS(t.Context(), "/virtual/project", true, testToolchainIdentity(), fstest.MapFS{}); err == nil || !strings.Contains(err.Error(), "atomic writable filesystem") {

@@ -103,6 +103,7 @@ func Open(ctx context.Context, root string, update bool, identity ToolchainIdent
 }
 
 // OpenWithFS loads the project lock and cached dependency content from a root-relative filesystem.
+// Updates refresh dependencies reached by the current entrypoint and preserve entries for other entrypoints.
 // Updates require files to implement AtomicFileWriter; read-only filesystems can
 // still be used to evaluate projects that have an existing lock and cache.
 func OpenWithFS(ctx context.Context, root string, update bool, identity ToolchainIdentity, files fs.FS) (*Lock, error) {
@@ -201,14 +202,6 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 		}
 		lock.gitSources[key] = entry
 	}
-	if update {
-		clear(lock.manifests)
-		clear(lock.schemas)
-		clear(lock.charts)
-		clear(lock.ociCharts)
-		clear(lock.gitSources)
-	}
-
 	return lock, nil
 }
 

@@ -185,6 +185,65 @@ func TestPrepareKeepsRemoteChartSourcesInMemory(t *testing.T) {
 	}
 }
 
+func TestPrepareProcessesDependencyConditionsWithoutMutatingLoadedChart(t *testing.T) {
+	t.Parallel()
+
+	child := &v2.Chart{
+		Metadata: &v2.Metadata{Name: "child", Version: "0.1.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{
+			Name: "templates/invalid.yaml",
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: child\n  name: duplicate\n"),
+		}},
+	}
+	grafana := &v2.Chart{
+		Metadata: &v2.Metadata{Name: "grafana", Version: "0.1.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{
+			Name: "templates/invalid.yaml",
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: grafana\n  name: duplicate\n"),
+		}},
+	}
+	loadedChart := &v2.Chart{
+		Metadata: &v2.Metadata{
+			Name:       "parent",
+			Version:    "0.1.0",
+			APIVersion: v2.APIVersionV2,
+			Dependencies: []*v2.Dependency{
+				{Name: "child", Version: "0.1.0", Condition: "child.enabled", Enabled: true},
+				{Name: "grafana", Version: "0.1.0", Condition: "grafana.enabled", Enabled: true},
+			},
+		},
+		Values: map[string]any{
+			"child":   map[string]any{"enabled": true},
+			"grafana": map[string]any{"enabled": true},
+		},
+	}
+	loadedChart.SetDependencies(child, grafana)
+
+	prepared, err := Prepare(Chart{source: loadedChart}, RenderOptions{
+		Values: map[string]any{
+			"child":   map[string]any{"enabled": false},
+			"grafana": map[string]any{"enabled": false},
+		},
+		KubeVersion: "1.36.0", APIVersions: []string{},
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	rendered, err := Render(t.Context(), prepared.Chart, prepared.Values)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(rendered) != 0 {
+		t.Fatalf("Render() returned %d templates, want disabled child templates to be omitted", len(rendered))
+	}
+	if len(loadedChart.Dependencies()) != 2 || loadedChart.Dependencies()[0] != child || loadedChart.Dependencies()[1] != grafana {
+		t.Fatal("Prepare() mutated the loaded chart dependencies")
+	}
+	if !loadedChart.Metadata.Dependencies[0].Enabled || !loadedChart.Metadata.Dependencies[1].Enabled {
+		t.Fatal("Prepare() mutated the loaded chart dependency condition")
+	}
+}
+
 func TestChartSourceFilesRejectsPathsOutsideChart(t *testing.T) {
 	t.Parallel()
 

@@ -350,6 +350,16 @@ func Prepare(loaded Chart, options RenderOptions, projectRoot string) (Prepared,
 	if options.APIVersions == nil {
 		return Prepared{}, errors.New("helm.render requires apiVersions; use an empty List when the target has no additional APIs")
 	}
+	loadedChart, ok := loaded.source.(*v2.Chart)
+	if !ok {
+		return Prepared{}, errors.New("loaded Helm Chart has an unsupported type")
+	}
+	loadedChart = cloneChart(loadedChart)
+	loaded.source = loadedChart
+	if err := chartutil.ProcessDependencies(loadedChart, options.Values); err != nil {
+		return Prepared{}, ValuesError{Cause: err}
+	}
+	prepared.Chart = loaded
 	capabilities := common.Capabilities{
 		APIVersions: common.VersionSet{},
 		HelmVersion: common.DefaultCapabilities.HelmVersion,

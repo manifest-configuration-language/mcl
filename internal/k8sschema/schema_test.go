@@ -51,6 +51,33 @@ func TestValidateBuiltinResolvesCurrentDefinitions(t *testing.T) {
 	}
 }
 
+func TestValidateBuiltinTreatsNullObjectFieldsAsOmitted(t *testing.T) {
+	t.Parallel()
+
+	configMap := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "sample", "annotations": nil},
+	}
+	if errors := ValidateBuiltin("v1", "ConfigMap", configMap); len(errors) > 0 {
+		t.Fatalf("validate ConfigMap with a null optional field: %v", errors)
+	}
+	configMap["data"] = map[string]any{"key": nil}
+	if errors := ValidateBuiltin("v1", "ConfigMap", configMap); len(errors) == 0 {
+		t.Fatal("ConfigMap with a null additionalProperties value passed validation")
+	}
+
+	pod := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"metadata":   map[string]any{"name": "sample"},
+		"spec":       map[string]any{"containers": nil},
+	}
+	if errors := ValidateBuiltin("v1", "Pod", pod); len(errors) == 0 {
+		t.Fatal("Pod with a null required field passed validation")
+	}
+}
+
 func TestValidateBuiltinRetainsLegacyGVK(t *testing.T) {
 	t.Parallel()
 

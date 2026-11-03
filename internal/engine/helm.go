@@ -187,7 +187,7 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 	}
 
 	return helmPreparedRender{
-		chart: loaded, values: prepared.Values, mappingValues: cloneHelmRenderValues(prepared.Values),
+		chart: prepared.Chart, values: prepared.Values, mappingValues: cloneHelmRenderValues(prepared.Values),
 		chartRoot: prepared.ChartRoot, chartSourcePath: prepared.ChartSourcePath,
 		chartSourceFiles: prepared.ChartSourceFiles,
 		cacheKey:         prepared.CacheKey, cacheKeyAvailable: prepared.CacheKeyAvailable,
