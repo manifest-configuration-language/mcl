@@ -2,6 +2,11 @@ package k8sschema
 
 import "testing"
 
+const (
+	apiVersionField = "apiVersion"
+	metadataField   = "metadata"
+)
+
 func TestBuiltinOpenAPICombinesCurrentAndLegacyGVKs(t *testing.T) {
 	t.Parallel()
 
@@ -39,9 +44,9 @@ func TestValidateBuiltinResolvesCurrentDefinitions(t *testing.T) {
 	t.Parallel()
 
 	value := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Pod",
-		"metadata":   map[string]any{"name": "sample"},
+		apiVersionField: "v1",
+		"kind":          "Pod",
+		metadataField:   map[string]any{"name": "sample"},
 		"spec": map[string]any{
 			"containers": []any{map[string]any{"name": "app", "image": "alpine"}},
 		},
@@ -55,9 +60,9 @@ func TestValidateBuiltinTreatsNullObjectFieldsAsOmitted(t *testing.T) {
 	t.Parallel()
 
 	configMap := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "ConfigMap",
-		"metadata":   map[string]any{"name": "sample", "annotations": nil},
+		apiVersionField: "v1",
+		"kind":          "ConfigMap",
+		metadataField:   map[string]any{"name": "sample", "annotations": nil},
 	}
 	if errors := ValidateBuiltin("v1", "ConfigMap", configMap); len(errors) > 0 {
 		t.Fatalf("validate ConfigMap with a null optional field: %v", errors)
@@ -68,10 +73,10 @@ func TestValidateBuiltinTreatsNullObjectFieldsAsOmitted(t *testing.T) {
 	}
 
 	pod := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Pod",
-		"metadata":   map[string]any{"name": "sample"},
-		"spec":       map[string]any{"containers": nil},
+		apiVersionField: "v1",
+		"kind":          "Pod",
+		metadataField:   map[string]any{"name": "sample"},
+		"spec":          map[string]any{"containers": nil},
 	}
 	if errors := ValidateBuiltin("v1", "Pod", pod); len(errors) == 0 {
 		t.Fatal("Pod with a null required field passed validation")
@@ -82,9 +87,9 @@ func TestValidateBuiltinRetainsLegacyGVK(t *testing.T) {
 	t.Parallel()
 
 	value := map[string]any{
-		"apiVersion": "extensions/v1beta1",
-		"kind":       "Ingress",
-		"metadata":   map[string]any{"name": 42},
+		apiVersionField: "extensions/v1beta1",
+		"kind":          "Ingress",
+		metadataField:   map[string]any{"name": 42},
 	}
 	if errors := ValidateBuiltin("extensions/v1beta1", "Ingress", value); len(errors) == 0 {
 		t.Fatal("legacy Ingress schema did not validate the metadata name type")

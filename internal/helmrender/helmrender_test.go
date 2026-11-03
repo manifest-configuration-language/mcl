@@ -188,15 +188,21 @@ func TestPrepareKeepsRemoteChartSourcesInMemory(t *testing.T) {
 func TestPrepareProcessesDependencyConditionsWithoutMutatingLoadedChart(t *testing.T) {
 	t.Parallel()
 
+	const (
+		childChartName   = "child"
+		grafanaChartName = "grafana"
+		enabledField     = "enabled"
+	)
+
 	child := &v2.Chart{
-		Metadata: &v2.Metadata{Name: "child", Version: "0.1.0", APIVersion: v2.APIVersionV2},
+		Metadata: &v2.Metadata{Name: childChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2},
 		Templates: []*common.File{{
 			Name: "templates/invalid.yaml",
 			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: child\n  name: duplicate\n"),
 		}},
 	}
 	grafana := &v2.Chart{
-		Metadata: &v2.Metadata{Name: "grafana", Version: "0.1.0", APIVersion: v2.APIVersionV2},
+		Metadata: &v2.Metadata{Name: grafanaChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2},
 		Templates: []*common.File{{
 			Name: "templates/invalid.yaml",
 			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: grafana\n  name: duplicate\n"),
@@ -205,24 +211,24 @@ func TestPrepareProcessesDependencyConditionsWithoutMutatingLoadedChart(t *testi
 	loadedChart := &v2.Chart{
 		Metadata: &v2.Metadata{
 			Name:       "parent",
-			Version:    "0.1.0",
+			Version:    testChartVersion,
 			APIVersion: v2.APIVersionV2,
 			Dependencies: []*v2.Dependency{
-				{Name: "child", Version: "0.1.0", Condition: "child.enabled", Enabled: true},
-				{Name: "grafana", Version: "0.1.0", Condition: "grafana.enabled", Enabled: true},
+				{Name: childChartName, Version: testChartVersion, Condition: childChartName + "." + enabledField, Enabled: true},
+				{Name: grafanaChartName, Version: testChartVersion, Condition: grafanaChartName + "." + enabledField, Enabled: true},
 			},
 		},
 		Values: map[string]any{
-			"child":   map[string]any{"enabled": true},
-			"grafana": map[string]any{"enabled": true},
+			childChartName:   map[string]any{enabledField: true},
+			grafanaChartName: map[string]any{enabledField: true},
 		},
 	}
 	loadedChart.SetDependencies(child, grafana)
 
 	prepared, err := Prepare(Chart{source: loadedChart}, RenderOptions{
 		Values: map[string]any{
-			"child":   map[string]any{"enabled": false},
-			"grafana": map[string]any{"enabled": false},
+			childChartName:   map[string]any{enabledField: false},
+			grafanaChartName: map[string]any{enabledField: false},
 		},
 		KubeVersion: "1.36.0", APIVersions: []string{},
 	}, t.TempDir())
