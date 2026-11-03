@@ -221,7 +221,7 @@ jobs:
       - name: Build CLI
         run: |
           go build -trimpath \
-            -ldflags="-s -w -X=github.com/manifest-configuration-language/mcl/internal/engine.ToolchainVersion=${VERSION}" \
+            -ldflags="-s -w -X=github.com/manifest-configuration-language/mcl/internal/engine.toolchainVersionOverride=${VERSION}" \
             -o "mcl${{ matrix.os == 'windows' && '.exe' || '' }}" \
             ./cmd/mcl
 

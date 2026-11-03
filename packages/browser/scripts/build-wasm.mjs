@@ -26,7 +26,7 @@ if (usePrebuiltWasm) {
   await mkdir(outputDirectory, { recursive: true });
   const ldflags = ["-s", "-w"];
   if (process.env.MCL_VERSION) {
-    ldflags.push(`-X=github.com/manifest-configuration-language/mcl/internal/engine.ToolchainVersion=${process.env.MCL_VERSION}`);
+    ldflags.push(`-X=github.com/manifest-configuration-language/mcl/internal/engine.toolchainVersionOverride=${process.env.MCL_VERSION}`);
   }
   try {
     await execFileAsync("go", ["build", "-trimpath", `-ldflags=${ldflags.join(" ")}`, "-o", rawWasm, "./cmd/mcl-wasm"], {

@@ -7,7 +7,15 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
 
+var toolchainVersionOverride string
+
 var ToolchainVersion = currentModuleVersion()
+
+func init() {
+	if toolchainVersionOverride != "" {
+		ToolchainVersion = toolchainVersionOverride
+	}
+}
 
 var toolchainVersionProvider = func() string { return ToolchainVersion }
 
