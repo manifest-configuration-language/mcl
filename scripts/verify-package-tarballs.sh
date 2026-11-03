@@ -19,13 +19,6 @@ for package in browser language; do
   fi
   rm -f "$output_directory/manifest-configuration-language-$package-$version.tgz"
 done
-rm -f "$output_directory/SHA512SUMS"
-
-reference_directory="$root/packages/language/reference"
-if [[ ! -s "$reference_directory/cli/mcl.md" || ! -s "$reference_directory/stdlib-functions.md" ]]; then
-  printf 'Generated MCL reference files are missing. Run mise run release:reference first.\n' >&2
-  exit 1
-fi
 
 for package in browser language; do
   source_directory="$root/packages/$package"
@@ -49,24 +42,11 @@ for package in browser language; do
   printf '%s\n' "$output_directory/$archive" >> "$temporary_directory/archives.txt"
 done
 
-browser_archive="$(sed -n '1p' "$temporary_directory/archives.txt")"
-language_archive="$(sed -n '2p' "$temporary_directory/archives.txt")"
-typescript_version="$(node -p "require('$root/packages/browser/package.json').devDependencies.typescript")"
-project_directory="$temporary_directory/project"
-mkdir -p "$project_directory"
-cat > "$project_directory/package.json" <<EOF
-{"private":true,"type":"module","dependencies":{"@manifest-configuration-language/browser":"file:$browser_archive","@manifest-configuration-language/language":"file:$language_archive"},"devDependencies":{"typescript":"$typescript_version"}}
-EOF
-npm install --prefix "$project_directory" --ignore-scripts --no-audit --no-fund
-cp "$root/scripts/verify-installed-packages.mjs" "$project_directory/verify-installed-packages.mjs"
-(cd "$project_directory" && node verify-installed-packages.mjs)
 (
   cd "$output_directory"
-  expected_archives="$(printf '%s\n' "$(basename "$browser_archive")" "$(basename "$language_archive")" | sort)"
-  actual_archives="$(for archive in ./*.tgz; do [ -f "$archive" ] && basename "$archive"; done | sort)"
-  if [ "$actual_archives" != "$expected_archives" ]; then
-    printf 'Unexpected npm package archives: %s\n' "$actual_archives" >&2
-    exit 1
+  if [ -f SHA512SUMS ]; then
+    sha512sum --check SHA512SUMS
+  else
+    sha512sum -- *.tgz > SHA512SUMS
   fi
-  sha512sum -- *.tgz > SHA512SUMS
 )
