@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.sha }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -200,8 +200,8 @@ jobs:
     env:
       GOOS: ${{ matrix.os }}
       GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: "0"
       VERSION: ${{ needs.prepare.outputs.version }}
+      MCL_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Check out source
         uses: actions/checkout@v7.0.1
@@ -215,6 +215,24 @@ jobs:
           install_args: go
           cache: true
 
+      - name: Get Go cache paths
+        id: go-cache-paths
+        run: |
+          {
+            echo "build=$(go env GOCACHE)"
+            echo "modules=$(go env GOMODCACHE)"
+            echo "version=$(go env GOVERSION)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Cache Go build and module data
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.build }}
+            ${{ steps.go-cache-paths.outputs.modules }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
       - name: Build CLI
         run: |
           go build -trimpath \
@@ -236,7 +254,8 @@ jobs:
         with:
           file: dist/mcl_${{ env.VERSION }}_${{ env.GOOS }}_${{ env.GOARCH }}.${{ matrix.os == 'windows' && 'zip' || 'tar.gz' }}
           format: spdx-json
-          output-file: dist/mcl_${{ env.VERSION }}_${{ env.GOOS }}_${{ env.GOARCH }}.sbom.json
+          output-file: dist/mcl_${{ env.VERSION }}_${{ env.GOOS }}_${{ env.GOARCH }}.${{ matrix.os == 'windows' && 'zip' || 'tar.gz' }}.sbom.json
+          upload-artifact: false
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7.0.2
@@ -254,6 +273,7 @@ jobs:
       contents: read
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
+      MCL_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Check out source
         uses: actions/checkout@v7.0.1
@@ -302,7 +322,8 @@ jobs:
         with:
           file: dist/mcl_${{ env.VERSION }}_wasm.tar.gz
           format: spdx-json
-          output-file: dist/mcl_${{ env.VERSION }}_wasm.sbom.json
+          output-file: dist/mcl_${{ env.VERSION }}_wasm.tar.gz.sbom.json
+          upload-artifact: false
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v7.0.2

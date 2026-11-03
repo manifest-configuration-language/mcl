@@ -25,10 +25,6 @@ jobs:
         with:
           install: true
           cache: true
-      - name: Set up pnpm
-        run: corepack enable && pnpm --version
-      - name: Install npm package workspace
-        run: pnpm install --frozen-lockfile
       - name: Get Go cache paths
         id: go-cache-paths
         run: |
@@ -84,14 +80,6 @@ jobs:
         with:
           install: true
           cache: true
-      - name: Set npm package versions
-        id: package-version
-        run: |
-          set -euo pipefail
-          version="0.0.0-ci.${GITHUB_SHA:0:12}"
-          npm --prefix packages/browser pkg set "version=$version"
-          npm --prefix packages/language pkg set "version=$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache browser WebAssembly output
         id: wasm-cache-restore
         uses: actions/cache/restore@v6.1.0
@@ -119,10 +107,9 @@ jobs:
           compression-level: 0
 
   verify:
-    needs: [go, browser]
+    needs: browser
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -136,11 +123,19 @@ jobs:
         with:
           name: mcl-browser-dist
           path: packages/browser/dist/
+      - name: Set up pnpm
+        run: corepack enable && pnpm --version
       - name: Install npm package workspace
         run: pnpm install --frozen-lockfile
-      - name: Parallel independent verification steps
-        env:
-          MCL_VERSION: 0.0.0-ci.${GITHUB_SHA:0:12}
+      - name: Set CI package versions
+        run: |
+          set -euo pipefail
+          version="0.0.0-ci.${GITHUB_SHA:0:12}"
+          echo "MCL_VERSION=$version" >> "$GITHUB_ENV"
+          npm --prefix packages/browser pkg set "version=$version"
+          npm --prefix packages/language pkg set "version=$version"
+      - name: Run independent verification steps in parallel
+        timeout-minutes: 15
         run: |
           set -euo pipefail
 
@@ -161,8 +156,6 @@ jobs:
           wait "$parity_pid" || exit $?
           wait "$reference_pid" || exit $?
       - name: Pack and verify npm packages
-        env:
-          MCL_VERSION: 0.0.0-ci.${GITHUB_SHA:0:12}
         run: scripts/verify-package-tarballs.sh "${RUNNER_TEMP}/mcl-packages"
       - name: Check generated protocol sources are current
         run: |
