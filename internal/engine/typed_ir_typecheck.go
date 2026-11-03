@@ -18,13 +18,14 @@ func typedExpressionFromExpr(expression Expr, state *EvaluationState) (typedExpr
 		return typedExpression{}, false, err
 	}
 
-	return typedExpressionFromAnalysis(expression, analysis, known, state, context)
+	return typedExpressionFromAnalysis(expression, analysis, known, context)
 }
 
 func typedExpressionFromKnownAnalysis(expression Expr, state *EvaluationState, analysis TypeAnalysis, known bool) (typedExpression, bool, error) {
 	if state == nil {
 		return typedExpression{}, false, errors.New("evaluation state is nil")
 	}
+
 	return typedExpressionFromKnownAnalysisWithStaticTypes(expression, state, analysis, known, state.StaticTypes)
 }
 
@@ -36,7 +37,7 @@ func typedExpressionFromKnownAnalysisWithStaticTypes(expression Expr, state *Eva
 	context.staticTypes = staticTypes
 	context.analysis.results[expression] = typedAnalysisResult{analysis: cloneTypeAnalysis(analysis), known: known}
 
-	return typedExpressionFromAnalysis(expression, analysis, known, state, context)
+	return typedExpressionFromAnalysis(expression, analysis, known, context)
 }
 
 func typedEvaluationContextFromState(state *EvaluationState) typedEvaluationContext {
@@ -47,7 +48,7 @@ func typedEvaluationContextFromState(state *EvaluationState) typedEvaluationCont
 	}
 }
 
-func typedExpressionFromAnalysis(expression Expr, analysis TypeAnalysis, known bool, state *EvaluationState, context typedEvaluationContext) (typedExpression, bool, error) {
+func typedExpressionFromAnalysis(expression Expr, analysis TypeAnalysis, known bool, context typedEvaluationContext) (typedExpression, bool, error) {
 	inferred := analysis.Type
 	if !known {
 		if _, isReference := expression.(*ReferenceExpr); !isReference {
