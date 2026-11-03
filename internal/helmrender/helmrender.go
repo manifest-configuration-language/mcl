@@ -936,7 +936,6 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 
 	files := make([]*archive.BufferedFile, 0)
 	ignoredDirectories := make(map[string]bool)
-	var digestKey strings.Builder
 	var totalBytes int64
 	err = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -979,10 +978,6 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 		if totalBytes > maxChartBytes {
 			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
 		}
-		digestKey.WriteString(filepath.ToSlash(name))
-		digestKey.WriteByte(0)
-		digestKey.WriteString(content.SHA256(data))
-		digestKey.WriteByte(0)
 		files = append(files, &archive.BufferedFile{Name: filepath.ToSlash(name), ModTime: fileInfo.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})})
 
 		return nil
@@ -997,8 +992,12 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 	if chart.Metadata.APIVersion == "v3" {
 		return nil, "", errors.New("loaded Helm Chart has an unsupported type")
 	}
+	digest, err := digestSourceFS(source)
+	if err != nil {
+		return nil, "", err
+	}
 
-	return chart, content.SHA256([]byte(digestKey.String())), nil
+	return chart, digest, nil
 }
 
 func digestSourceFS(source fs.FS) (string, error) {
