@@ -51,7 +51,7 @@ jobs:
       - name: Prepare release WebAssembly assets
         run: mise run release:wasm
       - name: Lint GitHub Actions workflows
-        run: mise run actions:lint
+        run: mise run lint:gha
       - name: Run Browser SDK unit tests
         run: pnpm --filter @manifest-configuration-language/browser run test:unit
       - name: Check language grammar parity

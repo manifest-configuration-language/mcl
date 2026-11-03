@@ -7,7 +7,7 @@ goreleaser = "2.18.3"
 "aqua:WebAssembly/binaryen" = "133"
 "aqua:anchore/syft" = "1.54.1"
 
-[tasks."actions:lint"]
+[tasks."lint:gha"]
 description = "Lint GitHub Actions workflows"
 run = "jactionlint"
 
