@@ -35,6 +35,10 @@ MCLは空のMapやListの要素型を推論できない場合があります。S
 
 有効なcert-manager subchartが出力するRBAC名の一部には、plain scalar内にコロンを含む値があります。現行MCLのYAML parserはその値を拒否します。Topolvm 17.2.0ではcert-manager subchartが無効で、Helm依存条件処理によってtemplate評価前に除外されるため、この問題は発生しません。YAML仕様に沿ってplain scalarをparseできるようにする必要があります。
 
+### Helm chart内の証明書生成
+
+rabbitmq-topology-operator 0.4.1は`useCertManager: true`を指定しても、`templates/validating-webhook-configuration.yaml`で`genCA`を呼び出します。MCLのhermetic Helm renderingは`genCA`を無効にしているため、`mcl update`が失敗します。random関数を無条件に許可せずにこのchartをrenderできるよう、chartが既存の証明書を受け取る設定、または決定的な証明書入力を扱う方法を確認する必要があります。
+
 ### 再現性と証明書生成
 
 trust-manager 0.24.0はHelm template内で`genCA`を使ってランダムな証明書を生成します。MCLは再現可能な評価を保つため、このようなrandom関数を無効にしています。決定性を損なわずに生成結果を固定する入力方法が必要か、chart側の値で証明書生成を無効にできるかを個別に評価します。random関数を無条件に許可する変更は改善案に含めません。
