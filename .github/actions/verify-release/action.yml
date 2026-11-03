@@ -16,6 +16,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Prepare browser WASM
+      uses: ./.github/actions/prepare-wasm
+
     - name: Run release checks
       shell: bash
       run: mise run quality:check

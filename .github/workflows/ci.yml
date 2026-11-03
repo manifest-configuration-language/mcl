@@ -43,6 +43,9 @@ jobs:
           key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-${{ runner.arch }}-
+      - name: Prepare browser WASM
+        uses: ./.github/actions/prepare-wasm
+
       - name: Run project quality checks
         run: mise run quality:check
       - name: Prepare release WebAssembly assets

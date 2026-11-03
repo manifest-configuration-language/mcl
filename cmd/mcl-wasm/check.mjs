@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,16 +6,6 @@ const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const browserPackage = path.join(workspace, 'packages/browser');
 const wasmPath = path.join(browserPackage, 'dist/mcl.wasm');
 const wasmExecPath = path.join(browserPackage, 'dist/wasm_exec.js');
-
-const build = spawnSync('node', ['./packages/browser/scripts/build-wasm.mjs'], {
-  cwd: workspace,
-  encoding: 'utf8',
-});
-
-if (build.status !== 0) {
-  process.stderr.write(build.stderr || build.stdout || 'Browser WebAssembly build failed.\n');
-  process.exit(build.status ?? 1);
-}
 
 const [wasm, wasmStats, wasmExecStats] = await Promise.all([
   readFile(wasmPath),

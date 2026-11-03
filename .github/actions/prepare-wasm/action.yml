@@ -1,0 +1,17 @@
+name: Prepare browser WASM
+description: Restore or build the browser WebAssembly runtime artifact
+runs:
+  using: composite
+  steps:
+    - name: Restore browser WASM cache
+      id: wasm-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: packages/browser/dist/
+        key: wasm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml', 'go.mod', 'go.sum', '**/*.go', 'packages/browser/scripts/build-wasm.mjs') }}
+        restore-keys: |
+          wasm-${{ runner.os }}-${{ runner.arch }}-
+    - name: Build browser WASM
+      if: steps.wasm-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: mise run wasm:build

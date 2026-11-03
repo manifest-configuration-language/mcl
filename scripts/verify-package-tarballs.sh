@@ -4,7 +4,6 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
-language_package="$temporary_directory/language"
 output_directory="$temporary_directory/packages"
 prebuilt_browser_wasm=false
 for argument in "$@"; do
@@ -26,20 +25,14 @@ for package in browser language; do
 done
 rm -f "$output_directory/SHA512SUMS"
 
-reference_directory="$root/.build/reference/reference"
+reference_directory="$root/packages/language/reference"
 if [[ ! -s "$reference_directory/cli/mcl.md" || ! -s "$reference_directory/stdlib-functions.md" ]]; then
   printf 'Generated MCL reference files are missing. Run mise run release:reference first.\n' >&2
   exit 1
 fi
-mkdir -p "$language_package"
-cp "$root/packages/language/package.json" "$root/packages/language/README.md" "$language_package/"
-cp -R "$root/packages/language/src" "$language_package/src"
-ln -s "$root/packages/language/node_modules" "$language_package/node_modules"
-cp -R "$reference_directory" "$language_package/reference"
 
 for package in browser language; do
   source_directory="$root/packages/$package"
-  if [[ "$package" == language ]]; then source_directory="$language_package"; fi
   package_name="$(node -p "require('$source_directory/package.json').name")"
   package_version="$(node -p "require('$source_directory/package.json').version")"
   archive_name="${package_name#@}"
