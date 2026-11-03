@@ -57,25 +57,45 @@ jobs:
             exit 1
           fi
 
-      - name: Require successful main CI
+      - name: Wait for successful main CI
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          result="$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow ci.yml \
-            --branch main \
-            --event push \
-            --commit "$GITHUB_SHA" \
-            --limit 1 \
-            --json headSha,status,conclusion \
-            --jq '.[0] | [.headSha, .status, .conclusion] | @tsv')"
-          expected="$(printf '%s\tcompleted\tsuccess' "$GITHUB_SHA")"
-          if [ "$result" != "$expected" ]; then
-            printf 'The latest main CI run for %s is not a successful completed run (%s).\n' "$GITHUB_SHA" "$result" >&2
-            exit 1
-          fi
+          timeout=600
+          interval=15
+          deadline=$((SECONDS + timeout))
+          while true; do
+            result="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow ci.yml \
+              --branch main \
+              --event push \
+              --commit "$GITHUB_SHA" \
+              --limit 1 \
+              --json headSha,status,conclusion \
+              --jq '.[0] | [.headSha, .status, .conclusion] | @tsv' 2>/dev/null || true)"
+            sha=""
+            status=""
+            conclusion=""
+            if [[ -n "$result" ]]; then
+              IFS=$'\t' read -r sha status conclusion <<< "$result"
+            fi
+            if [[ "$sha" == "$GITHUB_SHA" && "$status" == completed ]]; then
+              if [[ "$conclusion" == success ]]; then
+                printf 'Main CI succeeded for %s.\n' "$GITHUB_SHA"
+                exit 0
+              fi
+              printf 'Main CI for %s concluded with %s.\n' "$GITHUB_SHA" "$conclusion" >&2
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              printf 'Timed out after %ss waiting for main CI on %s (status: %s).\n' \
+                "$timeout" "$GITHUB_SHA" "${status:-not started}" >&2
+              exit 1
+            fi
+            sleep "$interval"
+          done
 
       - name: Determine release version
         id: target
