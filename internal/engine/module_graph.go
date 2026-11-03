@@ -68,7 +68,7 @@ func (graph *moduleGraph) imports(importer string, module ModuleAST) ([]moduleIm
 	imports := make([]moduleImport, 0)
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)
-		if !ok || strings.HasPrefix(declaration.ModulePath, "std:") {
+		if !ok || (!declaration.Text && strings.HasPrefix(declaration.ModulePath, "std:")) {
 			continue
 		}
 		path, err := graph.resolveImport(importer, declaration.ModulePath)

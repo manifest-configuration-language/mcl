@@ -24,6 +24,7 @@ type ImportDeclaration struct {
 	NodeMetadata
 	Name           string
 	ModulePath     string
+	Text           bool
 	NameSpan       SourceSpan
 	ModulePathSpan SourceSpan
 }

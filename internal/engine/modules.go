@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
@@ -50,6 +51,8 @@ type moduleLoader struct {
 	operation     string
 	overlays      map[string]string
 	loadedModules map[string]struct{}
+	textImports   map[string]string
+	textBytes     int64
 	budget        *functionBudget
 	allocations   *runtimeAllocationBudget
 	analysis      *TypeAnalysisContext
@@ -1290,8 +1293,19 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		if _, exists := state.Environment[declaration.Name]; exists {
 			return nil, nil, nil, fmt.Errorf("%s:%d: %q is already defined", path, declaration.Line, declaration.Name)
 		}
+		var imported RuntimeValue
 		var entries []RuntimeEntry
-		if strings.HasPrefix(declaration.ModulePath, "std:") {
+		if declaration.Text {
+			dependency, err := loader.resolveImport(path, declaration.ModulePath)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("%s:%d: %w", path, declaration.Line, err)
+			}
+			text, err := loader.readTextImport(dependency)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("%s:%d: read imported text %q: %w", path, declaration.Line, declaration.ModulePath, err)
+			}
+			imported = RuntimeValue{Value: runtimeValueData{Kind: String, Text: text}}
+		} else if strings.HasPrefix(declaration.ModulePath, "std:") {
 			var exists bool
 			entries, exists = standardRuntimeLibrary(declaration.ModulePath)
 			if !exists {
@@ -1325,7 +1339,9 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		if err := loader.allocations.consume(len(entries) + 1); err != nil {
 			return nil, nil, nil, sourceDiagnostic(path, declaration.Span, err)
 		}
-		imported := RuntimeValue{Value: runtimeValueData{Kind: Map}, Map: entries}
+		if !declaration.Text {
+			imported = RuntimeValue{Value: runtimeValueData{Kind: Map}, Map: entries}
+		}
 		state.Environment[declaration.Name] = imported
 		if inferred, known := inferRuntimeValueStaticType(imported); known {
 			state.StaticTypes[declaration.Name] = inferred
@@ -1384,6 +1400,33 @@ func (loader *moduleLoader) resolveImport(importer, modulePath string) (string, 
 	}
 
 	return loader.graph.resolveImport(importer, modulePath)
+}
+
+func (loader *moduleLoader) readTextImport(path string) (string, error) {
+	if text, exists := loader.textImports[path]; exists {
+		return text, nil
+	}
+	if len(loader.textImports) >= maxProjectMCLFiles {
+		return "", fmt.Errorf("project imports more than %d text files", maxProjectMCLFiles)
+	}
+	data, err := loader.files.readLimitedFileWithLimit(path, maxMCLSourceBytes)
+	if err != nil {
+		return "", err
+	}
+	if loader.textBytes+int64(len(data)) > maxProjectMCLBytes {
+		return "", fmt.Errorf("project imported text exceeds the %d-byte limit", maxProjectMCLBytes)
+	}
+	if !utf8.Valid(data) {
+		return "", errors.New("imported text is not valid UTF-8")
+	}
+	text := string(data)
+	if loader.textImports == nil {
+		loader.textImports = make(map[string]string)
+	}
+	loader.textImports[path] = text
+	loader.textBytes += int64(len(data))
+
+	return text, nil
 }
 
 func setModuleASTSourcePath(module ModuleAST, path string) {

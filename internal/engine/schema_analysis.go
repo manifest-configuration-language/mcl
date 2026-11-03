@@ -68,6 +68,9 @@ func (loader *schemaAnalysisLoader) analyze(path string, entry bool) (map[string
 	}
 	for _, imported := range imports {
 		declaration := imported.declaration
+		if declaration.Text {
+			continue
+		}
 		exportedTypes, err := loader.analyze(imported.path, false)
 		if err != nil {
 			return nil, err
