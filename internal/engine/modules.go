@@ -1409,7 +1409,7 @@ func (loader *moduleLoader) readTextImport(path string) (string, error) {
 	if len(loader.textImports) >= maxProjectMCLFiles {
 		return "", fmt.Errorf("project imports more than %d text files", maxProjectMCLFiles)
 	}
-	data, err := loader.files.readLimitedFileWithLimit(path, maxMCLSourceBytes)
+	data, err := loader.files.readLimitedFile(path)
 	if err != nil {
 		return "", err
 	}

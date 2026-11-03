@@ -61,7 +61,7 @@ func compileSchema(source, projectRoot, modulePath string, dependencies *depende
 
 			return nil, fmt.Errorf("resolve Schema %q: %w", source, err)
 		}
-		data, err = files.readLimitedFileWithLimit(path, maxYAMLBytes)
+		data, err = files.readLimitedFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read Schema %q: %w", source, err)
 		}
@@ -108,7 +108,7 @@ func (loader *projectSchemaLoader) Load(source string) (any, error) {
 		return nil, err
 	}
 	files := projectFilesystemFor(loader.root, []*projectFilesystem{loader.files})
-	data, err := files.readLimitedFileWithLimit(path, maxYAMLBytes)
+	data, err := files.readLimitedFile(path)
 	if err != nil {
 		return nil, err
 	}
