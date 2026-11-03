@@ -495,12 +495,16 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         onAbort();
         return;
       }
-      call().then(
-        (value) => finish(undefined, value),
-        (error: unknown) => {
-          stop(error instanceof Error ? error : new Error(String(error)));
-        },
-      );
+      try {
+        call().then(
+          (value) => finish(undefined, value),
+          (error: unknown) => {
+            stop(error instanceof Error ? error : new Error(String(error)));
+          },
+        );
+      } catch (error) {
+        stop(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -657,7 +661,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         let response: import("./protocol.js").Response;
         try {
           response = await runWorkerCall(signal, () =>
-            currentApi.run(JSON.stringify(request), Comlink.transfer({}, []), project.id),
+            currentApi.run(JSON.stringify(request), project.id),
           );
         } finally {
           timing.wasmDurationMs = Math.max(0, performance.now() - timing.wasmStartedAt!);

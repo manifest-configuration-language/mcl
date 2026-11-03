@@ -42,11 +42,7 @@ export interface WorkerApi {
    * Execute an MCL operation and return the WASM JSON response.
    * Pass `projectId` to run inside a project session.
    */
-  run(
-    requestJSON: string,
-    binaryFiles: Record<string, Uint8Array>,
-    projectId?: string,
-  ): Response;
+  run(requestJSON: string, projectId?: string): Response;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,12 +193,8 @@ const api: WorkerApi = {
     return JSON.parse(globalThis.mclWasm.updateProject(projectId, updateJSON, binaryFiles)) as Response;
   },
 
-  run(
-    requestJSON: string,
-    binaryFiles: Record<string, Uint8Array>,
-    projectId?: string,
-  ): Response {
-    return JSON.parse(globalThis.mclWasm.run(requestJSON, binaryFiles, projectId)) as Response;
+  run(requestJSON: string, projectId?: string): Response {
+    return JSON.parse(globalThis.mclWasm.run(requestJSON, {}, projectId)) as Response;
   },
 };
 
