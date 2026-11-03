@@ -9,7 +9,7 @@ goreleaser = "2.18.3"
 
 [tasks."actions:lint"]
 description = "Lint GitHub Actions workflows"
-run = "jactionlint .github/workflows/*.yml"
+run = "jactionlint"
 
 [tasks.test]
 description = "Run the MCL test suite"
