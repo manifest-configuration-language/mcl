@@ -183,8 +183,8 @@ jobs:
 
       - name: Cache Release Go builds (restore)
         # PRのキャッシュはmainから復元できないため、信頼境界を維持。
-        # jactionlint ignore=cache-poisoning
         id: release-go-cache
+        # jactionlint ignore=cache-poisoning
         uses: actions/cache/restore@v6.1.0
         with:
           path: |
