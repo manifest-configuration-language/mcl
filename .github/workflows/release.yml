@@ -33,6 +33,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    cache-mode: read
     outputs:
       version: ${{ steps.target.outputs.version }}
       release_tag: ${{ steps.target.outputs.tag }}
@@ -67,12 +68,12 @@ jobs:
             --branch main \
             --event push \
             --commit "$GITHUB_SHA" \
-            --status success \
             --limit 1 \
-            --json headSha \
-            --jq '.[0].headSha // ""')"
-          if [ "$result" != "$GITHUB_SHA" ]; then
-            printf 'No successful main CI run found for %s.\n' "$GITHUB_SHA" >&2
+            --json headSha,status,conclusion \
+            --jq '.[0] | [.headSha, .status, .conclusion] | @tsv')"
+          expected="$(printf '%s\tcompleted\tsuccess' "$GITHUB_SHA")"
+          if [ "$result" != "$expected" ]; then
+            printf 'The latest main CI run for %s is not a successful completed run (%s).\n' "$GITHUB_SHA" "$result" >&2
             exit 1
           fi
 
@@ -88,6 +89,10 @@ jobs:
             sort -V | tail -n 1 || true)"
           if [ -z "$latest" ]; then
             printf 'A stable vX.Y.Z tag is required to determine the next version.\n' >&2
+            exit 1
+          fi
+          if [[ "$CHANNEL" == stable && "$(git rev-list -n 1 "$latest")" == "$GITHUB_SHA" ]]; then
+            printf 'Commit %s is already released as %s.\n' "$GITHUB_SHA" "$latest" >&2
             exit 1
           fi
           IFS=. read -r major minor patch <<< "${latest#v}"
@@ -114,6 +119,10 @@ jobs:
             previous="$(git tag --list "v${version}-rc.*" | sort -V | tail -n 1)"
             number=1
             if [[ -n "$previous" ]]; then
+              if [[ "$(git rev-list -n 1 "$previous")" == "$GITHUB_SHA" ]]; then
+                printf 'Commit %s is already released as %s.\n' "$GITHUB_SHA" "$previous" >&2
+                exit 1
+              fi
               number=$((${previous##*.} + 1))
             fi
             version="${version}-rc.${number}"
@@ -164,6 +173,9 @@ jobs:
 
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
+
+      - name: Validate GoReleaser configuration
+        run: goreleaser check
 
       - name: Build release assets
         run: |
@@ -252,8 +264,12 @@ jobs:
           set -euo pipefail
           tag="$RELEASE_TAG"
           prerelease_args=()
+          latest_args=()
           if [[ "$CHANNEL" == rc ]]; then
             prerelease_args+=(--prerelease)
+            latest_args+=(--latest=false)
+          else
+            latest_args+=(--latest)
           fi
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
             is_draft="$(jq -r '.isDraft' "$RUNNER_TEMP/existing-release.json")"
@@ -279,6 +295,7 @@ jobs:
           fi
           gh release create "$tag" dist/mcl_* dist/SHA256SUMS \
             "${prerelease_args[@]}" \
+            "${latest_args[@]}" \
             "${target_args[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
@@ -290,7 +307,7 @@ jobs:
             printf 'Expected release %s to remain a draft until asset attestation succeeds.\n' "$tag" >&2
             exit 1
           fi
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false "${latest_args[@]}"
 
   publish_npm:
     needs: [release, publish_release]

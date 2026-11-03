@@ -16,10 +16,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Validate GoReleaser configuration
-      shell: bash
-      run: goreleaser check
-
     - name: Generate reference package contents
       shell: bash
       env:
