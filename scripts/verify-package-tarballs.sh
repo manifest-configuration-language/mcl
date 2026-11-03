@@ -35,7 +35,7 @@ for package in browser language; do
   archive_name="${archive_name//\//-}-$package_version.tgz"
   (
     cd "$source_directory"
-    pnpm pack --pack-destination "$output_directory" >/dev/null
+    MCL_BROWSER_WASM_PREBUILT=true pnpm pack --pack-destination "$output_directory" >/dev/null
   )
   archive="$archive_name"
   if [[ "$package" == browser ]]; then

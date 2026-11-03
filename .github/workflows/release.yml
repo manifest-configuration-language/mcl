@@ -197,16 +197,12 @@ jobs:
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
 
-      - name: Ensure main still targets the release commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      - name: Ensure default branch workflows are current
         run: |
           set -euo pipefail
-          head="$(gh api "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
-          if [[ "$head" != "$GITHUB_SHA" ]]; then
-            printf '%s advanced from %s to %s. Start a new Release run from the latest commit.\n' \
-              "$DEFAULT_BRANCH" "$GITHUB_SHA" "$head" >&2
+          git fetch origin "${GITHUB_REF_NAME}"
+          if ! git diff --quiet "origin/${GITHUB_REF_NAME}..${GITHUB_SHA}" -- .github/workflows/; then
+            printf 'Default branch workflows changed since the release commit. Run a new Release from the latest commit.\n' >&2
             exit 1
           fi
 
@@ -341,10 +337,8 @@ jobs:
             existing_draft=true
           fi
 
-          head="$(gh api "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
-          if [[ "$head" != "$GITHUB_SHA" ]]; then
-            printf '%s advanced from %s to %s during the release. Start a new Release run from the latest commit.\n' \
-              "$DEFAULT_BRANCH" "$GITHUB_SHA" "$head" >&2
+          if ! git diff --quiet "origin/${DEFAULT_BRANCH}..${GITHUB_SHA}" -- .github/workflows/; then
+            printf 'Default branch workflows changed during the release. Start a new Release run from the latest commit.\n' >&2
             exit 1
           fi
 
@@ -353,7 +347,11 @@ jobs:
           fi
 
           target_args=()
-          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+          tag_sha=""
+          if tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha' 2>/dev/null)" && \
+             [ "$tag_sha" = "$GITHUB_SHA" ]; then
+            : # tag already points to this commit
+          else
             target_args+=(--target "$GITHUB_SHA")
           fi
           gh release create "$tag" dist/mcl_* dist/SHA256SUMS \
