@@ -182,6 +182,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Cache Release Go builds (restore)
+        # PRのキャッシュはmainから復元できないため、信頼境界を維持。
+        # jactionlint ignore=cache-poisoning
         id: release-go-cache
         uses: actions/cache/restore@v6.1.0
         with:
@@ -202,15 +204,6 @@ jobs:
 
       - name: Stage release WebAssembly assets
         run: mise run release:wasm
-
-      - name: Cache Release Go builds (save)
-        # GoReleaser 直後で明示的に保存。npm 処理の失敗でビルドキャッシュを失わない
-        uses: actions/cache/save@v6.1.0
-        with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.build }}
-            ${{ steps.go-cache-paths.outputs.modules }}
-          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.run_id }}
 
       - name: Ensure default branch workflows are current
         run: |
@@ -239,6 +232,16 @@ jobs:
             printf 'The release binary reports version %s, expected %s.\n' "$actual" "$VERSION" >&2
             exit 1
           fi
+
+      - name: Cache Release Go builds (save)
+        # GoReleaser の6ターゲットビルド完了直後に保存。npm パッケージ処理が失敗しても
+        # クロスコンパイル結果を次回の Release で再利用できる
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.build }}
+            ${{ steps.go-cache-paths.outputs.modules }}
+          key: release-go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.run_id }}
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -321,19 +324,19 @@ jobs:
         id: existing-release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         run: |
           set -euo pipefail
 
-          if ! gh release view "$RELEASE_TAG" \
-            --json isDraft --jq '.' 2>/dev/null > "$RUNNER_TEMP/existing-release.json"; then
+          if ! is_draft="$(gh release view "$RELEASE_TAG" \
+            --json isDraft --jq '.isDraft' 2>/dev/null)"; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          is_draft="$(cat "$RUNNER_TEMP/existing-release.json")"
           if [ "$is_draft" = "false" ]; then
             printf 'Validating published release %s ...\n' "$RELEASE_TAG" >&2
-            gh release verify "$RELEASE_TAG" --quiet
+            gh release verify "$RELEASE_TAG"
             for asset in dist/mcl_* dist/SHA256SUMS; do
               if [ -f "$asset" ]; then
                 gh release verify-asset "$RELEASE_TAG" \
