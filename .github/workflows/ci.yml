@@ -82,6 +82,20 @@ jobs:
             go node jactionlint
             aqua:WebAssembly/binaryen
           cache: true
+      - name: Get Go cache paths
+        id: browser-go-cache-paths
+        run: |
+          {
+            echo "modules=$(go env GOMODCACHE)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Cache Go module data
+        id: browser-go-cache-restore
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ steps.browser-go-cache-paths.outputs.modules }}
+          key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            go-mod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-
       - name: Cache browser WebAssembly output
         id: wasm-cache-restore
         uses: actions/cache/restore@v6.1.0
