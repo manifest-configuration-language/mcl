@@ -41,8 +41,9 @@ type indexedCRDSchemaSource struct {
 }
 
 type groupedCRDSchemaSource struct {
-	source projectCRDSchemaSource
-	files  []string
+	source    projectCRDSchemaSource
+	files     []string
+	selectAll bool
 }
 
 type resolvedCRDSchemaFile struct {
@@ -138,10 +139,12 @@ func groupCRDSchemaSources(sources []indexedCRDSchemaSource) ([]groupedCRDSchema
 		key := crdSchemaSourceIdentity(source)
 		group := groupsByIdentity[key]
 		if group == nil {
-			group = &groupedCRDSchemaSource{source: source}
+			group = &groupedCRDSchemaSource{source: source, selectAll: len(source.Files) == 0}
 			groupsByIdentity[key] = group
 		} else if group.source.SelectKind != source.SelectKind {
 			return nil, fmt.Errorf("crd_schemas entry %d has a conflicting select_kind for source %q", indexed.index, key)
+		} else if group.selectAll != (len(source.Files) == 0) {
+			return nil, fmt.Errorf("crd_schemas entry %d mixes all-file and selected-file declarations for source %q", indexed.index, key)
 		}
 		for _, file := range source.Files {
 			if slices.Contains(group.files, file) {
@@ -154,7 +157,9 @@ func groupCRDSchemaSources(sources []indexedCRDSchemaSource) ([]groupedCRDSchema
 	groups := make([]groupedCRDSchemaSource, 0, len(groupsByIdentity))
 	for _, group := range groupsByIdentity {
 		slices.Sort(group.files)
-		group.source.Files = group.files
+		if !group.selectAll {
+			group.source.Files = group.files
+		}
 		groups = append(groups, *group)
 	}
 	slices.SortFunc(groups, func(left, right groupedCRDSchemaSource) int {

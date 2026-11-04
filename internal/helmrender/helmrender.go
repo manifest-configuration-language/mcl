@@ -235,10 +235,6 @@ func Load(request LoadRequest) (Chart, error) {
 		}
 		loaded.Origin = "helm:" + filepath.ToSlash(relativeChartPath)
 		loaded.source = loadedChart
-		loadedDigest, digestErr := digestSourceFS(os.DirFS(chartPath))
-		if digestErr != nil || loadedDigest != loaded.ContentDigest {
-			loaded.ContentDigest = ""
-		}
 	}
 
 	return validateLoadedChart(loaded)
@@ -1212,63 +1208,23 @@ func loadChartFS(source fs.FS) (*v2.Chart, string, error) {
 	if chart.Metadata.APIVersion == "v3" {
 		return nil, "", errors.New("loaded Helm Chart has an unsupported type")
 	}
-	digest, err := digestSourceFS(source)
-	if err != nil {
-		return nil, "", err
-	}
 
-	return chart, digest, nil
+	return chart, digestChartFiles(files), nil
 }
 
-func digestSourceFS(source fs.FS) (string, error) {
-	var paths []string
-	var totalBytes int64
-	if err := fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if name == "." || entry.IsDir() {
-			return nil
-		}
-		if entry.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("source tree contains unsupported symlink %q", name)
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("source tree contains unsupported file %q", name)
-		}
-		if info.Size() > maxChartBytes-totalBytes {
-			return fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
-		}
-		totalBytes += info.Size()
-		paths = append(paths, name)
-
-		return nil
-	}); err != nil {
-		return "", fmt.Errorf("read source tree for render cache: %w", err)
-	}
-	slices.Sort(paths)
+func digestChartFiles(files []*archive.BufferedFile) string {
+	slices.SortFunc(files, func(left, right *archive.BufferedFile) int {
+		return strings.Compare(left.Name, right.Name)
+	})
 	var key strings.Builder
-	var readBytes int64
-	for _, filePath := range paths {
-		data, err := fs.ReadFile(source, filePath)
-		if err != nil {
-			return "", fmt.Errorf("read source tree file: %w", err)
-		}
-		if int64(len(data)) > maxChartBytes-readBytes {
-			return "", fmt.Errorf("helm chart exceeds the %d-byte limit", maxChartBytes)
-		}
-		readBytes += int64(len(data))
-		key.WriteString(filepath.ToSlash(filePath))
+	for _, file := range files {
+		key.WriteString(filepath.ToSlash(file.Name))
 		key.WriteByte(0)
-		key.WriteString(content.SHA256(data))
+		key.WriteString(content.SHA256(file.Data))
 		key.WriteByte(0)
 	}
 
-	return content.SHA256([]byte(key.String())), nil
+	return content.SHA256([]byte(key.String()))
 }
 
 func chartSourceFiles(root *v2.Chart) (map[string][]byte, error) {
