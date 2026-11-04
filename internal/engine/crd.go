@@ -16,6 +16,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	crdcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
+	crddefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
 	crdvalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -87,8 +88,12 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 		if err != nil {
 			return nil, fmt.Errorf("custom resource %s: %w", kind, err)
 		}
+		instanceMap, isMap := instance.(map[string]any)
+		if isMap {
+			crddefaulting.Default(instanceMap, registered.structural)
+		}
 		validationErrors := crdvalidation.ValidateCustomResource(field.NewPath("resource"), instance, registered.validator)
-		if instanceMap, ok := instance.(map[string]any); ok {
+		if isMap {
 			validationErrors = append(validationErrors, listtype.ValidateListSetsAndMaps(field.NewPath("resource"), registered.structural, instanceMap)...)
 		}
 		if registered.cel != nil {
