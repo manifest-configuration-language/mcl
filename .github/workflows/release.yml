@@ -210,15 +210,22 @@ jobs:
             echo "modules=$(go env GOMODCACHE)"
             echo "version=$(go env GOVERSION)"
           } >> "$GITHUB_OUTPUT"
-      - name: Cache Go build and module data
+      - name: Restore Go modules
         uses: actions/cache/restore@v6.1.0
         with:
-          path: |
-            ${{ steps.go-cache-paths.outputs.build }}
-            ${{ steps.go-cache-paths.outputs.modules }}
-          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum') }}
+          path: ${{ steps.go-cache-paths.outputs.modules }}
+          key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}
           restore-keys: |
-            go-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
+            go-mod-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Cache Go build
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ steps.go-cache-paths.outputs.build }}
+          key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum', '**/*.go') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
+
       - name: Build CLI
         run: |
           go build -trimpath \
