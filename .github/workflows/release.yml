@@ -222,9 +222,9 @@ jobs:
         uses: actions/cache@v6.1.0
         with:
           path: ${{ steps.go-cache-paths.outputs.build }}
-          key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ hashFiles('go.mod', 'go.sum', '**/*.go') }}
+          key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('go.mod', 'go.sum', '**/*.go') }}
           restore-keys: |
-            go-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-
+            go-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-cache-paths.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}-
 
       - name: Build CLI
         run: |
