@@ -3,6 +3,8 @@ package k8sschema
 import (
 	"encoding/json/v2"
 	"fmt"
+	"maps"
+	"slices"
 
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -42,7 +44,7 @@ func (validator *builtinValidator) validateBranch(schema *spec.Schema, definitio
 
 func validateUnknownFields(schemas []*spec.Schema, definitions spec.Definitions, value any, path *field.Path, depth int, validateBranch func(*spec.Schema, any) bool) []error {
 	if depth > maxDepth {
-		return nil
+		return []error{fmt.Errorf("%s: schema validation depth exceeds %d", path.String(), maxDepth)}
 	}
 	if values, ok := value.([]any); ok {
 		itemSchemas := make([]*spec.Schema, 0)
@@ -166,7 +168,8 @@ func validateUnknownFields(schemas []*spec.Schema, definitions spec.Definitions,
 	}
 
 	var validationErrors []error
-	for name, childValue := range object {
+	for _, name := range slices.Sorted(maps.Keys(object)) {
+		childValue := object[name]
 		childPath := path.Child(name)
 		if childSchemas := properties[name]; len(childSchemas) > 0 {
 			validationErrors = append(validationErrors, validateUnknownFields(childSchemas, definitions, childValue, childPath, depth+1, validateBranch)...)

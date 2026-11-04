@@ -36,7 +36,7 @@ func TestLoadCRDSchemaCatalogUsesLockedHTTPSGitAndOCIInputs(t *testing.T) {
 	lockData, err := json.Marshal(map[string]any{
 		"version": 3,
 		"toolchain": map[string]string{
-			"mcl": identity.MCL, "revision": identity.Revision, "modified": identity.Modified,
+			"mcl": identity.MCL, testLockRevisionField: identity.Revision, "modified": identity.Modified,
 			"go": identity.Go, "helm": identity.Helm, "kustomizeAPI": identity.KustomizeAPI, "kustomizeKYAML": identity.KustomizeKYAML,
 		},
 		"schemas": map[string]string{httpsSource: content.SHA256([]byte(httpsCRD))},
@@ -60,7 +60,6 @@ func TestLoadCRDSchemaCatalogUsesLockedHTTPSGitAndOCIInputs(t *testing.T) {
 	files := fstest.MapFS{
 		projectConfigFileName: {Data: []byte(fmt.Sprintf(`[[crd_schemas]]
 source = %q
-select_kind = "CustomResourceDefinition"
 
 [[crd_schemas]]
 source = %q
@@ -79,7 +78,7 @@ source = %q
 version = %q
 files = ["widget.yaml"]
 `, httpsSource, gitSource, gitRevision, gitDirectory, gitSource, gitRevision, gitDirectory, ociSource, ociVersion))},
-		"mcl.lock": {Data: lockData},
+		testLockFilename: {Data: lockData},
 		filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", content.SHA256([]byte(httpsCRD)))): {Data: []byte(httpsCRD)},
 		filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", gitDigest)):                        {Data: gitArchive},
 		filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", ociDigest)):                        {Data: ociArchive},

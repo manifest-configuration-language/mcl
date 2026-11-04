@@ -26,13 +26,11 @@ type projectConfig struct {
 }
 
 type projectCRDSchemaSource struct {
-	Path       string   `toml:"path"`
-	Files      []string `toml:"files"`
-	Source     string   `toml:"source"`
-	Revision   string   `toml:"revision"`
-	Directory  string   `toml:"directory"`
-	Version    string   `toml:"version"`
-	SelectKind string   `toml:"select_kind"`
+	Files     []string `toml:"files"`
+	Source    string   `toml:"source"`
+	Revision  string   `toml:"revision"`
+	Directory string   `toml:"directory"`
+	Version   string   `toml:"version"`
 }
 
 type indexedCRDSchemaSource struct {
@@ -88,7 +86,7 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 	catalog := make(map[customResourceDefinitionKey]crdVersionSchema)
 	for _, group := range groups {
 		source := group.source
-		resolvedFiles, err := loadCRDSchemaSource(ctx, files, dependencies, source)
+		resolvedFiles, err := loadCRDSchemaSource(ctx, dependencies, source)
 		if err != nil {
 			return nil, fmt.Errorf("load CRD schema source %q: %w", crdSchemaSourceKey(source), err)
 		}
@@ -104,11 +102,7 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 			for documentIndex, document := range documents.List {
 				kind, _ := runtimeStringField(document, "kind")
 				if kind != kindCustomResourceDefinition {
-					if source.SelectKind == kindCustomResourceDefinition {
-						continue
-					}
-
-					return nil, fmt.Errorf("CRD schema %q document %d has kind %q, expected %q", resolvedFile.name, documentIndex+1, kind, kindCustomResourceDefinition)
+					continue
 				}
 				crdDocumentCount++
 				if err := registerRuntimeCustomResourceDefinition(ctx, catalog, document); err != nil {
@@ -125,7 +119,7 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 }
 
 func crdSchemaSourceIdentity(source projectCRDSchemaSource) string {
-	return strings.Join([]string{source.Path, source.Source, source.Revision, source.Directory, source.Version}, "\n")
+	return strings.Join([]string{source.Source, source.Revision, source.Directory, source.Version}, "\n")
 }
 
 func crdSchemaSourceKey(source projectCRDSchemaSource) string {
@@ -141,8 +135,6 @@ func groupCRDSchemaSources(sources []indexedCRDSchemaSource) ([]groupedCRDSchema
 		if group == nil {
 			group = &groupedCRDSchemaSource{source: source, selectAll: len(source.Files) == 0}
 			groupsByIdentity[key] = group
-		} else if group.source.SelectKind != source.SelectKind {
-			return nil, fmt.Errorf("crd_schemas entry %d has a conflicting select_kind for source %q", indexed.index, key)
 		} else if group.selectAll != (len(source.Files) == 0) {
 			return nil, fmt.Errorf("crd_schemas entry %d mixes all-file and selected-file declarations for source %q", indexed.index, key)
 		}
@@ -170,21 +162,8 @@ func groupCRDSchemaSources(sources []indexedCRDSchemaSource) ([]groupedCRDSchema
 }
 
 func validateCRDSchemaSource(source projectCRDSchemaSource) error {
-	if source.SelectKind != "" && source.SelectKind != kindCustomResourceDefinition {
-		return fmt.Errorf("select_kind must be %q", kindCustomResourceDefinition)
-	}
-	if source.Path != "" {
-		if len(source.Files) != 0 || source.Source != "" || source.Revision != "" || source.Directory != "" || source.Version != "" {
-			return errors.New("local path cannot be combined with remote source fields")
-		}
-		if filepath.IsAbs(source.Path) || strings.Contains(source.Path, "\\") || filepath.ToSlash(filepath.Clean(source.Path)) != source.Path || source.Path == "." || source.Path == ".." || strings.HasPrefix(source.Path, "../") {
-			return errors.New("path must be a normalized project-relative file path")
-		}
-
-		return nil
-	}
 	if source.Source == "" {
-		return errors.New("either path or source is required")
+		return errors.New("remote source is required")
 	}
 	for _, file := range source.Files {
 		if !validCRDSchemaArchivePath(file) {
@@ -240,19 +219,7 @@ func validCRDSchemaArchivePath(value string) bool {
 	return value != "" && !strings.Contains(value, "\\") && !path.IsAbs(value) && path.Clean(value) == value && value != "." && value != ".." && !strings.HasPrefix(value, "../") && (strings.HasSuffix(value, ".yaml") || strings.HasSuffix(value, ".yml"))
 }
 
-func loadCRDSchemaSource(ctx context.Context, files *projectFilesystem, dependencies *dependency.Lock, source projectCRDSchemaSource) ([]resolvedCRDSchemaFile, error) {
-	if source.Path != "" {
-		path, err := files.resolveReadPath(filepath.Join(files.root, filepath.FromSlash(source.Path)))
-		if err != nil {
-			return nil, fmt.Errorf("resolve local CRD schema path: %w", err)
-		}
-		data, err := files.readLimitedFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read local CRD schema: %w", err)
-		}
-
-		return []resolvedCRDSchemaFile{{name: path, data: data}}, nil
-	}
+func loadCRDSchemaSource(ctx context.Context, dependencies *dependency.Lock, source projectCRDSchemaSource) ([]resolvedCRDSchemaFile, error) {
 	if dependencies == nil {
 		return nil, errors.New("remote CRD schemas require project dependency locking")
 	}

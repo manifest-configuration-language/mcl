@@ -311,12 +311,14 @@ func inferStaticExprTypeFromExpected(expression Expr, expected ResolvedType, bin
 				if err != nil {
 					return ResolvedType{}, false, fmt.Errorf("item %d: %w", index, err)
 				}
+
 				return ResolvedType{}, false, nil
 			}
 			if staticTypeCompatibility(itemType, elementType, types).isDefinitelyIncompatible() {
 				return ResolvedType{}, false, nil
 			}
 		}
+
 		return expected, true, nil
 	case *EmptyMapExpr:
 		if isStaticMapType(expected, types) {
@@ -339,6 +341,7 @@ func inferStaticExprTypeFromExpected(expression Expr, expected ResolvedType, bin
 				return ResolvedType{}, false, nil
 			}
 		}
+
 		return expected, true, nil
 	case *NodeExpr:
 		if resolved.Name == typeNode && len(resolved.Arguments) == 1 {

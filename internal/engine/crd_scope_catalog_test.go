@@ -1,10 +1,15 @@
 package engine
 
 import (
+	"encoding/json/v2"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/manifest-configuration-language/mcl/internal/content"
+	"github.com/manifest-configuration-language/mcl/internal/dependency"
 )
 
 func TestProjectCRDCatalogEnforcesResourceScopeAndIdentity(t *testing.T) {
@@ -52,28 +57,27 @@ emit explicitNamespace
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			root := filepath.Join(string(filepath.Separator), "virtual-project")
+			source := "https://schemas.example.test/widget.yaml"
+			crd := strings.Replace(projectCRD("example.test", "Widget", "widgets"), "scope: Namespaced", "scope: "+test.scope, 1)
+			identity := dependencyToolchainIdentity()
+			lockData, err := json.Marshal(map[string]any{
+				"version": 3,
+				"toolchain": map[string]string{
+					"mcl": identity.MCL, testLockRevisionField: identity.Revision, "modified": identity.Modified,
+					"go": identity.Go, "helm": identity.Helm, "kustomizeAPI": identity.KustomizeAPI, "kustomizeKYAML": identity.KustomizeKYAML,
+				},
+				"schemas": map[string]string{source: content.SHA256([]byte(crd))},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			files := fstest.MapFS{
-				projectConfigFileName: &fstest.MapFile{Data: []byte("[[crd_schemas]]\npath = \"crds/widget.yaml\"\n")},
-				"crds/widget.yaml": &fstest.MapFile{Data: []byte(`apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.test
-spec:
-  group: example.test
-  scope: ` + test.scope + `
-  names:
-    plural: widgets
-    singular: widget
-    kind: Widget
-    listKind: WidgetList
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)},
+				projectConfigFileName: {Data: []byte(fmt.Sprintf("[[crd_schemas]]\nsource = %q\n", source))},
+				testLockFilename:      {Data: lockData},
+				filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", content.SHA256([]byte(crd)))): {Data: []byte(crd)},
+			}
+			if _, err := dependency.OpenWithFS(t.Context(), root, false, identity, files); err != nil {
+				t.Fatalf("open dependency lock: %v", err)
 			}
 			bundle, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, test.resources, files, nil)
 			if err != nil {

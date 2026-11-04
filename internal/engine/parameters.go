@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -31,7 +32,7 @@ func validateParameterDeclarations(module ModuleAST, state *EvaluationState, ent
 	if !entry {
 		return nil
 	}
-	for name := range state.Parameters {
+	for _, name := range slices.Sorted(maps.Keys(state.Parameters)) {
 		if _, exists := declared[name]; !exists {
 			return fmt.Errorf("unknown parameter %q", name)
 		}

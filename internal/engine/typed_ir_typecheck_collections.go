@@ -31,6 +31,7 @@ func typePrimitiveListExpression(expression Expr, inferred ResolvedType, context
 				return typedExpression{}, false
 			}
 			typed.items = append(typed.items, typedItem)
+
 			continue
 		}
 		if !typedExpressionAssignable(item, itemType, elementType, context) {
@@ -102,6 +103,7 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 				return typedExpression{}, false
 			}
 			typed.entries = append(typed.entries, typedMapEntry{key: key, keySpan: entry.KeySpan, keyExpression: keyExpression, value: value})
+
 			continue
 		}
 		if keyExpression != nil {

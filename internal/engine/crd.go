@@ -18,6 +18,7 @@ import (
 	crdcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	crddefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
+	crdpruning "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	crdvalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
@@ -89,10 +90,15 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 			return nil, fmt.Errorf("custom resource %s: %w", kind, err)
 		}
 		instanceMap, isMap := instance.(map[string]any)
+		var validationErrors field.ErrorList
 		if isMap {
+			unknownFields := crdpruning.PruneWithOptions(instanceMap, registered.structural, true, structuralschema.UnknownFieldPathOptions{TrackUnknownFieldPaths: true})
+			for _, unknownField := range unknownFields {
+				validationErrors = append(validationErrors, field.Invalid(field.NewPath("resource", unknownField), nil, "unknown field"))
+			}
 			crddefaulting.Default(instanceMap, registered.structural)
 		}
-		validationErrors := crdvalidation.ValidateCustomResource(field.NewPath("resource"), instance, registered.validator)
+		validationErrors = append(validationErrors, crdvalidation.ValidateCustomResource(field.NewPath("resource"), instance, registered.validator)...)
 		if isMap {
 			validationErrors = append(validationErrors, listtype.ValidateListSetsAndMaps(field.NewPath("resource"), registered.structural, instanceMap)...)
 		}

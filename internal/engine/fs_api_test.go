@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"io/fs"
 	"os"
@@ -9,9 +10,16 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/manifest-configuration-language/mcl/internal/content"
 )
 
 const projectFileEntrypoint = "main.mcl"
+
+const (
+	testLockFilename      = "mcl.lock"
+	testLockRevisionField = "revision"
+)
 
 func TestEvaluateProjectSourceUsesRootRelativeFilesystem(t *testing.T) {
 	t.Parallel()
@@ -35,7 +43,7 @@ func TestEvaluateProjectSourceUsesRootRelativeFilesystem(t *testing.T) {
 func TestEvaluateProjectSourceReadsDependencyLockFromFilesystem(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{
-		"mcl.lock": &fstest.MapFile{Data: []byte(`{"version":5}`)},
+		testLockFilename: &fstest.MapFile{Data: []byte(`{"version":5}`)},
 	}
 
 	_, err := EvaluateProjectSourceContext(t.Context(), filepath.Join(string(filepath.Separator), "virtual-project"), projectFileEntrypoint, "", files, nil)
@@ -47,9 +55,7 @@ func TestEvaluateProjectSourceReadsDependencyLockFromFilesystem(t *testing.T) {
 func TestEvaluateProjectSourceValidatesAgainstConfiguredCRDSchema(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
-	files := fstest.MapFS{
-		projectConfigFileName: &fstest.MapFile{Data: []byte("[[crd_schemas]]\npath = \"crds/widget.yaml\"\n")},
-		"crds/widget.yaml": &fstest.MapFile{Data: []byte(`apiVersion: apiextensions.k8s.io/v1
+	crd := []byte(`apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: widgets.example.test
@@ -80,8 +86,8 @@ spec:
               properties:
                 size:
                   type: integer
-`)},
-	}
+	`)
+	files := lockedHTTPSCRDFiles(t, crd)
 	for _, test := range []struct {
 		name      string
 		size      string
@@ -114,9 +120,7 @@ spec:
 func TestEvaluateProjectSourceRejectsInvalidConfiguredCRD(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
-	files := fstest.MapFS{
-		projectConfigFileName: &fstest.MapFile{Data: []byte("[[crd_schemas]]\npath = \"crds/widget.yaml\"\n")},
-		"crds/widget.yaml": &fstest.MapFile{Data: []byte(`apiVersion: apiextensions.k8s.io/v1
+	crd := []byte(`apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata: {}
 spec:
@@ -134,11 +138,35 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
-`)},
-	}
+	`)
+	files := lockedHTTPSCRDFiles(t, crd)
 	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, "", files, nil)
 	if err == nil || !strings.Contains(err.Error(), "metadata.name") {
 		t.Fatalf("EvaluateProjectSourceContext() error = %v, want a CRD metadata.name validation error", err)
+	}
+}
+
+func lockedHTTPSCRDFiles(t *testing.T, crd []byte) fstest.MapFS {
+	t.Helper()
+	source := "https://schemas.example.test/widget.yaml"
+	digest := content.SHA256(crd)
+	identity := dependencyToolchainIdentity()
+	lockData, err := json.Marshal(map[string]any{
+		"version": 3,
+		"toolchain": map[string]string{
+			"mcl": identity.MCL, testLockRevisionField: identity.Revision, "modified": identity.Modified,
+			"go": identity.Go, "helm": identity.Helm, "kustomizeAPI": identity.KustomizeAPI, "kustomizeKYAML": identity.KustomizeKYAML,
+		},
+		"schemas": map[string]string{source: digest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return fstest.MapFS{
+		projectConfigFileName: {Data: []byte("[[crd_schemas]]\nsource = \"" + source + "\"\n")},
+		testLockFilename:      {Data: lockData},
+		filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", digest)): {Data: crd},
 	}
 }
 
@@ -325,7 +353,7 @@ func TestEvaluateProjectFileReadsDependencyLockFromFilesystem(t *testing.T) {
 	t.Parallel()
 	files := fstest.MapFS{
 		projectFileEntrypoint: &fstest.MapFile{Data: []byte("emit \"ok\"\n")},
-		"mcl.lock":            &fstest.MapFile{Data: []byte(`{"version":5}`)},
+		testLockFilename:      &fstest.MapFile{Data: []byte(`{"version":5}`)},
 	}
 
 	_, err := EvaluateProjectFileContext(t.Context(), filepath.Join(string(filepath.Separator), "virtual-project"), projectFileEntrypoint, files)
