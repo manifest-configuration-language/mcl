@@ -23,6 +23,6 @@ source = "oci://ghcr.io/example/operator-chart"
 version = "1.2.3"
 ```
 
-HTTPS sources point to a YAML file and must not include a query or fragment. Git sources require a full lowercase commit SHA-1 and a repository directory; MCL reads YAML files from that directory. Set `file` to select one YAML file from a Git directory. OCI sources identify a versioned Helm chart; MCL reads static CRD files from the chart's `crds/` directory. Set `file` to select one file relative to `crds/`. Helm templates are not rendered to obtain schemas.
+HTTPS sources point to a YAML file and must not include a query or fragment. Git sources require a full lowercase commit SHA-1 and a repository directory; MCL reads YAML files from that directory. Set `file` to select one YAML file from a Git directory. OCI sources identify a versioned Helm chart; MCL reads static CRD files from the chart's `crds/` directory. Set `file` to select one file relative to `crds/`. Helm templates are not rendered to obtain schemas. Set `select_kind = "CustomResourceDefinition"` when a source also contains ordinary resources; MCL ignores other kinds and requires at least one matching CRD.
 
 Run `mcl update` to fetch remote sources and record their content or archive digests in `mcl.lock`. Normal evaluation reads the locked cache and works offline. MCL compiles the schemas with Kubernetes validation libraries and checks emitted custom resources, structural list constraints, and CEL rules. Duplicate source entries and conflicting schemas for the same group, version, and kind are errors.

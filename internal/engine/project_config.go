@@ -25,12 +25,13 @@ type projectConfig struct {
 }
 
 type projectCRDSchemaSource struct {
-	Path      string `toml:"path"`
-	File      string `toml:"file"`
-	Source    string `toml:"source"`
-	Revision  string `toml:"revision"`
-	Directory string `toml:"directory"`
-	Version   string `toml:"version"`
+	Path       string `toml:"path"`
+	File       string `toml:"file"`
+	Source     string `toml:"source"`
+	Revision   string `toml:"revision"`
+	Directory  string `toml:"directory"`
+	Version    string `toml:"version"`
+	SelectKind string `toml:"select_kind"`
 }
 
 type resolvedCRDSchemaFile struct {
@@ -76,6 +77,7 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 		if err != nil {
 			return nil, fmt.Errorf("load CRD schema source %q: %w", crdSchemaSourceKey(source), err)
 		}
+		var crdDocumentCount int
 		for _, resolvedFile := range resolvedFiles {
 			documents, err := decodeRuntimeYAMLDocuments(resolvedFile.data, resolvedFile.name)
 			if err != nil {
@@ -87,12 +89,20 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 			for documentIndex, document := range documents.List {
 				kind, _ := runtimeStringField(document, "kind")
 				if kind != kindCustomResourceDefinition {
+					if source.SelectKind == kindCustomResourceDefinition {
+						continue
+					}
+
 					return nil, fmt.Errorf("CRD schema %q document %d has kind %q, expected %q", resolvedFile.name, documentIndex+1, kind, kindCustomResourceDefinition)
 				}
+				crdDocumentCount++
 				if err := registerRuntimeCustomResourceDefinition(ctx, catalog, document); err != nil {
 					return nil, fmt.Errorf("CRD schema %q document %d: %w", resolvedFile.name, documentIndex+1, err)
 				}
 			}
+		}
+		if crdDocumentCount == 0 {
+			return nil, fmt.Errorf("CRD schema source %q contains no CustomResourceDefinition documents", crdSchemaSourceKey(source))
 		}
 	}
 
@@ -100,10 +110,13 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 }
 
 func crdSchemaSourceKey(source projectCRDSchemaSource) string {
-	return strings.Join([]string{source.Path, source.File, source.Source, source.Revision, source.Directory, source.Version}, "\n")
+	return strings.Join([]string{source.Path, source.File, source.Source, source.Revision, source.Directory, source.Version, source.SelectKind}, "\n")
 }
 
 func validateCRDSchemaSource(source projectCRDSchemaSource) error {
+	if source.SelectKind != "" && source.SelectKind != kindCustomResourceDefinition {
+		return fmt.Errorf("select_kind must be %q", kindCustomResourceDefinition)
+	}
 	if source.Path != "" {
 		if source.File != "" || source.Source != "" || source.Revision != "" || source.Directory != "" || source.Version != "" {
 			return errors.New("local path cannot be combined with remote source fields")

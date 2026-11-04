@@ -24,7 +24,7 @@ func TestLoadCRDSchemaCatalogUsesLockedHTTPSGitAndOCIInputs(t *testing.T) {
 	gitDirectory := "config/crd/bases"
 	ociSource := "oci://ghcr.io/example/operator-chart"
 	ociVersion := "1.2.3"
-	httpsCRD := projectCRD("https.example.test", "HTTPSWidget", "httpswidgets")
+	httpsCRD := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ignored\n---\n" + projectCRD("https.example.test", "HTTPSWidget", "httpswidgets")
 	gitCRD := projectCRD("git.example.test", "GitWidget", "gitwidgets")
 	ociCRD := projectCRD("oci.example.test", "OCIWidget", "ociwidgets")
 	gitArchive := projectCRDArchive(t, map[string][]byte{"widget.yaml": []byte(gitCRD)})
@@ -59,6 +59,7 @@ func TestLoadCRDSchemaCatalogUsesLockedHTTPSGitAndOCIInputs(t *testing.T) {
 	files := fstest.MapFS{
 		projectConfigFileName: {Data: []byte(fmt.Sprintf(`[[crd_schemas]]
 source = %q
+select_kind = "CustomResourceDefinition"
 
 [[crd_schemas]]
 source = %q
