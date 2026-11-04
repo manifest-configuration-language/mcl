@@ -18,6 +18,7 @@ import (
 	crdcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	crddefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
+	schemaobjectmeta "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/objectmeta"
 	crdpruning "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	crdvalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -92,6 +93,13 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 		instanceMap, isMap := instance.(map[string]any)
 		var validationErrors field.ErrorList
 		if isMap {
+			_, _, unknownMetadataFields, err := schemaobjectmeta.GetObjectMetaWithOptions(instanceMap, schemaobjectmeta.ObjectMetaOptions{ReturnUnknownFieldPaths: true, ParentPath: field.NewPath("resource")})
+			if err != nil {
+				validationErrors = append(validationErrors, field.Invalid(field.NewPath("resource", "metadata"), nil, err.Error()))
+			}
+			for _, unknownField := range unknownMetadataFields {
+				validationErrors = append(validationErrors, field.Invalid(field.NewPath(unknownField), nil, "unknown field"))
+			}
 			unknownFields := crdpruning.PruneWithOptions(instanceMap, registered.structural, true, structuralschema.UnknownFieldPathOptions{TrackUnknownFieldPaths: true})
 			for _, unknownField := range unknownFields {
 				validationErrors = append(validationErrors, field.Invalid(field.NewPath("resource", unknownField), nil, "unknown field"))

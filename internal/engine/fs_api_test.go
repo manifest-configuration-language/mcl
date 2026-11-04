@@ -86,7 +86,7 @@ spec:
               properties:
                 size:
                   type: integer
-	`)
+`)
 	files := lockedHTTPSCRDFiles(t, crd)
 	for _, test := range []struct {
 		name      string
@@ -138,7 +138,7 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
-	`)
+`)
 	files := lockedHTTPSCRDFiles(t, crd)
 	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, "", files, nil)
 	if err == nil || !strings.Contains(err.Error(), "metadata.name") {
