@@ -939,12 +939,12 @@ func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.F
 	for _, name := range nondeterministicFunctions {
 		original, exists := functions[name]
 		if !exists {
-			return nil, fmt.Errorf("Sprig nondeterministic function %q is unavailable", name)
+			return nil, fmt.Errorf("sprig nondeterministic function %q is unavailable", name)
 		}
 		function := reflect.ValueOf(original)
 		expected, exists := nondeterministicFunctionSignatures[name]
 		if !exists || function.Kind() != reflect.Func || !matchesFunctionSignature(function.Type(), expected) {
-			return nil, fmt.Errorf("Sprig nondeterministic function %q has an unsupported signature", name)
+			return nil, fmt.Errorf("sprig nondeterministic function %q has an unsupported signature", name)
 		}
 		functions[name] = reflect.MakeFunc(function.Type(), func(args []reflect.Value) []reflect.Value {
 			onNondeterminism()

@@ -8,6 +8,11 @@ import (
 	"testing"
 )
 
+const (
+	testKubeVersion       = "1.36.0"
+	helmAPIVersionsOption = "apiVersions"
+)
+
 func TestParseEvaluateAndRenderBundle(t *testing.T) {
 	t.Parallel()
 	source := `let app = "sample"
@@ -133,8 +138,8 @@ func TestHelmRenderBuildsManifestHookAndCRDBundle(t *testing.T) {
 	bundle, err := helmRender([]RuntimeValue{
 		{Value: runtimeValueData{Kind: String, Text: "chart"}},
 		{Value: runtimeValueData{Kind: Map}, Map: []RuntimeEntry{
-			{Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: "1.36.0"}}},
-			{Key: "apiVersions", Value: RuntimeValue{Value: runtimeValueData{Kind: List}, List: []RuntimeValue{{Value: runtimeValueData{Kind: String, Text: "apps/v1"}}}}},
+			{Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: testKubeVersion}}},
+			{Key: helmAPIVersionsOption, Value: RuntimeValue{Value: runtimeValueData{Kind: List}, List: []RuntimeValue{{Value: runtimeValueData{Kind: String, Text: "apps/v1"}}}}},
 		}},
 	}, &EvaluationState{SourcePath: filepath.Join(root, "main.mcl"), Module: module})
 	if err != nil {
@@ -984,9 +989,9 @@ func TestListTransformationsReturnOrdinaryListsForAdapterBundles(t *testing.T) {
 	}
 	expression := typedExpression{
 		kind:       typedExpressionFor,
-		loopName:   "value",
+		loopName:   paramValue,
 		left:       &typedExpression{kind: typedExpressionReference, text: "items"},
-		thenBranch: &typedExpression{kind: typedExpressionReference, text: "value"},
+		thenBranch: &typedExpression{kind: typedExpressionReference, text: paramValue},
 	}
 	state.Environment = map[string]RuntimeValue{"items": bundle}
 	iterated, err := evaluateRuntimeExpression(expression, state)

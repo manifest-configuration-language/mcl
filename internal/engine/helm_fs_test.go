@@ -10,6 +10,11 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/helmrender"
 )
 
+const (
+	helmFSTestChartSource = "charts/app"
+	helmKubeVersionOption = "kubeVersion"
+)
+
 func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 	t.Parallel()
 
@@ -24,11 +29,11 @@ func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 		filesystem:  newProjectFilesystem(root, files),
 	}
 	bundle, err := helmRender([]RuntimeValue{
-		{Value: runtimeValueData{Kind: String, Text: "charts/app"}},
+		{Value: runtimeValueData{Kind: String, Text: helmFSTestChartSource}},
 		{Value: runtimeValueData{Kind: Map}, Map: []RuntimeEntry{{
-			Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: "1.36.0"}},
+			Key: helmKubeVersionOption, Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: testKubeVersion}},
 		}, {
-			Key: "apiVersions", Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
+			Key: helmAPIVersionsOption, Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
 		}}},
 	}, &EvaluationState{SourcePath: filepath.Join(root, "main.mcl"), Module: module})
 	if err != nil {
@@ -63,27 +68,28 @@ func TestHelmRenderAllowNondeterministicOutput(t *testing.T) {
 		"charts/app/templates/secret.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: Secret\nmetadata:\n  name: generated\ndata:\n  value: {{ randAlphaNum 24 | b64enc | quote }}\n")},
 	}
 	arguments := []RuntimeValue{
-		{Value: runtimeValueData{Kind: String, Text: "charts/app"}},
+		{Value: runtimeValueData{Kind: String, Text: helmFSTestChartSource}},
 		{Value: runtimeValueData{Kind: Map}, Map: []RuntimeEntry{{
-			Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: "1.36.0"}},
+			Key: helmKubeVersionOption, Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: testKubeVersion}},
 		}, {
-			Key: "apiVersions", Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
+			Key: helmAPIVersionsOption, Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
 		}}},
 	}
 	module := &ModuleContext{Context: t.Context(), ProjectRoot: root, filesystem: newProjectFilesystem(root, files)}
 	loaded, err := helmrender.Load(helmrender.LoadRequest{
-		Source: "charts/app", ProjectRoot: root, SourcePath: filepath.Join(root, "main.mcl"), SourceFS: module.filesystem.files,
+		Source: helmFSTestChartSource, ProjectRoot: root, SourcePath: filepath.Join(root, "main.mcl"), SourceFS: module.filesystem.files,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	prepare := func(allow bool) helmrender.Prepared {
 		prepared, err := helmrender.Prepare(loaded, helmrender.RenderOptions{
-			Values: map[string]any{}, KubeVersion: "1.36.0", APIVersions: []string{}, AllowNondeterministicOutput: allow,
+			Values: map[string]any{}, KubeVersion: testKubeVersion, APIVersions: []string{}, AllowNondeterministicOutput: allow,
 		}, root)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		return prepared
 	}
 	allowPrepared := prepare(true)
@@ -111,7 +117,7 @@ func TestHelmRenderAllowNondeterministicOutput(t *testing.T) {
 	for _, field := range secret.Entries() {
 		if field.Key == "data" {
 			for _, dataField := range field.Value.Entries() {
-				if dataField.Key == "value" && dataField.Value.Kind() == String && dataField.Value.TextValue() != "" {
+				if dataField.Key == paramValue && dataField.Value.Kind() == String && dataField.Value.TextValue() != "" {
 					foundGeneratedValue = true
 				}
 			}
@@ -155,11 +161,11 @@ func TestHelmRenderPreservesClippedBlockScalarTrailingNewline(t *testing.T) {
 		filesystem:  newProjectFilesystem(root, files),
 	}
 	bundle, err := helmRender([]RuntimeValue{
-		{Value: runtimeValueData{Kind: String, Text: "charts/app"}},
+		{Value: runtimeValueData{Kind: String, Text: helmFSTestChartSource}},
 		{Value: runtimeValueData{Kind: Map}, Map: []RuntimeEntry{{
-			Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: "1.36.0"}},
+			Key: helmKubeVersionOption, Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: testKubeVersion}},
 		}, {
-			Key: "apiVersions", Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
+			Key: helmAPIVersionsOption, Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
 		}}},
 	}, &EvaluationState{SourcePath: filepath.Join(root, "main.mcl"), Module: module})
 	if err != nil {

@@ -648,7 +648,7 @@ func TestLoadReadsProjectFSWithoutMaterializingIgnoredChartFiles(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	loadedChart := loaded.source.(*v2.Chart)
-	if len(loadedChart.Templates) != 1 || loadedChart.Templates[0].Name != "templates/configmap.yaml" {
+	if len(loadedChart.Templates) != 1 || loadedChart.Templates[0].Name != localTestTemplatePath {
 		t.Fatalf("Load() templates = %#v, want only the non-ignored template", loadedChart.Templates)
 	}
 	for _, file := range loadedChart.Files {
@@ -672,7 +672,7 @@ func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 	templateSource := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: example\ndata:\n  value: {{ block \"config-value\" . }}{{ .Values.value }}{{ end }}\n")
 	chartSource := Chart{source: &v2.Chart{
 		Metadata:  &v2.Metadata{Name: testChartName, Version: testChartVersion, APIVersion: v2.APIVersionV2},
-		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: templateSource}},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: templateSource}},
 	}}
 	values := map[string]any{"Values": map[string]any{"value": "rendered"}}
 
@@ -694,9 +694,9 @@ func TestRenderedFieldMappingsWithBlockTemplate(t *testing.T) {
 func TestCloneChartWithoutNotesDoesNotMutateSource(t *testing.T) {
 	t.Parallel()
 	notes := &common.File{Name: "templates/NOTES.txt", Data: []byte("notes")}
-	manifest := &common.File{Name: "templates/configmap.yaml", Data: []byte("{{ .message }}")}
+	manifest := &common.File{Name: localTestTemplatePath, Data: []byte("{{ .message }}")}
 	chart := &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
 		Templates: []*common.File{notes, manifest},
 	}
 	source := Chart{source: chart}
@@ -720,7 +720,7 @@ func TestCloneChartWithoutNotesDoesNotMutateSource(t *testing.T) {
 func TestRenderVerifiedTracksNondeterministicFunctions(t *testing.T) {
 	t.Parallel()
 	chart := Chart{source: &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
 		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("{{- $ca := genCA \"test\" 365 -}}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stable\n")}},
 	}}
 	verified, err := RenderVerified(t.Context(), chart, map[string]any{}, false)
@@ -738,7 +738,7 @@ func TestRenderVerifiedTracksNondeterministicFunctions(t *testing.T) {
 func TestRenderVerifiedRejectsNondeterministicManifestAndCanAllowIt(t *testing.T) {
 	t.Parallel()
 	chart := Chart{source: &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
 		Templates: []*common.File{{Name: "templates/secret.yaml", Data: []byte("apiVersion: v1\nkind: Secret\nmetadata:\n  name: generated\ndata:\n  ca.crt: {{ (genCA \"test\" 365).Cert | b64enc | quote }}\n")}},
 	}}
 	if _, err := RenderVerified(t.Context(), chart, map[string]any{}, false); err == nil || !strings.Contains(err.Error(), "MCL-HELM-NONDETERMINISTIC") || !strings.Contains(err.Error(), "test/templates/secret.yaml") {
@@ -796,6 +796,8 @@ func TestTrustManagerV0240HelmCertNondeterminism(t *testing.T) {
 		{name: "helmCert enabled allows nondeterministic output", enabled: true, allow: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			prepared, err := Prepare(Chart{source: loaded}, RenderOptions{
 				KubeVersion: "1.36.0", APIVersions: []string{}, Values: map[string]any{
 					"app": map[string]any{"webhook": map[string]any{"tls": map[string]any{"helmCert": map[string]any{"enabled": test.enabled}}}},
@@ -812,6 +814,7 @@ func TestTrustManagerV0240HelmCertNondeterminism(t *testing.T) {
 				if !strings.Contains(err.Error(), "MCL-HELM-NONDETERMINISTIC") || !strings.Contains(err.Error(), "trust-manager/templates/") {
 					t.Fatalf("nondeterministic error = %v, want stable code and template path", err)
 				}
+
 				return
 			}
 			if len(result.Templates) == 0 {
