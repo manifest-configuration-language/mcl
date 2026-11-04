@@ -79,7 +79,7 @@ func TestRuntimeCustomResourceUnknownFieldDiagnostics(t *testing.T) {
 func TestRuntimeCustomResourceMultipleUnknownFieldDiagnosticsAreDeterministic(t *testing.T) {
 	t.Parallel()
 	schema := "properties:\n  known:\n    type: string\n"
-	object := "metadata:\n  name: sample\n  unknownMetadata: value\nknown: ok\nunknownRoot: value\n"
+	object := "metadata:\n  name: sample\n  unknownMetadata: value\n  labels:\n    'Bad Key': first\n    'Also Bad': second\n  annotations:\n    'Bad Key': first\n    'Also Bad': second\nknown: ok\nunknownRoot: value\n"
 	first := validateCRDTestResource(t, schema, object)
 	if first == nil {
 		t.Fatal("validateCRDTestResource() succeeded, want validation errors")

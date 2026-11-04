@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	jsonv2 "encoding/json/v2"
@@ -119,6 +120,10 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 			validationErrors = append(validationErrors, celErrors...)
 		}
 		if len(validationErrors) != 0 {
+			slices.SortFunc(validationErrors, func(a, b *field.Error) int {
+				return cmp.Or(cmp.Compare(a.Field, b.Field), cmp.Compare(a.Error(), b.Error()))
+			})
+
 			return nil, fmt.Errorf("custom resource %s (%s): %w", kind, apiVersion, customResourceRuntimeValidationDiagnostic(artifact.Value, validationErrors, registered.location))
 		}
 	}
