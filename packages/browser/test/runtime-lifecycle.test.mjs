@@ -152,6 +152,39 @@ test("operation timeout and abort terminate the worker and allow recovery", asyn
   }
 });
 
+test("operation timeouts report an error status while cancellation stays silent", async () => {
+  for (const mode of ["timeout", "abort"]) {
+    const started = deferred();
+    const statuses = [];
+    const { runtime } = makeRuntime(
+      () =>
+        new FakeWorker({
+          initialize: ready,
+          run() {
+            started.resolve();
+            return new Promise(() => {});
+          },
+        }),
+      { onStatus: ({ status }) => statuses.push(status) },
+    );
+    const project = runtime.openProject({ "main.mcl": "emit 1" });
+    if (mode === "timeout") {
+      await assert.rejects(project.run("parse", { timeoutMs: 10 }), (error) =>
+        error.code === "MCL-WASM-TIMEOUT",
+      );
+    } else {
+      const controller = new AbortController();
+      const pending = project.run("parse", { signal: controller.signal });
+      await started.promise;
+      controller.abort();
+      await assert.rejects(pending, { name: "AbortError" });
+    }
+    if (mode === "timeout") assert.equal(statuses.at(-1), "error");
+    else assert.equal(statuses.includes("error"), false);
+    runtime.dispose();
+  }
+});
+
 test("queued aborts do not post a request or stop the active operation", async () => {
   const activeStarted = deferred();
   const activeRun = deferred();
@@ -347,5 +380,24 @@ test("invalid project paths and entrypoints are rejected before worker startup",
     0,
     "invalid project requests should be rejected before creating a worker",
   );
+  runtime.dispose();
+});
+
+test("runtime parameters reject sparse arrays, excessive depth, and excessive size", async () => {
+  const { runtime, workers } = makeRuntime(
+    () => new FakeWorker({ initialize: ready, run: runSuccess }),
+  );
+  const project = runtime.openProject({ "main.mcl": "emit 1" });
+  const sparse = Array(1);
+  let deeplyNested = {};
+  for (let depth = 0; depth < 64; depth++) deeplyNested = { nested: deeplyNested };
+
+  await assert.rejects(project.run("render", { parameters: { sparse } }), TypeError);
+  await assert.rejects(project.run("render", { parameters: { deeplyNested } }), TypeError);
+  await assert.rejects(
+    project.run("render", { parameters: { value: "x".repeat(1_048_577) } }),
+    RangeError,
+  );
+  assert.equal(workers.length, 0);
   runtime.dispose();
 });

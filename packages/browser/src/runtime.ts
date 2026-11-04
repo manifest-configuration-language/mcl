@@ -39,19 +39,31 @@ import type {
   Error as ProtocolError,
 } from "./protocol.js";
 
-function isJSONValue(value: unknown, ancestors = new Set<object>()): boolean {
+const maxParameterBytes = 1_048_576;
+const maxParameterDepth = 64;
+
+function isJSONValue(value: unknown, ancestors = new Set<object>(), depth = 0): boolean {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
-  if (typeof value !== "object" || ancestors.has(value)) return false;
+  if (typeof value !== "object" || ancestors.has(value) || depth >= maxParameterDepth) return false;
   if (!Array.isArray(value)) {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return false;
     if (Object.getOwnPropertySymbols(value).length > 0) return false;
   }
   ancestors.add(value);
-  const valid = Array.isArray(value)
-    ? value.every((item) => isJSONValue(item, ancestors))
-    : Object.values(value).every((item) => isJSONValue(item, ancestors));
+  let valid: boolean;
+  if (Array.isArray(value)) {
+    valid = true;
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index) || !isJSONValue(value[index], ancestors, depth + 1)) {
+        valid = false;
+        break;
+      }
+    }
+  } else {
+    valid = Object.values(value).every((item) => isJSONValue(item, ancestors, depth + 1));
+  }
   ancestors.delete(value);
   return valid;
 }
@@ -398,7 +410,6 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
           typeof data.message === "string" ? data.message : "MCL WebAssembly exited unexpectedly",
         );
         if (initialized) {
-          emitStatus("error");
           terminateWorker(error);
         } else fail(error);
       }
@@ -410,7 +421,6 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       if (rawWorker !== currentRawWorker) return;
       const error = new Error(event.message || "MCL worker failed");
       if (initialized) {
-        emitStatus("error");
         terminateWorker(error);
       } else fail(error);
     };
@@ -421,7 +431,6 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
       if (rawWorker !== currentRawWorker) return;
       const error = new Error("MCL worker sent a malformed message");
       if (initialized) {
-        emitStatus("error");
         terminateWorker(error);
       } else fail(error);
     };
@@ -447,7 +456,6 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
 
     function fail(error: Error): void {
       if (rawWorker !== currentRawWorker) return;
-      if (!initialized) reportStatus("error");
       clearTimeout(timer);
       if (stopInitialization === fail) stopInitialization = undefined;
       terminateWorker(error);
@@ -477,6 +485,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
 
   function terminateWorker(error: Error): void {
     const currentWorker = rawWorker;
+    if (!currentWorker) return;
     const currentApi = workerApi;
     const currentStop = stopCurrent;
     const cleanup = cleanupWorkerListeners;
@@ -487,6 +496,7 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
     workerProjectId = undefined;
     workerSnapshot = undefined;
     stopCurrent = undefined;
+    if (!disposed && error.name !== "AbortError") emitStatus("error");
     cleanup?.();
     currentWorker?.terminate();
     currentApi?.[Comlink.releaseProxy]();
@@ -623,6 +633,10 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         !isJSONValue(parameters)
       ) {
         throw new TypeError("parameters must be an object with JSON values");
+      }
+      const serializedParameters = JSON.stringify(parameters);
+      if (new TextEncoder().encode(serializedParameters).byteLength > maxParameterBytes) {
+        throw new RangeError(`parameters exceed the ${maxParameterBytes}-byte limit`);
       }
     }
     // Validate renameFileImports paths eagerly so we never spin up a Worker.
