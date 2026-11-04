@@ -149,6 +149,41 @@ emit newNodeConfig()
 	}
 }
 
+func TestTypedEvaluatorPropagatesExpectedTypeThroughNestedListAndNode(t *testing.T) {
+	t.Parallel()
+	stringType := ResolvedType{Name: typeString}
+	mapType := ResolvedType{Name: typeMap, Element: &stringType}
+	nodeType := ResolvedType{Name: typeNode, Arguments: []ResolvedType{mapType}}
+	listType := ResolvedType{Name: typeList, Element: &nodeType}
+
+	for _, test := range []struct {
+		name    string
+		source  string
+		support bool
+	}{
+		{name: "unknown reference", source: "let values =\n  - value: unresolved\n", support: true},
+		{name: "incompatible scalar", source: "let values =\n  - value: 1\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			module, err := ParseAST(test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expression := module.Nodes[0].(*LetDeclaration).Expression
+			list, ok := expression.(*ListExpr)
+			if !ok || len(list.Items) != 1 {
+				t.Fatalf("expression = %#v, want one-item ListExpr", expression)
+			}
+			list.Items[0] = &NodeExpr{ExprBase: ExprBase{Span: list.Items[0].ExprSpan()}, Body: list.Items[0]}
+			_, supported := typeExpressionWithInferredExpected(expression, listType, typedEvaluationContext{})
+			if supported != test.support {
+				t.Fatalf("typeExpressionWithInferredExpected() supported = %t, want %t", supported, test.support)
+			}
+		})
+	}
+}
+
 func TestFunctionLocalBindingsAreAvailableDuringTypedLowering(t *testing.T) {
 	t.Parallel()
 

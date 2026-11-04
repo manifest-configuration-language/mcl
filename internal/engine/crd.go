@@ -170,7 +170,7 @@ func registerRuntimeCustomResourceDefinition(ctx context.Context, schemas map[cu
 			registered.location = location
 		}
 		if existing, duplicate := schemas[key]; duplicate {
-			if existing.served != registered.served || existing.fingerprint != registered.fingerprint {
+			if existing.served != registered.served || existing.descriptor != registered.descriptor || existing.fingerprint != registered.fingerprint {
 				return fmt.Errorf("conflicting schemas for %s %s/%s", kind, group, version)
 			}
 

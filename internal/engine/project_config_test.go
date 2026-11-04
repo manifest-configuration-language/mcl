@@ -104,6 +104,25 @@ files = ["widget.yaml"]
 	}
 }
 
+func TestGroupCRDSchemaSourcesRejectsAllAndPartialFileSelection(t *testing.T) {
+	t.Parallel()
+	source := projectCRDSchemaSource{Source: "oci://example.org/operator", Version: "1.0.0"}
+	for _, sources := range [][]indexedCRDSchemaSource{
+		{
+			{index: 1, source: source},
+			{index: 2, source: projectCRDSchemaSource{Source: source.Source, Version: source.Version, Files: []string{"widgets.yaml"}}},
+		},
+		{
+			{index: 1, source: projectCRDSchemaSource{Source: source.Source, Version: source.Version, Files: []string{"widgets.yaml"}}},
+			{index: 2, source: source},
+		},
+	} {
+		if _, err := groupCRDSchemaSources(sources); err == nil {
+			t.Fatal("groupCRDSchemaSources() succeeded, want mixed all-file and selected-file declarations to fail")
+		}
+	}
+}
+
 func projectCRD(group, kind, plural string) string {
 	return fmt.Sprintf(`apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition

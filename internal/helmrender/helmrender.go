@@ -931,9 +931,10 @@ func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.F
 		return make(map[string]any), nil
 	}
 
-	functions := sprig.TxtFuncMap()
+	sprigFunctions := sprig.TxtFuncMap()
+	functions := make(template.FuncMap)
 	for _, name := range nondeterministicFunctions {
-		original, exists := functions[name]
+		original, exists := sprigFunctions[name]
 		if !exists {
 			return nil, fmt.Errorf("sprig nondeterministic function %q is unavailable", name)
 		}
@@ -944,11 +945,11 @@ func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.F
 		functions[name] = observed
 	}
 
-	sprigDateInZone, ok := functions["dateInZone"].(func(string, any, string) string)
+	sprigDateInZone, ok := sprigFunctions["dateInZone"].(func(string, any, string) string)
 	if !ok {
 		return nil, errors.New("sprig dateInZone has an unsupported signature")
 	}
-	sprigDurationRound, ok := functions["durationRound"].(func(any) string)
+	sprigDurationRound, ok := sprigFunctions["durationRound"].(func(any) string)
 	if !ok {
 		return nil, errors.New("sprig durationRound has an unsupported signature")
 	}
@@ -957,6 +958,9 @@ func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.F
 			return formatDate(sprigDateInZone, format, value, "UTC")
 		},
 		"dateInZone": func(format string, value any, zone string) (string, error) {
+			return formatDate(sprigDateInZone, format, value, zone)
+		},
+		"date_in_zone": func(format string, value any, zone string) (string, error) {
 			return formatDate(sprigDateInZone, format, value, zone)
 		},
 		"htmlDate": func(value any) (string, error) {
@@ -1028,6 +1032,12 @@ func formatDate(dateInZone func(string, any, string) string, format string, valu
 		}
 	default:
 		return "", fmt.Errorf("date does not accept %T; use an explicit time.Time or Unix timestamp", value)
+	}
+	if zone == "Local" {
+		return "", errors.New("date does not allow the environment-dependent Local time zone")
+	}
+	if _, err := time.LoadLocation(zone); err != nil {
+		return "", fmt.Errorf("date uses an unknown time zone %q: %w", zone, err)
 	}
 
 	return dateInZone(format, value, zone), nil

@@ -22,10 +22,18 @@ func typePrimitiveListExpression(expression Expr, inferred ResolvedType, context
 	typed := typedExpression{kind: typedExpressionList, span: node.Span, items: make([]typedExpression, 0, len(node.Items))}
 	for _, item := range node.Items {
 		itemType, known, err := context.inferType(item)
-		if err != nil || !known {
+		if err != nil {
 			return typedExpression{}, false
 		}
-		if !staticExpressionAssignableWithEmptyCollections(item, itemType, elementType, context) {
+		if !known {
+			typedItem, ok := typeExpressionWithInferredExpected(item, elementType, context)
+			if !ok {
+				return typedExpression{}, false
+			}
+			typed.items = append(typed.items, typedItem)
+			continue
+		}
+		if !typedExpressionAssignable(item, itemType, elementType, context) {
 			return typedExpression{}, false
 		}
 		typedItem, ok := typeExpressionWithExpectedCollections(item, itemType, elementType, context)
@@ -77,8 +85,24 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 			return typedExpression{}, false
 		}
 		valueType, known, err := context.inferType(entry.Value)
-		if err != nil || !known {
+		if err != nil {
 			return typedExpression{}, false
+		}
+		if !known {
+			if keyExpression != nil {
+				if dynamicValueType != nil && !equalStaticTypes(*dynamicValueType, fieldType) {
+					return typedExpression{}, false
+				}
+				if dynamicValueType == nil {
+					dynamicValueType = new(fieldType)
+				}
+			}
+			value, ok := typeExpressionWithInferredExpected(entry.Value, fieldType, context)
+			if !ok {
+				return typedExpression{}, false
+			}
+			typed.entries = append(typed.entries, typedMapEntry{key: key, keySpan: entry.KeySpan, keyExpression: keyExpression, value: value})
+			continue
 		}
 		if keyExpression != nil {
 			if dynamicValueType != nil && !equalStaticTypes(*dynamicValueType, valueType) {
@@ -88,7 +112,7 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 				dynamicValueType = new(valueType)
 			}
 		}
-		if !staticExpressionAssignableWithEmptyCollections(entry.Value, valueType, fieldType, context) {
+		if !typedExpressionAssignable(entry.Value, valueType, fieldType, context) {
 			return typedExpression{}, false
 		}
 		value, ok := typeExpressionWithExpectedCollections(entry.Value, valueType, fieldType, context)
@@ -101,13 +125,47 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 	return typed, true
 }
 
-func typeExpressionWithExpectedCollections(expression Expr, actual, expected ResolvedType, context typedEvaluationContext) (typedExpression, bool) {
+func typeExpressionWithInferredExpected(expression Expr, expected ResolvedType, context typedEvaluationContext) (typedExpression, bool) {
 	inferred, known, err := inferStaticExprTypeWithExpected(expression, expected, context.staticTypes, context.types)
-	if err != nil || !known || !staticExpressionAssignableWithEmptyCollections(expression, actual, expected, context) {
+	if err != nil || !known {
+		return typedExpression{}, false
+	}
+	actual, actualKnown, err := context.inferType(expression)
+	if err != nil {
+		return typedExpression{}, false
+	}
+	if actualKnown && !typedExpressionAssignable(expression, actual, expected, context) {
 		return typedExpression{}, false
 	}
 
 	return typeExpression(expression, inferred, context)
+}
+
+func typeExpressionWithExpectedCollections(expression Expr, actual, expected ResolvedType, context typedEvaluationContext) (typedExpression, bool) {
+	inferred, known, err := inferStaticExprTypeWithExpected(expression, expected, context.staticTypes, context.types)
+	if err != nil || !known || !typedExpressionAssignable(expression, actual, expected, context) {
+		return typedExpression{}, false
+	}
+
+	return typeExpression(expression, inferred, context)
+}
+
+func typedExpressionAssignable(expression Expr, actual, expected ResolvedType, context typedEvaluationContext) bool {
+	compatibility := staticTypeCompatibility(actual, expected, context.types)
+	if compatibility.isAssignable() {
+		return true
+	}
+	if containsEmptyCollectionLiteral(expression) {
+		return staticExpressionAssignableWithEmptyCollections(expression, actual, expected, context)
+	}
+	switch expression.(type) {
+	case *ListExpr, *MapExpr, *NodeExpr, *ConditionalExpr:
+		return true
+	case *ReferenceExpr:
+		return !compatibility.isDefinitelyIncompatible()
+	default:
+		return compatibility.isAssignable()
+	}
 }
 
 func staticExpressionAssignableWithEmptyCollections(expression Expr, actual, expected ResolvedType, context typedEvaluationContext) bool {

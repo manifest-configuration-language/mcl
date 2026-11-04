@@ -135,18 +135,20 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 
 		return typedExpression{kind: typedExpressionDeferredReference, span: node.Span, paths: slices.Clone(node.Path), args: arguments}, true
 	case *NodeExpr:
+		expectedNode, expectedNodeKnown := resolveStaticAlias(inferred, context.types, make(map[string]bool))
+		if expectedNodeKnown && expectedNode.Name == typeNode && len(expectedNode.Arguments) == 1 {
+			body, ok := typeExpressionWithInferredExpected(node.Body, expectedNode.Arguments[0], context)
+			if !ok {
+				return typedExpression{}, false
+			}
+
+			return typedExpression{kind: typedExpressionNode, span: node.Span, operand: &body}, true
+		}
 		bodyType, known, err := context.inferType(node.Body)
 		if err != nil || !known {
 			return typedExpression{}, false
 		}
-		var body typedExpression
-		var ok bool
-		expectedNode, expectedNodeKnown := resolveStaticAlias(inferred, context.types, make(map[string]bool))
-		if expectedNodeKnown && expectedNode.Name == typeNode && len(expectedNode.Arguments) == 1 {
-			body, ok = typeExpressionWithExpectedCollections(node.Body, bodyType, expectedNode.Arguments[0], context)
-		} else {
-			body, ok = typeExpression(node.Body, bodyType, context)
-		}
+		body, ok := typeExpression(node.Body, bodyType, context)
 		if !ok {
 			return typedExpression{}, false
 		}

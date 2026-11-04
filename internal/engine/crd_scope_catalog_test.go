@@ -86,3 +86,29 @@ spec:
 		})
 	}
 }
+
+func TestRegisterRuntimeCRDRejectsDescriptorConflictsInEitherOrder(t *testing.T) {
+	t.Parallel()
+	namespaced := projectCRD("example.test", "Widget", "widgets")
+	cluster := strings.Replace(namespaced, "scope: Namespaced", "scope: Cluster", 1)
+	pluralMismatch := strings.Replace(namespaced, "widgets.example.test", "gadgets.example.test", 1)
+	pluralMismatch = strings.Replace(pluralMismatch, "plural: widgets", "plural: gadgets", 1)
+	for _, variant := range []string{cluster, pluralMismatch} {
+		for _, ordered := range [][]string{{namespaced, variant}, {variant, namespaced}} {
+			schemas := make(map[customResourceDefinitionKey]crdVersionSchema)
+			for index, document := range ordered {
+				documents, err := decodeRuntimeYAMLDocuments([]byte(document), "crd.yaml")
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = registerRuntimeCustomResourceDefinition(t.Context(), schemas, documents.List[0])
+				if index == 0 && err != nil {
+					t.Fatalf("registerRuntimeCustomResourceDefinition() for first CRD: %v", err)
+				}
+				if index == 1 && (err == nil || !strings.Contains(err.Error(), "conflicting schemas")) {
+					t.Fatalf("registerRuntimeCustomResourceDefinition() error = %v, want descriptor conflict", err)
+				}
+			}
+		}
+	}
+}

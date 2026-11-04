@@ -3,6 +3,7 @@ package helmrender
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -663,8 +664,8 @@ func TestLoadReadsProjectFSWithoutMaterializingIgnoredChartFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() after ignored input change: %v", err)
 	}
-	if loaded.ContentDigest == changed.ContentDigest {
-		t.Fatal("Load() content digest did not include ignored chart inputs")
+	if loaded.ContentDigest != changed.ContentDigest {
+		t.Fatal("Load() content digest changed after an ignored chart input changed")
 	}
 }
 
@@ -796,9 +797,35 @@ func TestRenderUsesHermeticDateFunctions(t *testing.T) {
 	if _, err := Render(t.Context(), chart, map[string]any{}); err == nil || !strings.Contains(err.Error(), "date does not accept string") {
 		t.Fatalf("Render() error = %v, want invalid date argument error", err)
 	}
+	chart.source.(*v2.Chart).Templates[0].Data = []byte(`{{ date_in_zone "2006-01-02" "invalid" "UTC" }}`)
+	if _, err := Render(t.Context(), chart, map[string]any{}); err == nil || !strings.Contains(err.Error(), "date does not accept string") {
+		t.Fatalf("Render() error = %v, want date_in_zone to reject implicit current time", err)
+	}
+	for _, zone := range []string{"Local", "not/a-zone"} {
+		chart.source.(*v2.Chart).Templates[0].Data = []byte(`{{ date_in_zone "2006-01-02" 0 ` + fmt.Sprintf("%q", zone) + ` }}`)
+		if _, err := Render(t.Context(), chart, map[string]any{}); err == nil {
+			t.Errorf("Render() with time zone %q succeeded, want an error", zone)
+		}
+	}
 	chart.source.(*v2.Chart).Templates[0].Data = []byte(`{{ durationRound .Values.timestamp }}`)
 	if _, err := Render(t.Context(), chart, map[string]any{"Values": map[string]any{"timestamp": time.Unix(0, 0)}}); err == nil || !strings.Contains(err.Error(), "durationRound with time.Time is disabled") {
 		t.Fatalf("Render() error = %v, want hermetic durationRound error", err)
+	}
+}
+
+func TestRenderPreservesHelmJSONFunctions(t *testing.T) {
+	t.Parallel()
+	chart := Chart{source: &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: []byte("array: {{ toJson (fromJson \"[1,2]\") | quote }}\\ninvalid: {{ (fromJson \"{\").Error | quote }}\\n")}},
+	}}
+	rendered, err := Render(t.Context(), chart, map[string]any{})
+	if err != nil {
+		t.Fatalf("render Helm JSON functions: %v", err)
+	}
+	output := rendered["test/"+localTestTemplatePath]
+	if !strings.Contains(output, `array: "{\"Error\":\"json: cannot unmarshal array`) || !strings.Contains(output, `invalid: "unexpected end of JSON input"`) {
+		t.Fatalf("Helm JSON function output = %q, want Helm's map result and tolerant parse error", output)
 	}
 }
 

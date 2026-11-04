@@ -162,8 +162,11 @@ func inferStaticExprAnalysisWithExpected(expression Expr, expected *ResolvedType
 
 func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	inferred, known, err := inferStaticExprType(expression, bindings, types)
-	if err != nil || !known {
+	if err != nil {
 		return inferred, known, err
+	}
+	if !known {
+		return inferStaticExprTypeFromExpected(expression, expected, bindings, types)
 	}
 	resolvedExpected, expectedKnown := resolveStaticAlias(expected, types, make(map[string]bool))
 	if !expectedKnown {
@@ -196,7 +199,10 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 				return ResolvedType{}, false, fmt.Errorf("item %d: %w", index, itemErr)
 			}
 			if !itemKnown {
-				return inferred, true, nil
+				return ResolvedType{}, false, nil
+			}
+			if staticTypeCompatibility(itemType, expectedElement, types).isDefinitelyIncompatible() {
+				return ResolvedType{}, false, nil
 			}
 			if index == 0 {
 				elementType = itemType
@@ -218,7 +224,10 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 					return ResolvedType{}, false, fmt.Errorf("field %q: %w", entry.Key, valueErr)
 				}
 				if !valueKnown {
-					return inferred, true, nil
+					return ResolvedType{}, false, nil
+				}
+				if staticTypeCompatibility(valueType, expectedElement, types).isDefinitelyIncompatible() {
+					return ResolvedType{}, false, nil
 				}
 				if index == 0 {
 					elementType = valueType
@@ -241,6 +250,9 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 					return ResolvedType{}, false, fmt.Errorf("field %q: %w", entry.Key, valueErr)
 				}
 				if valueKnown {
+					if staticTypeCompatibility(valueType, fieldType, types).isDefinitelyIncompatible() {
+						return ResolvedType{}, false, nil
+					}
 					fields[index].Type = valueType
 				}
 			}
@@ -261,6 +273,9 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 			if bodyErr != nil || !bodyKnown {
 				return ResolvedType{}, bodyKnown, bodyErr
 			}
+			if staticTypeCompatibility(bodyType, *expectedNodeBody, types).isDefinitelyIncompatible() {
+				return ResolvedType{}, false, nil
+			}
 			inferred.Arguments = []ResolvedType{bodyType}
 
 			return inferred, true, nil
@@ -268,6 +283,89 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 	}
 
 	return inferred, true, nil
+}
+
+func inferStaticExprTypeFromExpected(expression Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	resolved, known := resolveStaticAlias(expected, types, make(map[string]bool))
+	if !known {
+		return ResolvedType{}, false, nil
+	}
+
+	switch node := expression.(type) {
+	case *ReferenceExpr:
+		if node.Name != "" {
+			return expected, true, nil
+		}
+	case *EmptyListExpr:
+		if _, ok := staticListElement(expected, types); ok {
+			return expected, true, nil
+		}
+	case *ListExpr:
+		elementType, ok := staticListElement(expected, types)
+		if !ok {
+			return ResolvedType{}, false, nil
+		}
+		for index, item := range node.Items {
+			itemType, known, err := inferStaticExprTypeWithExpected(item, elementType, bindings, types)
+			if err != nil || !known {
+				if err != nil {
+					return ResolvedType{}, false, fmt.Errorf("item %d: %w", index, err)
+				}
+				return ResolvedType{}, false, nil
+			}
+			if staticTypeCompatibility(itemType, elementType, types).isDefinitelyIncompatible() {
+				return ResolvedType{}, false, nil
+			}
+		}
+		return expected, true, nil
+	case *EmptyMapExpr:
+		if isStaticMapType(expected, types) {
+			return expected, true, nil
+		}
+	case *MapExpr:
+		if !isStaticMapType(expected, types) {
+			return ResolvedType{}, false, nil
+		}
+		for _, entry := range node.Entries {
+			fieldType, exists := staticMapValueType(expected, entry.Key, entry.KeyExpr == nil, types)
+			if !exists {
+				continue
+			}
+			valueType, known, err := inferStaticExprTypeWithExpected(entry.Value, fieldType, bindings, types)
+			if err != nil || !known {
+				return ResolvedType{}, false, err
+			}
+			if staticTypeCompatibility(valueType, fieldType, types).isDefinitelyIncompatible() {
+				return ResolvedType{}, false, nil
+			}
+		}
+		return expected, true, nil
+	case *NodeExpr:
+		if resolved.Name == typeNode && len(resolved.Arguments) == 1 {
+			bodyType, bodyKnown, bodyErr := inferStaticExprTypeWithExpected(node.Body, resolved.Arguments[0], bindings, types)
+			if bodyErr != nil || !bodyKnown {
+				return ResolvedType{}, bodyKnown, bodyErr
+			}
+			if staticTypeCompatibility(bodyType, resolved.Arguments[0], types).isDefinitelyIncompatible() {
+				return ResolvedType{}, false, nil
+			}
+			inferred := expected
+			inferred.Arguments = []ResolvedType{bodyType}
+
+			return inferred, true, nil
+		}
+	case *ConditionalExpr:
+		thenType, thenKnown, thenErr := inferStaticExprTypeWithExpected(node.Then, expected, narrowStaticBindings(node.Condition, bindings, types, true), types)
+		elseType, elseKnown, elseErr := inferStaticExprTypeWithExpected(node.Else, expected, narrowStaticBindings(node.Condition, bindings, types, false), types)
+		if thenErr != nil || elseErr != nil {
+			return ResolvedType{}, false, errors.Join(thenErr, elseErr)
+		}
+		if thenKnown && elseKnown {
+			return joinStaticTypes(thenType, elseType), true, nil
+		}
+	}
+
+	return ResolvedType{}, false, nil
 }
 
 func staticMapElement(typeExpr ResolvedType, types map[string]ResolvedType) (ResolvedType, bool) {
