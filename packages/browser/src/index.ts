@@ -25,6 +25,7 @@ export type {
   ProjectFiles,
   RequestOptions,
   ProjectOperationOptions,
+  ProjectParametersOptions,
   ProjectCompletionOptions,
   ProjectNavigationOptions,
   ProjectRenameOptions,

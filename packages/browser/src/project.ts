@@ -6,7 +6,7 @@ import {
   maxProjectPathLength,
   maxSourceBytes,
 } from "./limits.js";
-import type { Request as WasmRequest } from "./protocol.js";
+import type { Request as WasmRequest, RequestParameters } from "./protocol.js";
 
 export type MclOperation = WasmRequest["operation"];
 
@@ -254,7 +254,10 @@ export interface RequestOptions {
 
 export interface ProjectOperationOptions extends RequestOptions {
   entrypoint?: string;
-  parameters?: Record<string, unknown>;
+}
+
+export interface ProjectParametersOptions extends ProjectOperationOptions {
+  parameters?: RequestParameters;
 }
 
 export interface PositionOptions {

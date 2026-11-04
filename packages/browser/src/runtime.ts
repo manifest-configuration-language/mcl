@@ -16,6 +16,7 @@ import type {
   ProjectSnapshot,
   RequestOptions,
   ProjectOperationOptions,
+  ProjectParametersOptions,
   ProjectCompletionOptions,
   ProjectNavigationOptions,
   ProjectRenameOptions,
@@ -114,6 +115,8 @@ export interface MclProject {
         ? [options: ProjectNavigationOptions]
         : O extends "rename"
           ? [options: ProjectRenameOptions]
+        : O extends "check" | "evaluate" | "render"
+          ? [options?: ProjectParametersOptions]
           : O extends "renameFileImports"
             ? [options: ProjectFileRenameOptions]
             : [options?: ProjectOperationOptions]
@@ -613,13 +616,13 @@ export function createMclRuntime(options: RuntimeOptions = {}): MclRuntime {
         throw new TypeError("parameters are only valid for check, evaluate, and render operations");
       }
       const parameters = requestOptions.parameters as unknown;
-      if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
+      if (
+        parameters === null ||
+        typeof parameters !== "object" ||
+        Array.isArray(parameters) ||
+        !isJSONValue(parameters)
+      ) {
         throw new TypeError("parameters must be an object with JSON values");
-      }
-      for (const value of Object.values(parameters)) {
-        if (!isJSONValue(value)) {
-          throw new TypeError("parameters must be an object with JSON values");
-        }
       }
     }
     // Validate renameFileImports paths eagerly so we never spin up a Worker.
