@@ -941,22 +941,57 @@ func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.F
 		if !exists {
 			return nil, fmt.Errorf("sprig nondeterministic function %q is unavailable", name)
 		}
-		function := reflect.ValueOf(original)
-		expected, exists := nondeterministicFunctionSignatures[name]
-		if !exists || function.Kind() != reflect.Func || !matchesFunctionSignature(function.Type(), expected) {
-			return nil, fmt.Errorf("sprig nondeterministic function %q has an unsupported signature", name)
+		observed, err := observeFunction(original, onNondeterminism)
+		if err != nil {
+			return nil, fmt.Errorf("wrap sprig nondeterministic function %q: %w", name, err)
 		}
-		functions[name] = reflect.MakeFunc(function.Type(), func(args []reflect.Value) []reflect.Value {
-			onNondeterminism()
-			if function.Type().IsVariadic() {
-				return function.CallSlice(args)
-			}
-
-			return function.Call(args)
-		}).Interface()
+		functions[name] = observed
 	}
 
+	sprigDateInZone, ok := functions["dateInZone"].(func(string, any, string) string)
+	if !ok {
+		return nil, errors.New("sprig dateInZone has an unsupported signature")
+	}
+	sprigDurationRound, ok := functions["durationRound"].(func(any) string)
+	if !ok {
+		return nil, errors.New("sprig durationRound has an unsupported signature")
+	}
 	maps.Copy(functions, template.FuncMap{
+		"date": func(format string, value any) (string, error) {
+			return formatDate(sprigDateInZone, format, value, "UTC")
+		},
+		"dateInZone": func(format string, value any, zone string) (string, error) {
+			return formatDate(sprigDateInZone, format, value, zone)
+		},
+		"htmlDate": func(value any) (string, error) {
+			return formatDate(sprigDateInZone, "2006-01-02", value, "UTC")
+		},
+		"htmlDateInZone": func(value any, zone string) (string, error) {
+			return formatDate(sprigDateInZone, "2006-01-02", value, zone)
+		},
+		"toDate": func(format, value string) time.Time {
+			parsed, err := time.ParseInLocation(format, value, time.UTC)
+			if err != nil {
+				return time.Time{}
+			}
+
+			return parsed
+		},
+		"mustToDate": func(format, value string) (time.Time, error) {
+			return time.ParseInLocation(format, value, time.UTC)
+		},
+		"durationRound": func(value any) (string, error) {
+			if _, ok := value.(time.Time); ok {
+				return "", errors.New("durationRound with time.Time is disabled in hermetic Helm rendering")
+			}
+			if _, ok := value.(*time.Time); ok {
+				return "", errors.New("durationRound with time.Time is disabled in hermetic Helm rendering")
+			}
+
+			return sprigDurationRound(value), nil
+		},
+		"keys":          sortedKeys,
+		"values":        sortedValues,
 		"lookup":        lookup,
 		"getHostByName": func(string) (string, error) { return blocked() },
 		"now":           now,
@@ -972,71 +1007,60 @@ func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.F
 	return functions, nil
 }
 
+func observeFunction(original any, onCall func()) (any, error) {
+	function := reflect.ValueOf(original)
+	if function.Kind() != reflect.Func {
+		return nil, errors.New("expected function")
+	}
+
+	return reflect.MakeFunc(function.Type(), func(args []reflect.Value) []reflect.Value {
+		onCall()
+		if function.Type().IsVariadic() {
+			return function.CallSlice(args)
+		}
+
+		return function.Call(args)
+	}).Interface(), nil
+}
+
+func formatDate(dateInZone func(string, any, string) string, format string, value any, zone string) (string, error) {
+	switch date := value.(type) {
+	case time.Time, int, int32, int64:
+	case *time.Time:
+		if date == nil {
+			return "", errors.New("date requires a non-nil time.Time or Unix timestamp")
+		}
+	default:
+		return "", fmt.Errorf("date does not accept %T; use an explicit time.Time or Unix timestamp", value)
+	}
+
+	return dateInZone(format, value, zone), nil
+}
+
+func sortedKeys(dicts ...map[string]any) []string {
+	keys := make([]string, 0)
+	for _, dict := range dicts {
+		mapKeys := slices.Sorted(maps.Keys(dict))
+		keys = append(keys, mapKeys...)
+	}
+
+	return keys
+}
+
+func sortedValues(dict map[string]any) []any {
+	keys := slices.Sorted(maps.Keys(dict))
+	values := make([]any, 0, len(keys))
+	for _, key := range keys {
+		values = append(values, dict[key])
+	}
+
+	return values
+}
+
 var nondeterministicFunctions = []string{
 	"randAlphaNum", "randAlpha", "randNumeric", "randAscii", "randBytes", "randInt", "shuffle", "uuidv4",
 	"genPrivateKey", "genCA", "genCAWithKey", "genSelfSignedCert", "genSelfSignedCertWithKey", "genSignedCert", "genSignedCertWithKey",
 	"bcrypt", "htpasswd", "encryptAES",
-}
-
-type functionSignature struct {
-	inputs   []reflect.Kind
-	outputs  []reflect.Kind
-	variadic bool
-}
-
-func matchesFunctionSignature(function reflect.Type, expected functionSignature) bool {
-	if function.NumIn() != len(expected.inputs) || function.NumOut() != len(expected.outputs) || function.IsVariadic() != expected.variadic {
-		return false
-	}
-	for index, kind := range expected.inputs {
-		if !matchesFunctionType(function.In(index), kind) {
-			return false
-		}
-	}
-	for index, kind := range expected.outputs {
-		if !matchesFunctionType(function.Out(index), kind) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func matchesFunctionType(value reflect.Type, kind reflect.Kind) bool {
-	if value.Kind() != kind {
-		return false
-	}
-	switch kind {
-	case reflect.Slice:
-		return value.Elem().Kind() == reflect.Interface
-	case reflect.Struct:
-		return value.Name() == "certificate" && value.PkgPath() == "github.com/Masterminds/sprig/v3"
-	case reflect.Interface:
-		return value.Implements(reflect.TypeFor[error]())
-	default:
-		return true
-	}
-}
-
-var nondeterministicFunctionSignatures = map[string]functionSignature{
-	"randAlphaNum":             {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
-	"randAlpha":                {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
-	"randNumeric":              {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
-	"randAscii":                {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
-	"randBytes":                {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String, reflect.Interface}},
-	"randInt":                  {inputs: []reflect.Kind{reflect.Int, reflect.Int}, outputs: []reflect.Kind{reflect.Int}},
-	"shuffle":                  {inputs: []reflect.Kind{reflect.String}, outputs: []reflect.Kind{reflect.String}},
-	"uuidv4":                   {outputs: []reflect.Kind{reflect.String}},
-	"genPrivateKey":            {inputs: []reflect.Kind{reflect.String}, outputs: []reflect.Kind{reflect.String}},
-	"genCA":                    {inputs: []reflect.Kind{reflect.String, reflect.Int}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
-	"genCAWithKey":             {inputs: []reflect.Kind{reflect.String, reflect.Int, reflect.String}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
-	"genSelfSignedCert":        {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
-	"genSelfSignedCertWithKey": {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int, reflect.String}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
-	"genSignedCert":            {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int, reflect.Struct}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
-	"genSignedCertWithKey":     {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int, reflect.Struct, reflect.String}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
-	"bcrypt":                   {inputs: []reflect.Kind{reflect.String}, outputs: []reflect.Kind{reflect.String}},
-	"htpasswd":                 {inputs: []reflect.Kind{reflect.String, reflect.String}, outputs: []reflect.Kind{reflect.String}},
-	"encryptAES":               {inputs: []reflect.Kind{reflect.String, reflect.String}, outputs: []reflect.Kind{reflect.String, reflect.Interface}},
 }
 
 func helmLookupMatches(resource map[string]any, apiVersion, kind, namespace string, descriptors map[lookupResourceType]LookupResourceDescriptor) bool {

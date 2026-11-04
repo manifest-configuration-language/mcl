@@ -768,6 +768,62 @@ func TestRenderVerifiedSupportsNondeterministicNonStringResults(t *testing.T) {
 	}
 }
 
+func TestRenderUsesHermeticDateFunctions(t *testing.T) {
+	t.Parallel()
+	chart := Chart{source: &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("date: {{ date \"2006-01-02 15:04 MST\" 86399 | quote }}\ndateInZone: {{ dateInZone \"2006-01-02 15:04 MST\" 86399 \"Asia/Tokyo\" | quote }}\nhtmlDate: {{ htmlDate 86399 | quote }}\nhtmlDateInZone: {{ htmlDateInZone 86399 \"Asia/Tokyo\" | quote }}\nparsed: {{ date \"2006-01-02 15:04 MST\" (toDate \"2006-01-02 15:04\" \"1970-01-01 12:34\") | quote }}\n")}},
+	}}
+	rendered, err := Render(t.Context(), chart, map[string]any{})
+	if err != nil {
+		t.Fatalf("render deterministic date functions: %v", err)
+	}
+	output := rendered["test/templates/configmap.yaml"]
+	for _, expected := range []string{
+		`date: "1970-01-01 23:59 UTC"`,
+		`dateInZone: "1970-01-02 08:59 JST"`,
+		`htmlDate: "1970-01-01"`,
+		`htmlDateInZone: "1970-01-02"`,
+		`parsed: "1970-01-01 12:34 UTC"`,
+	} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("rendered date output %q does not contain %q", output, expected)
+		}
+	}
+
+	chart.source.(*v2.Chart).Templates[0].Data = []byte(`{{ date "2006-01-02" "invalid" }}`)
+	if _, err := Render(t.Context(), chart, map[string]any{}); err == nil || !strings.Contains(err.Error(), "date does not accept string") {
+		t.Fatalf("Render() error = %v, want invalid date argument error", err)
+	}
+	chart.source.(*v2.Chart).Templates[0].Data = []byte(`{{ durationRound .Values.timestamp }}`)
+	if _, err := Render(t.Context(), chart, map[string]any{"Values": map[string]any{"timestamp": time.Unix(0, 0)}}); err == nil || !strings.Contains(err.Error(), "durationRound with time.Time is disabled") {
+		t.Fatalf("Render() error = %v, want hermetic durationRound error", err)
+	}
+}
+
+func TestRenderSortsSprigKeysAndValues(t *testing.T) {
+	t.Parallel()
+	chart := Chart{source: &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("keys: {{ keys .Values.first .Values.second | join \",\" | quote }}\nvalues: {{ values .Values.values | join \",\" | quote }}\n")}},
+	}}
+	values := map[string]any{"Values": map[string]any{
+		"first":  map[string]any{"b": "ignored", "a": "ignored"},
+		"second": map[string]any{"c": "ignored", "b": "ignored"},
+		"values": map[string]any{"z": "last", "a": "first"},
+	}}
+	rendered, err := Render(t.Context(), chart, values)
+	if err != nil {
+		t.Fatalf("render sorted Sprig map functions: %v", err)
+	}
+	output := rendered["test/templates/configmap.yaml"]
+	for _, expected := range []string{`keys: "a,b,b,c"`, `values: "first,last"`} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("rendered output %q does not contain %q", output, expected)
+		}
+	}
+}
+
 func TestTrustManagerV0240HelmCertNondeterminism(t *testing.T) {
 	t.Parallel()
 	archive, err := os.ReadFile("testdata/trust-manager-v0.24.0.tgz")
