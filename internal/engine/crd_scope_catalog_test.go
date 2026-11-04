@@ -16,10 +16,11 @@ func TestProjectCRDCatalogEnforcesResourceScopeAndIdentity(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name      string
-		scope     string
-		resources string
-		wantError string
+		name              string
+		scope             string
+		resources         string
+		wantError         string
+		wantEvaluateError bool
 	}{
 		{
 			name:  "cluster scoped resources reject namespace",
@@ -32,7 +33,8 @@ func TestProjectCRDCatalogEnforcesResourceScopeAndIdentity(t *testing.T) {
     namespace: "default"
 emit resource
 `,
-			wantError: "must not set metadata.namespace",
+			wantError:         "not allowed on this type",
+			wantEvaluateError: true,
 		},
 		{
 			name:  "namespaced identity normalizes default namespace",
@@ -80,6 +82,13 @@ emit explicitNamespace
 				t.Fatalf("open dependency lock: %v", err)
 			}
 			bundle, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, test.resources, files, nil)
+			if test.wantEvaluateError {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("EvaluateProjectSourceContext() error = %v, want %q", err, test.wantError)
+				}
+
+				return
+			}
 			if err != nil {
 				t.Fatalf("EvaluateProjectSourceContext() error = %v", err)
 			}

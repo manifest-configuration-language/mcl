@@ -117,6 +117,107 @@ spec:
 	}
 }
 
+func TestEvaluateProjectSourceValidatesConfiguredCRDObjectMeta(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	crd := []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.test
+spec:
+  group: example.test
+  scope: Namespaced
+  names:
+    plural: widgets
+    singular: widget
+    kind: Widget
+    listKind: WidgetList
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+`)
+	files := lockedHTTPSCRDFiles(t, crd)
+	validSource := `let widget =
+  apiVersion: "example.test/v1"
+  kind: "Widget"
+  metadata:
+    name: "sample"
+emit widget
+`
+	if _, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, validSource, files, nil); err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want a valid namespaced CRD resource with omitted namespace to pass", err)
+	}
+
+	invalidSource := `let widget =
+  apiVersion: "example.test/v1"
+  kind: "Widget"
+  metadata:
+    name: "Invalid_Name"
+emit widget
+`
+	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, invalidSource, files, nil)
+	if err == nil {
+		t.Fatal("EvaluateProjectSourceContext() succeeded, want invalid metadata.name to fail")
+	}
+	diagnostic, ok := errors.AsType[SourceDiagnosticError](err)
+	if !ok {
+		t.Fatalf("EvaluateProjectSourceContext() error = %T, want SourceDiagnosticError", err)
+	}
+	if diagnostic.Code != "MCL-CRD" {
+		t.Errorf("diagnostic code = %q, want MCL-CRD", diagnostic.Code)
+	}
+	wantPath := filepath.Join(root, projectFileEntrypoint)
+	if diagnostic.Path != wantPath {
+		t.Errorf("diagnostic path = %q, want %q", diagnostic.Path, wantPath)
+	}
+	if diagnostic.Span.Start < 0 || diagnostic.Span.End > len(invalidSource) || !strings.Contains(invalidSource[diagnostic.Span.Start:diagnostic.Span.End], "Invalid_Name") {
+		t.Errorf("diagnostic span = %#v, want the invalid metadata.name value", diagnostic.Span)
+	}
+	if !strings.Contains(diagnostic.Message, "metadata.name") {
+		t.Errorf("diagnostic message = %q, want metadata.name validation error", diagnostic.Message)
+	}
+
+	unknownFieldSource := `let widget =
+  apiVersion: "example.test/v1"
+  kind: "Widget"
+  metadata:
+    name: "sample"
+  spec:
+    replcias: 3
+emit widget
+`
+	_, err = EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, unknownFieldSource, files, nil)
+	if err == nil {
+		t.Fatal("EvaluateProjectSourceContext() succeeded, want an unknown CRD field to fail")
+	}
+	diagnostic, ok = errors.AsType[SourceDiagnosticError](err)
+	if !ok {
+		t.Fatalf("EvaluateProjectSourceContext() error = %T, want SourceDiagnosticError", err)
+	}
+	if diagnostic.Code != "MCL-CRD" {
+		t.Errorf("diagnostic code = %q, want MCL-CRD", diagnostic.Code)
+	}
+	if diagnostic.Span.Start < 0 || diagnostic.Span.End > len(unknownFieldSource) || !strings.Contains(unknownFieldSource[diagnostic.Span.Start:diagnostic.Span.End], "3") {
+		t.Errorf("diagnostic span = %#v, want the unknown field value", diagnostic.Span)
+	}
+	if !strings.Contains(diagnostic.Message, "replcias") {
+		t.Errorf("diagnostic message = %q, want the unknown spec field", diagnostic.Message)
+	}
+}
+
 func TestEvaluateProjectSourceRejectsInvalidConfiguredCRD(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
