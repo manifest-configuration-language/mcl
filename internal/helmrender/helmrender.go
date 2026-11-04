@@ -13,12 +13,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/Masterminds/sprig/v3"
 	"github.com/manifest-configuration-language/mcl/internal/content"
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
@@ -64,15 +66,22 @@ type LoadRequest struct {
 
 // RenderOptionsはHelm template評価へ渡す値を保持します。
 type RenderOptions struct {
-	Values          map[string]any
-	LookupResources []map[string]any
-	ReleaseName     string
-	Namespace       string
-	Operation       string
-	Revision        int
-	KubeVersion     string
-	APIVersions     []string
-	Now             *time.Time
+	Values                      map[string]any
+	AllowNondeterministicOutput bool
+	LookupResources             []map[string]any
+	ReleaseName                 string
+	Namespace                   string
+	Operation                   string
+	Revision                    int
+	KubeVersion                 string
+	APIVersions                 []string
+	Now                         *time.Time
+}
+
+// RenderResultはHelm template出力と、非決定的な関数を呼び出したかを保持します。
+type RenderResult struct {
+	Templates          map[string]string
+	UsedNondeterminism bool
 }
 
 // Preparedは描画用に統合した値とsource pathを保持します。
@@ -742,22 +751,23 @@ func Prepare(loaded Chart, options RenderOptions, projectRoot string) (Prepared,
 	prepared.Values = values
 	if loaded.ContentDigest != "" {
 		key, err := renderCacheKey(struct {
-			Format          string
-			ChartDigest     string
-			Operation       string
-			ReleaseName     string
-			Namespace       string
-			Revision        int
-			KubeVersion     string
-			APIVersions     []string
-			LookupResources []map[string]any
-			Now             *time.Time
-			RenderValues    map[string]any
+			Format                      string
+			ChartDigest                 string
+			Operation                   string
+			ReleaseName                 string
+			Namespace                   string
+			Revision                    int
+			KubeVersion                 string
+			APIVersions                 []string
+			LookupResources             []map[string]any
+			Now                         *time.Time
+			AllowNondeterministicOutput bool
+			RenderValues                map[string]any
 		}{
-			Format: "helm-render-v2", ChartDigest: loaded.ContentDigest, Operation: options.Operation,
+			Format: "helm-render-v3", ChartDigest: loaded.ContentDigest, Operation: options.Operation,
 			ReleaseName: options.ReleaseName, Namespace: options.Namespace, Revision: options.Revision,
 			KubeVersion: options.KubeVersion, APIVersions: options.APIVersions, LookupResources: options.LookupResources,
-			Now: options.Now, RenderValues: values,
+			Now: options.Now, AllowNondeterministicOutput: options.AllowNondeterministicOutput, RenderValues: values,
 		})
 		if err == nil {
 			prepared.CacheKey = key
@@ -782,14 +792,65 @@ func Render(ctx context.Context, source Chart, values map[string]any) (map[strin
 	return renderSource(ctx, source.source, values)
 }
 
+// RenderVerified renders a Chart and, when needed, verifies that nondeterministic functions produce stable output.
+func RenderVerified(ctx context.Context, source Chart, values map[string]any, allowNondeterministicOutput bool) (RenderResult, error) {
+	first, err := renderSourceObserved(ctx, source.source, values)
+	if err != nil {
+		return RenderResult{}, err
+	}
+	if !first.UsedNondeterminism || allowNondeterministicOutput {
+		return first, nil
+	}
+	second, err := renderSourceObserved(ctx, source.source, values)
+	if err != nil {
+		return RenderResult{}, err
+	}
+	if changed := changedTemplate(first.Templates, second.Templates); changed != "" {
+		return RenderResult{}, fmt.Errorf("MCL-HELM-NONDETERMINISTIC: Helm chart produced different outputs for the same inputs.\n\nChanged template:\n  %s\n\nTo allow nondeterministic output, use:\n  --allow-nondeterministic-output", changed)
+	}
+
+	return first, nil
+}
+
+func changedTemplate(first, second map[string]string) string {
+	paths := slices.Sorted(maps.Keys(first))
+	for _, path := range paths {
+		if value, exists := second[path]; !exists || first[path] != value {
+			return path
+		}
+	}
+	for _, path := range slices.Sorted(maps.Keys(second)) {
+		if _, exists := first[path]; !exists {
+			return path
+		}
+	}
+
+	return ""
+}
+
 func renderSource(ctx context.Context, source chart.Charter, values map[string]any) (map[string]string, error) {
+	result, err := renderSourceObserved(ctx, source, values)
+
+	return result.Templates, err
+}
+
+func renderSourceObserved(ctx context.Context, source chart.Charter, values map[string]any) (RenderResult, error) {
 	if helmChart, ok := source.(*v2.Chart); ok {
 		source = cloneChartWithoutNotes(helmChart)
 	}
-
-	return (engine.Engine{
-		Strict: false, EnableDNS: false, CustomTemplateFuncs: hermeticFunctions(ctx),
+	usedNondeterminism := false
+	functions, err := hermeticFunctions(ctx, func() { usedNondeterminism = true })
+	if err != nil {
+		return RenderResult{}, err
+	}
+	rendered, err := (engine.Engine{
+		Strict: false, EnableDNS: false, CustomTemplateFuncs: functions,
 	}).RenderWithContext(ctx, source, values)
+	if err != nil {
+		return RenderResult{}, err
+	}
+
+	return RenderResult{Templates: rendered, UsedNondeterminism: usedNondeterminism}, nil
 }
 
 type deterministicNowContextKey struct{}
@@ -838,7 +899,7 @@ func WithLookupResources(ctx context.Context, resources []map[string]any, descri
 	return context.WithValue(ctx, lookupResourcesContextKey{}, lookupResourcesContext{resources: resources, resourceMap: resourceMap})
 }
 
-func hermeticFunctions(ctx context.Context) template.FuncMap {
+func hermeticFunctions(ctx context.Context, onNondeterminism func()) (template.FuncMap, error) {
 	blocked := func() (string, error) {
 		return "", errors.New("template function is disabled in hermetic Helm rendering")
 	}
@@ -874,23 +935,108 @@ func hermeticFunctions(ctx context.Context) template.FuncMap {
 		return make(map[string]any), nil
 	}
 
-	return template.FuncMap{
+	functions := sprig.TxtFuncMap()
+	for _, name := range nondeterministicFunctions {
+		original, exists := functions[name]
+		if !exists {
+			return nil, fmt.Errorf("Sprig nondeterministic function %q is unavailable", name)
+		}
+		function := reflect.ValueOf(original)
+		expected, exists := nondeterministicFunctionSignatures[name]
+		if !exists || function.Kind() != reflect.Func || !matchesFunctionSignature(function.Type(), expected) {
+			return nil, fmt.Errorf("Sprig nondeterministic function %q has an unsupported signature", name)
+		}
+		functions[name] = reflect.MakeFunc(function.Type(), func(args []reflect.Value) []reflect.Value {
+			onNondeterminism()
+			if function.Type().IsVariadic() {
+				return function.CallSlice(args)
+			}
+
+			return function.Call(args)
+		}).Interface()
+	}
+
+	maps.Copy(functions, template.FuncMap{
 		"lookup":        lookup,
 		"getHostByName": func(string) (string, error) { return blocked() },
 		"now":           now,
-		"uuidv4":        blocked, "randAlphaNum": func(int) (string, error) { return blocked() },
-		"randAlpha": func(int) (string, error) { return blocked() }, "randNumeric": func(int) (string, error) { return blocked() },
-		"randAscii": func(int) (string, error) { return blocked() }, "randBytes": func(int) (string, error) { return blocked() },
-		"shuffle":       func(string) (string, error) { return blocked() },
-		"genPrivateKey": func(string) (string, error) { return blocked() },
-		"randInt":       func(int, int) (int, error) { return 0, errors.New("helm randInt is disabled in hermetic rendering") },
-		"encryptAES":    func(...any) (string, error) { return blocked() },
-		"genCA":         func(...any) (string, error) { return blocked() }, "genCAWithKey": func(...any) (string, error) { return blocked() },
-		"genSelfSignedCert":        func(...any) (string, error) { return blocked() },
-		"genSelfSignedCertWithKey": func(...any) (string, error) { return blocked() },
-		"genSignedCert":            func(...any) (string, error) { return blocked() }, "genSignedCertWithKey": func(...any) (string, error) { return blocked() },
-		"bcrypt": func(string) (string, error) { return blocked() }, "htpasswd": func(string, string) (string, error) { return blocked() },
+		"ago":           func(time.Time) (string, error) { return blocked() },
+		"env": func(string) (string, error) {
+			return "", errors.New("template function is disabled in hermetic Helm rendering")
+		},
+		"expandenv": func(string) (string, error) {
+			return "", errors.New("template function is disabled in hermetic Helm rendering")
+		},
+	})
+
+	return functions, nil
+}
+
+var nondeterministicFunctions = []string{
+	"randAlphaNum", "randAlpha", "randNumeric", "randAscii", "randBytes", "randInt", "shuffle", "uuidv4",
+	"genPrivateKey", "genCA", "genCAWithKey", "genSelfSignedCert", "genSelfSignedCertWithKey", "genSignedCert", "genSignedCertWithKey",
+	"bcrypt", "htpasswd", "encryptAES",
+}
+
+type functionSignature struct {
+	inputs   []reflect.Kind
+	outputs  []reflect.Kind
+	variadic bool
+}
+
+func matchesFunctionSignature(function reflect.Type, expected functionSignature) bool {
+	if function.NumIn() != len(expected.inputs) || function.NumOut() != len(expected.outputs) || function.IsVariadic() != expected.variadic {
+		return false
 	}
+	for index, kind := range expected.inputs {
+		if !matchesFunctionType(function.In(index), kind) {
+			return false
+		}
+	}
+	for index, kind := range expected.outputs {
+		if !matchesFunctionType(function.Out(index), kind) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func matchesFunctionType(value reflect.Type, kind reflect.Kind) bool {
+	if value.Kind() != kind {
+		return false
+	}
+	switch kind {
+	case reflect.Slice:
+		return value.Elem().Kind() == reflect.Interface
+	case reflect.Struct:
+		return value.Name() == "certificate" && value.PkgPath() == "github.com/Masterminds/sprig/v3"
+	case reflect.Interface:
+		return value.Implements(reflect.TypeFor[error]())
+	default:
+		return true
+	}
+}
+
+var nondeterministicFunctionSignatures = map[string]functionSignature{
+	"randAlphaNum":             {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
+	"randAlpha":                {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
+	"randNumeric":              {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
+	"randAscii":                {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String}},
+	"randBytes":                {inputs: []reflect.Kind{reflect.Int}, outputs: []reflect.Kind{reflect.String, reflect.Interface}},
+	"randInt":                  {inputs: []reflect.Kind{reflect.Int, reflect.Int}, outputs: []reflect.Kind{reflect.Int}},
+	"shuffle":                  {inputs: []reflect.Kind{reflect.String}, outputs: []reflect.Kind{reflect.String}},
+	"uuidv4":                   {outputs: []reflect.Kind{reflect.String}},
+	"genPrivateKey":            {inputs: []reflect.Kind{reflect.String}, outputs: []reflect.Kind{reflect.String}},
+	"genCA":                    {inputs: []reflect.Kind{reflect.String, reflect.Int}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
+	"genCAWithKey":             {inputs: []reflect.Kind{reflect.String, reflect.Int, reflect.String}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
+	"genSelfSignedCert":        {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
+	"genSelfSignedCertWithKey": {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int, reflect.String}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
+	"genSignedCert":            {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int, reflect.Struct}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
+	"genSignedCertWithKey":     {inputs: []reflect.Kind{reflect.String, reflect.Slice, reflect.Slice, reflect.Int, reflect.Struct, reflect.String}, outputs: []reflect.Kind{reflect.Struct, reflect.Interface}},
+	"bcrypt":                   {inputs: []reflect.Kind{reflect.String}, outputs: []reflect.Kind{reflect.String}},
+	"htpasswd":                 {inputs: []reflect.Kind{reflect.String, reflect.String}, outputs: []reflect.Kind{reflect.String}},
+	"encryptAES":               {inputs: []reflect.Kind{reflect.String, reflect.String}, outputs: []reflect.Kind{reflect.String, reflect.Interface}},
 }
 
 func helmLookupMatches(resource map[string]any, apiVersion, kind, namespace string, descriptors map[lookupResourceType]LookupResourceDescriptor) bool {

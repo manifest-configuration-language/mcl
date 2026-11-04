@@ -38,27 +38,33 @@ const (
 	projectConfigFileName = "mcl.toml"
 )
 
+// EvaluationOptionsはMCL評価全体に適用する実行オプションを保持します。
+type EvaluationOptions struct {
+	AllowNondeterministicOutput bool
+}
+
 type moduleLoader struct {
 	//nolint:containedctx // Contextはモジュール評価とAdapter呼び出しの間で共有します。
-	ctx           context.Context
-	root          string
-	files         *projectFilesystem
-	graph         *moduleGraph
-	entry         string
-	entryText     string
-	runtimeCache  map[string][]RuntimeEntry
-	runtimeTypes  map[string]map[string]ResolvedType
-	dependencies  *dependency.Lock
-	operation     string
-	parameters    map[string]jsontext.Value
-	overlays      map[string]string
-	loadedModules map[string]struct{}
-	textImports   map[string]string
-	textBytes     int64
-	budget        *functionBudget
-	allocations   *runtimeAllocationBudget
-	analysis      *TypeAnalysisContext
-	crdSchemas    map[customResourceDefinitionKey]crdVersionSchema
+	ctx                         context.Context
+	root                        string
+	files                       *projectFilesystem
+	graph                       *moduleGraph
+	entry                       string
+	entryText                   string
+	runtimeCache                map[string][]RuntimeEntry
+	runtimeTypes                map[string]map[string]ResolvedType
+	dependencies                *dependency.Lock
+	operation                   string
+	allowNondeterministicOutput bool
+	parameters                  map[string]jsontext.Value
+	overlays                    map[string]string
+	loadedModules               map[string]struct{}
+	textImports                 map[string]string
+	textBytes                   int64
+	budget                      *functionBudget
+	allocations                 *runtimeAllocationBudget
+	analysis                    *TypeAnalysisContext
+	crdSchemas                  map[customResourceDefinitionKey]crdVersionSchema
 }
 
 func runtimeBundleToBundle(runtimeBundle RuntimeBundle) (Bundle, error) {
@@ -85,7 +91,17 @@ func EvaluateFileContext(ctx context.Context, path string) (Bundle, error) {
 
 // EvaluateFileWithParametersContext evaluates an MCL file with explicit runtime parameters.
 func EvaluateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) (Bundle, error) {
-	return evaluateFileWithParameters(ctx, path, false, "", parameters)
+	return EvaluateFileWithParametersAndOptionsContext(ctx, path, parameters, EvaluationOptions{})
+}
+
+// EvaluateFileWithOptionsContextは実行オプションを指定してMCLファイルを評価します。
+func EvaluateFileWithOptionsContext(ctx context.Context, path string, options EvaluationOptions) (Bundle, error) {
+	return EvaluateFileWithParametersAndOptionsContext(ctx, path, nil, options)
+}
+
+// EvaluateFileWithParametersAndOptionsContextは実行オプションとruntime parametersを指定してMCLファイルを評価します。
+func EvaluateFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
+	return evaluateFileWithParameters(ctx, path, false, "", parameters, options)
 }
 
 // EvaluateFileForOperation は指定した操作向けにMCLファイルを評価します。
@@ -104,7 +120,21 @@ func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, op
 		return Bundle{}, fmt.Errorf("unknown operation %q", operation)
 	}
 
-	return evaluateFileWithParameters(ctx, path, false, operation, parameters)
+	return EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, EvaluationOptions{})
+}
+
+// EvaluateFileForOperationWithOptionsContextは実行オプションを指定して操作向けにMCLファイルを評価します。
+func EvaluateFileForOperationWithOptionsContext(ctx context.Context, path, operation string, options EvaluationOptions) (Bundle, error) {
+	return EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, nil, options)
+}
+
+// EvaluateFileForOperationWithParametersAndOptionsContextは実行オプションとruntime parametersを指定して操作向けにMCLファイルを評価します。
+func EvaluateFileForOperationWithParametersAndOptionsContext(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
+	if !validOperation(operation) {
+		return Bundle{}, fmt.Errorf("unknown operation %q", operation)
+	}
+
+	return evaluateFileWithParameters(ctx, path, false, operation, parameters, options)
 }
 
 func UpdateFile(path string) error {
@@ -118,7 +148,12 @@ func UpdateFileContext(ctx context.Context, path string) error {
 
 // UpdateFileWithParametersContext updates dependencies after evaluating an MCL file with explicit runtime parameters.
 func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) error {
-	_, err := evaluateFileWithParameters(ctx, path, true, "", parameters)
+	return UpdateFileWithParametersAndOptionsContext(ctx, path, parameters, EvaluationOptions{})
+}
+
+// UpdateFileWithParametersAndOptionsContextは実行オプションとruntime parametersを指定して依存lockを更新します。
+func UpdateFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) error {
+	_, err := evaluateFileWithParameters(ctx, path, true, "", parameters, options)
 
 	return err
 }
@@ -1032,11 +1067,11 @@ func dependentModuleSourcesWithContext(ctx context.Context, target string, sourc
 	return result, nil
 }
 
-func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value) (Bundle, error) {
-	return evaluateFileWithFilesystem(ctx, path, update, operation, parameters, nil)
+func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
+	return evaluateFileWithFilesystem(ctx, path, update, operation, parameters, options, nil)
 }
 
-func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value, files *projectFilesystem) (Bundle, error) {
+func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value, options EvaluationOptions, files *projectFilesystem) (Bundle, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
 	}
@@ -1084,7 +1119,8 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		ctx:  ctx,
 		root: root, files: files, entry: canonical, entryText: string(source),
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
-		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
+		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters),
+		allowNondeterministicOutput: options.AllowNondeterministicOutput, loadedModules: make(map[string]struct{}), budget: &functionBudget{},
 		analysis:   &TypeAnalysisContext{},
 		crdSchemas: crdSchemas,
 	}
@@ -1195,16 +1231,16 @@ func EvaluateProjectSourceWithParametersContext(ctx context.Context, projectRoot
 		}
 		absoluteOverlays[filepath.Join(root, filepath.FromSlash(overlayPath))] = overlaySource
 	}
-	bundle, _, err := evaluateSourceWithFilesystemAndParameters(ctx, entry, source, absoluteOverlays, newProjectFilesystem(root, files), parameters)
+	bundle, _, err := evaluateSourceWithFilesystemAndParameters(ctx, entry, source, absoluteOverlays, newProjectFilesystem(root, files), parameters, EvaluationOptions{})
 
 	return bundle, err
 }
 
 func evaluateSourceWithFilesystem(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem) (Bundle, []string, error) {
-	return evaluateSourceWithFilesystemAndParameters(ctx, path, source, overlays, files, nil)
+	return evaluateSourceWithFilesystemAndParameters(ctx, path, source, overlays, files, nil, EvaluationOptions{})
 }
 
-func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem, parameters map[string]jsontext.Value) (Bundle, []string, error) {
+func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source string, overlays map[string]string, files *projectFilesystem, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, []string, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, nil, err
 	}
@@ -1257,21 +1293,22 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		canonicalOverlays[canonicalOverlay] = overlaySource
 	}
 	loader := moduleLoader{
-		ctx:           ctx,
-		root:          root,
-		files:         files,
-		entry:         entry,
-		entryText:     source,
-		parameters:    maps.Clone(parameters),
-		runtimeCache:  make(map[string][]RuntimeEntry),
-		runtimeTypes:  make(map[string]map[string]ResolvedType),
-		dependencies:  dependencies,
-		overlays:      canonicalOverlays,
-		loadedModules: make(map[string]struct{}),
-		budget:        &functionBudget{},
-		allocations:   &runtimeAllocationBudget{},
-		analysis:      &TypeAnalysisContext{},
-		crdSchemas:    crdSchemas,
+		ctx:                         ctx,
+		root:                        root,
+		files:                       files,
+		entry:                       entry,
+		entryText:                   source,
+		parameters:                  maps.Clone(parameters),
+		runtimeCache:                make(map[string][]RuntimeEntry),
+		runtimeTypes:                make(map[string]map[string]ResolvedType),
+		dependencies:                dependencies,
+		allowNondeterministicOutput: options.AllowNondeterministicOutput,
+		overlays:                    canonicalOverlays,
+		loadedModules:               make(map[string]struct{}),
+		budget:                      &functionBudget{},
+		allocations:                 &runtimeAllocationBudget{},
+		analysis:                    &TypeAnalysisContext{},
+		crdSchemas:                  crdSchemas,
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(entry, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	loadedModules := loader.loadedModulePaths()
@@ -1356,7 +1393,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, AllowNondeterministicOutput: loader.allowNondeterministicOutput, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
 	if entry {
 		state.Parameters = maps.Clone(loader.parameters)

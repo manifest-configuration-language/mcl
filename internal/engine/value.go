@@ -60,13 +60,14 @@ type ValueTyping struct {
 
 type ModuleContext struct {
 	//nolint:containedctx // Adapterへ評価Contextを伝播するため、実行状態に保持します。
-	Context       context.Context
-	ProjectRoot   string
-	filesystem    *projectFilesystem
-	Dependencies  *dependency.Lock
-	HelmOperation string
-	Analysis      *TypeAnalysisContext
-	CRDSchemas    map[customResourceDefinitionKey]crdVersionSchema
+	Context                     context.Context
+	ProjectRoot                 string
+	filesystem                  *projectFilesystem
+	Dependencies                *dependency.Lock
+	HelmOperation               string
+	AllowNondeterministicOutput bool
+	Analysis                    *TypeAnalysisContext
+	CRDSchemas                  map[customResourceDefinitionKey]crdVersionSchema
 }
 
 func valueStringField(value Value, key string) (string, bool) {

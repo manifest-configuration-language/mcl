@@ -717,6 +717,136 @@ func TestCloneChartWithoutNotesDoesNotMutateSource(t *testing.T) {
 	}
 }
 
+func TestRenderVerifiedTracksNondeterministicFunctions(t *testing.T) {
+	t.Parallel()
+	chart := Chart{source: &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("{{- $ca := genCA \"test\" 365 -}}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stable\n")}},
+	}}
+	verified, err := RenderVerified(t.Context(), chart, map[string]any{}, false)
+	if err != nil {
+		t.Fatalf("render verified chart with unused genCA result: %v", err)
+	}
+	if !verified.UsedNondeterminism {
+		t.Fatal("RenderVerified() did not report genCA call")
+	}
+	if verified.Templates["test/templates/configmap.yaml"] == "" {
+		t.Fatal("RenderVerified() did not return rendered template")
+	}
+}
+
+func TestRenderVerifiedRejectsNondeterministicManifestAndCanAllowIt(t *testing.T) {
+	t.Parallel()
+	chart := Chart{source: &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: "templates/secret.yaml", Data: []byte("apiVersion: v1\nkind: Secret\nmetadata:\n  name: generated\ndata:\n  ca.crt: {{ (genCA \"test\" 365).Cert | b64enc | quote }}\n")}},
+	}}
+	if _, err := RenderVerified(t.Context(), chart, map[string]any{}, false); err == nil || !strings.Contains(err.Error(), "MCL-HELM-NONDETERMINISTIC") || !strings.Contains(err.Error(), "test/templates/secret.yaml") {
+		t.Fatalf("RenderVerified() error = %v, want safe nondeterminism diagnostic with template path", err)
+	}
+	allowed, err := RenderVerified(t.Context(), chart, map[string]any{}, true)
+	if err != nil {
+		t.Fatalf("RenderVerified() with nondeterministic output allowed: %v", err)
+	}
+	if !allowed.UsedNondeterminism || !strings.Contains(allowed.Templates["test/templates/secret.yaml"], "ca.crt:") {
+		t.Fatal("allowed render did not return generated Secret")
+	}
+}
+
+func TestRenderVerifiedSupportsNondeterministicNonStringResults(t *testing.T) {
+	t.Parallel()
+	chart := Chart{source: &v2.Chart{
+		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("{{- define \"random\" }}{{ randAlpha 4 }}{{ end }}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: generated\ndata:\n  number: {{ randInt 1 10 | quote }}\n  uuid: {{ uuidv4 | quote }}\n  shuffled: {{ shuffle \"abcd\" | quote }}\n  included: {{ include \"random\" . | quote }}\n  templated: {{ tpl \"{{ randAlphaNum 4 }}\" . | quote }}\n")}},
+	}}
+	result, err := RenderVerified(t.Context(), chart, map[string]any{}, true)
+	if err != nil {
+		t.Fatalf("RenderVerified() with non-string Sprig results: %v", err)
+	}
+	if !result.UsedNondeterminism {
+		t.Fatal("RenderVerified() did not observe random functions")
+	}
+}
+
+func TestTrustManagerV0240HelmCertNondeterminism(t *testing.T) {
+	t.Parallel()
+	archive, err := os.ReadFile("testdata/trust-manager-v0.24.0.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const trustManagerChartDigest = "0de4bbef2d1a013bd4a91c6f59a9cb0273dda9a785e018a9a16e8f2b096af823"
+	if got := content.SHA256(archive); got != trustManagerChartDigest {
+		t.Fatalf("trust-manager v0.24.0 chart digest = %s, want %s", got, trustManagerChartDigest)
+	}
+	loaded, err := loader.LoadArchive(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("load unmodified trust-manager chart: %v", err)
+	}
+	if loaded.Metadata == nil || loaded.Metadata.Version != "v0.24.0" {
+		t.Fatalf("trust-manager chart version = %#v, want v0.24.0", loaded.Metadata)
+	}
+	for _, test := range []struct {
+		name    string
+		enabled bool
+		allow   bool
+		wantErr bool
+	}{
+		{name: "helmCert disabled", enabled: false},
+		{name: "helmCert enabled rejects different outputs", enabled: true, wantErr: true},
+		{name: "helmCert enabled allows nondeterministic output", enabled: true, allow: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prepared, err := Prepare(Chart{source: loaded}, RenderOptions{
+				KubeVersion: "1.36.0", APIVersions: []string{}, Values: map[string]any{
+					"app": map[string]any{"webhook": map[string]any{"tls": map[string]any{"helmCert": map[string]any{"enabled": test.enabled}}}},
+				},
+			}, t.TempDir())
+			if err != nil {
+				t.Fatalf("prepare trust-manager values: %v", err)
+			}
+			result, err := RenderVerified(t.Context(), prepared.Chart, prepared.Values, test.allow)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("RenderVerified() error = %v, want error %v", err, test.wantErr)
+			}
+			if test.wantErr {
+				if !strings.Contains(err.Error(), "MCL-HELM-NONDETERMINISTIC") || !strings.Contains(err.Error(), "trust-manager/templates/") {
+					t.Fatalf("nondeterministic error = %v, want stable code and template path", err)
+				}
+				return
+			}
+			if len(result.Templates) == 0 {
+				t.Fatal("RenderVerified() returned no rendered templates")
+			}
+		})
+	}
+}
+
+func BenchmarkRenderVerified(b *testing.B) {
+	for _, benchmark := range []struct {
+		name     string
+		template string
+		allow    bool
+	}{
+		{name: "stable", template: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stable\n"},
+		{name: "genCA-unused", template: "{{- $ca := genCA \"test\" 365 -}}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stable\n"},
+		{name: "nondeterministic-output-allowed", template: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: generated\ndata:\n  value: {{ randAlphaNum 24 | quote }}\n", allow: true},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			chart := Chart{source: &v2.Chart{
+				Metadata:  &v2.Metadata{Name: "bench", Version: "1.0.0", APIVersion: v2.APIVersionV2},
+				Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte(benchmark.template)}},
+			}}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if _, err := RenderVerified(b.Context(), chart, map[string]any{}, benchmark.allow); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestHelmLookupMatchesNamespaceAndScope(t *testing.T) {
 	t.Parallel()
 	resources := []map[string]any{
@@ -728,7 +858,11 @@ func TestHelmLookupMatchesNamespaceAndScope(t *testing.T) {
 		LookupResourceDescriptor{Kind: "ConfigMap", Scope: LookupResourceScopeNamespaced},
 		LookupResourceDescriptor{Kind: "Namespace", Scope: LookupResourceScopeCluster},
 	)
-	lookup := hermeticFunctions(lookupContext)["lookup"].(func(string, string, string, string) (map[string]any, error))
+	functions, err := hermeticFunctions(lookupContext, func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookup := functions["lookup"].(func(string, string, string, string) (map[string]any, error))
 
 	teamA, err := lookup("v1", "ConfigMap", "team-a", "")
 	if err != nil {

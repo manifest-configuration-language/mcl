@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/manifest-configuration-language/mcl/internal/helmrender"
 )
 
 func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
@@ -50,6 +52,90 @@ func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 	}
 	if kind != "ConfigMap" || name != "mcl" {
 		t.Fatalf("rendered resource kind/name = %q/%q; want ConfigMap/mcl", kind, name)
+	}
+}
+
+func TestHelmRenderAllowNondeterministicOutput(t *testing.T) {
+	t.Parallel()
+	root := filepath.Clean(t.TempDir())
+	files := fstest.MapFS{
+		"charts/app/Chart.yaml":            &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 1.0.0\n")},
+		"charts/app/templates/secret.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: Secret\nmetadata:\n  name: generated\ndata:\n  value: {{ randAlphaNum 24 | b64enc | quote }}\n")},
+	}
+	arguments := []RuntimeValue{
+		{Value: runtimeValueData{Kind: String, Text: "charts/app"}},
+		{Value: runtimeValueData{Kind: Map}, Map: []RuntimeEntry{{
+			Key: "kubeVersion", Value: RuntimeValue{Value: runtimeValueData{Kind: String, Text: "1.36.0"}},
+		}, {
+			Key: "apiVersions", Value: RuntimeValue{Value: runtimeValueData{Kind: List}},
+		}}},
+	}
+	module := &ModuleContext{Context: t.Context(), ProjectRoot: root, filesystem: newProjectFilesystem(root, files)}
+	loaded, err := helmrender.Load(helmrender.LoadRequest{
+		Source: "charts/app", ProjectRoot: root, SourcePath: filepath.Join(root, "main.mcl"), SourceFS: module.filesystem.files,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepare := func(allow bool) helmrender.Prepared {
+		prepared, err := helmrender.Prepare(loaded, helmrender.RenderOptions{
+			Values: map[string]any{}, KubeVersion: "1.36.0", APIVersions: []string{}, AllowNondeterministicOutput: allow,
+		}, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return prepared
+	}
+	allowPrepared := prepare(true)
+	defaultPrepared := prepare(false)
+	if allowPrepared.CacheKey == defaultPrepared.CacheKey {
+		t.Fatal("render cache key does not include nondeterministic-output mode")
+	}
+	state := &EvaluationState{SourcePath: filepath.Join(root, "main.mcl"), Module: module}
+	if _, err := helmRender(arguments, state); err == nil || !strings.Contains(err.Error(), "MCL-HELM-NONDETERMINISTIC") {
+		t.Fatalf("helm.render error = %v, want nondeterministic output error", err)
+	}
+	module.AllowNondeterministicOutput = true
+	bundle, err := helmRender(arguments, state)
+	if err != nil {
+		t.Fatalf("helm.render with nondeterministic output allowed: %v", err)
+	}
+	if bundle.Kind() != AdapterBundle || len(bundle.List) != 1 {
+		t.Fatalf("helm.render returned %#v, want one generated Secret", bundle)
+	}
+	secret := bundle.List[0]
+	if secret.Kind() != Map {
+		t.Fatalf("helm.render did not return a Secret map: %#v", secret)
+	}
+	foundGeneratedValue := false
+	for _, field := range secret.Entries() {
+		if field.Key == "data" {
+			for _, dataField := range field.Value.Entries() {
+				if dataField.Key == "value" && dataField.Value.Kind() == String && dataField.Value.TextValue() != "" {
+					foundGeneratedValue = true
+				}
+			}
+		}
+	}
+	if !foundGeneratedValue {
+		t.Fatalf("helm.render did not return generated Secret data: %#v", secret)
+	}
+	if _, cached := helmRenderedCache.get(allowPrepared.CacheKey); cached {
+		t.Fatal("nondeterministic output was stored in the Helm render cache")
+	}
+}
+
+func BenchmarkHelmRenderValidatedCacheHit(b *testing.B) {
+	const cacheKey = "benchmark-validated-helm-render-cache-hit"
+	value := helmRenderCacheValue{rendered: map[string]string{"chart/templates/configmap.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cached\n"}}
+	helmRenderedCache.set(cacheKey, value, helmRenderCacheWeight(value))
+	prepared := helmPreparedRender{cacheKey: cacheKey, cacheKeyAvailable: true}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := renderHelmTemplates(b.Context(), prepared, nil); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

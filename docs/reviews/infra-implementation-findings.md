@@ -1,5 +1,0 @@
-# infra実装上の指摘
-
-## 外部CRD Schema Catalogの設定
-
-`k8s/mcl.toml`にCRD Schema Catalogが設定されておらず、CRD定義もプロジェクト内にありません。MCLは同じ評価結果にもプロジェクト設定にもSchemaがないGVKを拒否するため、ExternalSecretやHTTPRouteなどのCRDを使うアプリを単独で評価できません。既存スナップショットには使用GVKのうち52件のCRDが含まれていますが、Ciliumの`CiliumLoadBalancerIPPool`と`CiliumNetworkPolicy`、PingCAPの`TidbCluster`は定義がありません。VolumeSnapshotやArgo CDのCRDは固定済みGitまたはChartから取得できますが、Argo CDの定義はHelmテンプレートです。全CRDスナップショットをそのまま複製すると約27MBになるため、remote source対応後に各Schemaの固定バージョンと必要なGVKをCatalogへ登録する必要があります。

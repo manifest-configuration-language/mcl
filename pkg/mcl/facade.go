@@ -36,6 +36,9 @@ func DiffBundlesWithCatalogs(before, after Bundle, beforeCatalog, afterCatalog K
 
 type Bundle = engine.Bundle
 
+// EvaluationOptions controls execution behavior for an MCL evaluation.
+type EvaluationOptions = engine.EvaluationOptions
+
 type Artifact = engine.Artifact
 
 type Lifecycle = engine.Lifecycle
@@ -84,6 +87,16 @@ func EvaluateFileWithParametersContext(ctx context.Context, path string, paramet
 	return engine.EvaluateFileWithParametersContext(ctx, path, parameters)
 }
 
+// EvaluateFileWithOptionsContext evaluates an MCL file with execution options.
+func EvaluateFileWithOptionsContext(ctx context.Context, path string, options EvaluationOptions) (Bundle, error) {
+	return engine.EvaluateFileWithOptionsContext(ctx, path, options)
+}
+
+// EvaluateFileWithParametersAndOptionsContext evaluates an MCL file with runtime parameters and execution options.
+func EvaluateFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
+	return engine.EvaluateFileWithParametersAndOptionsContext(ctx, path, parameters, options)
+}
+
 // EvaluateFileForOperation は指定した操作向けにMCLファイルを評価します。
 func EvaluateFileForOperation(path, operation string) (Bundle, error) {
 	return engine.EvaluateFileForOperation(path, operation)
@@ -99,6 +112,16 @@ func EvaluateFileForOperationWithParametersContext(ctx context.Context, path, op
 	return engine.EvaluateFileForOperationWithParametersContext(ctx, path, operation, parameters)
 }
 
+// EvaluateFileForOperationWithOptionsContext evaluates an MCL file for an operation with execution options.
+func EvaluateFileForOperationWithOptionsContext(ctx context.Context, path, operation string, options EvaluationOptions) (Bundle, error) {
+	return engine.EvaluateFileForOperationWithOptionsContext(ctx, path, operation, options)
+}
+
+// EvaluateFileForOperationWithParametersAndOptionsContext evaluates an MCL file for an operation with runtime parameters and execution options.
+func EvaluateFileForOperationWithParametersAndOptionsContext(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
+	return engine.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, options)
+}
+
 func UpdateFile(path string) error { return engine.UpdateFile(path) }
 
 // UpdateFileContextは呼び出し元のContextを使って依存ロックを更新します。
@@ -109,6 +132,11 @@ func UpdateFileContext(ctx context.Context, path string) error {
 // UpdateFileWithParametersContext updates dependencies after evaluating an MCL file with explicit runtime parameters.
 func UpdateFileWithParametersContext(ctx context.Context, path string, parameters map[string]jsontext.Value) error {
 	return engine.UpdateFileWithParametersContext(ctx, path, parameters)
+}
+
+// UpdateFileWithParametersAndOptionsContext updates dependencies with runtime parameters and execution options.
+func UpdateFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) error {
+	return engine.UpdateFileWithParametersAndOptionsContext(ctx, path, parameters, options)
 }
 
 func EvaluateSource(path, source string) (Bundle, error) {

@@ -96,20 +96,22 @@ func cloneHelmRenderValue(value any) any {
 type helmLoadedChart = helmrender.Chart
 
 type helmPreparedRender struct {
-	chart             helmrender.Chart
-	values            map[string]any
-	mappingValues     map[string]any
-	chartRoot         string
-	chartSourcePath   string
-	chartSourceFiles  map[string][]byte
-	cacheKey          string
-	cacheKeyAvailable bool
+	chart                       helmrender.Chart
+	values                      map[string]any
+	mappingValues               map[string]any
+	chartRoot                   string
+	chartSourcePath             string
+	chartSourceFiles            map[string][]byte
+	cacheKey                    string
+	cacheKeyAvailable           bool
+	allowNondeterministicOutput bool
 }
 
 type helmRenderedChart struct {
-	prepared      helmPreparedRender
-	templates     map[string]string
-	fieldMappings map[string][]helmrender.FieldMapping
+	prepared           helmPreparedRender
+	templates          map[string]string
+	fieldMappings      map[string][]helmrender.FieldMapping
+	usedNondeterminism bool
 }
 
 func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
@@ -142,6 +144,7 @@ func helmRender(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue,
 	if err != nil {
 		return RuntimeValue{}, err
 	}
+	options.allowNondeterministicOutput = state != nil && state.Module != nil && state.Module.AllowNondeterministicOutput
 	if operationOverride != "" {
 		options.operation = operationOverride
 	}
@@ -181,6 +184,7 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 		Values: options.values, ReleaseName: options.releaseName, Namespace: options.namespace,
 		Operation: options.operation, Revision: options.revision, KubeVersion: options.kubeVersion,
 		APIVersions: options.apiVersions, Now: options.now, LookupResources: options.lookupResources,
+		AllowNondeterministicOutput: options.allowNondeterministicOutput,
 	}, projectRoot)
 	if err != nil {
 		if helmrender.IsValuesError(err) {
@@ -197,6 +201,7 @@ func prepareHelmRender(loaded helmLoadedChart, options helmRenderOptions, projec
 		chartRoot: prepared.ChartRoot, chartSourcePath: prepared.ChartSourcePath,
 		chartSourceFiles: prepared.ChartSourceFiles,
 		cacheKey:         prepared.CacheKey, cacheKeyAvailable: prepared.CacheKeyAvailable,
+		allowNondeterministicOutput: options.allowNondeterministicOutput,
 	}, nil
 }
 
@@ -209,7 +214,7 @@ func renderHelmTemplates(ctx context.Context, prepared helmPreparedRender, alloc
 		}
 	}
 	if result.templates == nil {
-		rendered, err := helmrender.Render(ctx, prepared.chart, prepared.values)
+		rendered, err := helmrender.RenderVerified(ctx, prepared.chart, prepared.values, prepared.allowNondeterministicOutput)
 		if err != nil {
 			renderError := fmt.Errorf("render Helm chart: %w", err)
 			if diagnostic, ok := helmTemplateSourceDiagnostic(err, prepared.chartSourcePath, prepared.chartRoot, prepared.chartSourceFiles, filesystems...); ok {
@@ -218,12 +223,15 @@ func renderHelmTemplates(ctx context.Context, prepared helmPreparedRender, alloc
 
 			return helmRenderedChart{}, renderError
 		}
-		result.templates = rendered
-		result.fieldMappings, err = helmRenderedFieldMappings(ctx, prepared.chart, prepared.mappingValues, rendered, allocations)
-		if err != nil {
-			return helmRenderedChart{}, err
+		result.templates = rendered.Templates
+		result.usedNondeterminism = rendered.UsedNondeterminism
+		if !prepared.allowNondeterministicOutput || !rendered.UsedNondeterminism {
+			result.fieldMappings, err = helmRenderedFieldMappings(ctx, prepared.chart, prepared.mappingValues, rendered.Templates, allocations)
+			if err != nil {
+				return helmRenderedChart{}, err
+			}
 		}
-		if prepared.cacheKeyAvailable {
+		if prepared.cacheKeyAvailable && (!prepared.allowNondeterministicOutput || !rendered.UsedNondeterminism) {
 			cached := helmRenderCacheValue{
 				rendered: cloneHelmRenderedTemplates(result.templates), fieldMappings: cloneHelmFieldMappings(result.fieldMappings),
 			}
@@ -539,19 +547,20 @@ func helmCleanupPolicy(policy string) (string, bool) {
 }
 
 type helmRenderOptions struct {
-	values                    map[string]any
-	lookupResources           []map[string]any
-	lookupResourceDescriptors []helmrender.LookupResourceDescriptor
-	lookupResourcesSet        bool
-	valuesSource              RuntimeValue
-	now                       *time.Time
-	releaseName               string
-	namespace                 string
-	operation                 string
-	revision                  int
-	kubeVersion               string
-	apiVersions               []string
-	version                   string
+	values                      map[string]any
+	lookupResources             []map[string]any
+	lookupResourceDescriptors   []helmrender.LookupResourceDescriptor
+	lookupResourcesSet          bool
+	valuesSource                RuntimeValue
+	now                         *time.Time
+	releaseName                 string
+	namespace                   string
+	operation                   string
+	revision                    int
+	kubeVersion                 string
+	apiVersions                 []string
+	version                     string
+	allowNondeterministicOutput bool
 }
 
 func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
