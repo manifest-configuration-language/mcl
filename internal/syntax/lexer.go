@@ -30,12 +30,27 @@ type sourceToken struct {
 }
 
 type sourceSpanLexemeCursor struct {
-	tokens []sourceToken
-	index  int
-	bounds SourceSpan
+	tokens           []sourceToken
+	spanTokenIndexes []int
+	index            int
+	bounds           SourceSpan
 }
 
 func (cursor *sourceSpanLexemeCursor) next() (sourceToken, bool) {
+	if cursor.spanTokenIndexes != nil {
+		for cursor.index < len(cursor.spanTokenIndexes) {
+			token := cursor.tokens[cursor.spanTokenIndexes[cursor.index]]
+			cursor.index++
+			if token.span.Start >= cursor.bounds.End {
+				return sourceToken{}, false
+			}
+			if token.kind == sourceTokenLexeme && token.span.Start >= cursor.bounds.Start && token.span.End <= cursor.bounds.End {
+				return token, true
+			}
+		}
+
+		return sourceToken{}, false
+	}
 	for cursor.index < len(cursor.tokens) {
 		token := cursor.tokens[cursor.index]
 		cursor.index++

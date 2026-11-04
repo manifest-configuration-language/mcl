@@ -66,6 +66,7 @@ type ModuleContext struct {
 	Dependencies  *dependency.Lock
 	HelmOperation string
 	Analysis      *TypeAnalysisContext
+	CRDSchemas    map[customResourceDefinitionKey]crdVersionSchema
 }
 
 func valueStringField(value Value, key string) (string, bool) {

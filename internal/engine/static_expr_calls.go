@@ -279,6 +279,14 @@ func inferStaticCryptoSHA256(_ []Expr, argumentTypes []ResolvedType, known []boo
 	return ResolvedType{Name: typeString}, true, nil
 }
 
+func inferStaticJSONEncode(_ []Expr, argumentTypes []ResolvedType, known []bool, _ map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 1 || len(known) != 1 {
+		return ResolvedType{}, false, nil
+	}
+
+	return ResolvedType{Name: typeString}, true, nil
+}
+
 func inferStaticFNV1a64(_ []Expr, argumentTypes []ResolvedType, known []bool, _ map[string]ResolvedType) (ResolvedType, bool, error) {
 	if len(argumentTypes) != 1 || len(known) != 1 {
 		return ResolvedType{}, false, nil
@@ -671,6 +679,8 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 		stringArguments = 1
 	case fnKustomizeBuild:
 		stringArguments = 3
+	case fnManifestLoadOne:
+		stringArguments = 1
 	}
 	for index := range stringArguments {
 		if known[index] && argumentTypes[index].Name != typeString && argumentTypes[index].Name != typeAny {
@@ -681,6 +691,10 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 		return ResolvedType{}, false, errors.New("helm.render options must be a Map")
 	}
 	anyType := ResolvedType{Name: typeAny}
+
+	if item.name == fnManifestLoadOne {
+		return anyType, true, nil
+	}
 
 	return ResolvedType{Name: typeList, Element: &anyType}, true, nil
 }

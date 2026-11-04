@@ -6,6 +6,7 @@ type SourceSpan = syntax.SourceSpan
 
 type (
 	Expr                  = syntax.Expr
+	TypeExpr              = syntax.TypeExpr
 	ExprBase              = syntax.ExprBase
 	ExprMapEntry          = syntax.ExprMapEntry
 	ExprCallDelimiters    = syntax.ExprCallDelimiters

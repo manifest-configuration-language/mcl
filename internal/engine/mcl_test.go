@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -391,6 +392,64 @@ func TestLintTracksValuesReachableFromEmittedBundle(t *testing.T) {
 	edit := actions[0].Edits[0]
 	if got := source[edit.Span.Start:edit.Span.End]; got != `let unused = "unused"` || edit.NewText != "" {
 		t.Fatalf("remove-definition edit = %#v (%q), want an empty replacement for the declaration", edit, got)
+	}
+}
+
+func TestLintReportsUndefinedNamesAndRespectsFunctionScopes(t *testing.T) {
+	t.Parallel()
+	module, err := ParseAST("import \"std:list\" as lists\nlet values = [1, 2]\nlet mapped = lists.map(values, fn(value) => value)\nlet missing = manifest.load(\"./values.yaml\")\nemit mapped\nemit missing\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := LintAST(module)
+	if len(diagnostics) != 1 || diagnostics[0].Code != "MCL-UNDEFINED" || diagnostics[0].Message != `undefined name "manifest"` {
+		t.Fatalf("LintAST() = %#v, want only the missing manifest import diagnostic", diagnostics)
+	}
+}
+
+func TestMappedFunctionCanReadFieldsFromTypedMapParameters(t *testing.T) {
+	t.Parallel()
+	source := "import \"std:list\" as lists\n" +
+		"let inputs: List<Map<String, String>> =\n" +
+		"  - name: \"first\"\n" +
+		"  - name: \"second\"\n" +
+		"fn resource(input: Map<String, String>) -> Map<String, Any> = node:\n" +
+		"  apiVersion: \"v1\"\n" +
+		"  kind: \"ConfigMap\"\n" +
+		"  metadata:\n" +
+		"    name: input.name\n" +
+		"let resources = lists.map(inputs, resource)\n" +
+		"emit each resources\n"
+	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want mapped resource generation to succeed", err)
+	}
+}
+
+func TestBuiltinKubernetesSchemaDiagnosticPointsToInvalidField(t *testing.T) {
+	t.Parallel()
+	source := "let pod = node:\n" +
+		"  apiVersion: \"v1\"\n" +
+		"  kind: \"Pod\"\n" +
+		"  metadata:\n" +
+		"    name: \"sample\"\n" +
+		"  spec:\n" +
+		"    containers:\n" +
+		"      - name: \"app\"\n" +
+		"        image: \"nginx\"\n" +
+		"        ports:\n" +
+		"          - containerPort: \"8080\"\n" +
+		"emit pod\n"
+	path := filepath.Join(t.TempDir(), "main.mcl")
+	_, err := EvaluateSource(path, source)
+	if err == nil {
+		t.Fatal("EvaluateSource() succeeded, want a built-in Kubernetes schema error")
+	}
+	diagnostic, ok := errors.AsType[SourceDiagnosticError](err)
+	if !ok {
+		t.Fatalf("EvaluateSource() error = %T %v, want a source diagnostic", err, err)
+	}
+	if diagnostic.Code != "MCL-K8S" || diagnostic.Path != path || source[diagnostic.Span.Start:diagnostic.Span.End] != "\"8080\"" {
+		t.Fatalf("diagnostic = %#v, source span = %q; want MCL-K8S at the invalid containerPort", diagnostic, source[diagnostic.Span.Start:diagnostic.Span.End])
 	}
 }
 
@@ -1020,6 +1079,28 @@ emit crypto.sha256("value", ` + hexLength + `)
 				t.Fatalf("EvaluateSource() error = %v, want invalid hexLength diagnostic", err)
 			}
 		})
+	}
+}
+
+func TestJSONEncodeIsDeterministic(t *testing.T) {
+	t.Parallel()
+	source := `import "std:json" as json
+let first =
+  b: 2
+  a: "hello"
+let second =
+  a: "hello"
+  b: 2
+let firstEncoded = json.encode(first)
+let secondEncoded = json.encode(second)
+emit firstEncoded == secondEncoded
+`
+	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != Bool || !bundle.Artifacts[0].Value.Bool {
+		t.Fatalf("json.encode result = %#v, want true", bundle.Artifacts)
 	}
 }
 

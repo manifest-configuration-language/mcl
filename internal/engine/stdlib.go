@@ -94,6 +94,7 @@ var builtinRegistry = []builtin{
 	{name: fnClone, module: "std:core", exportName: fnClone, parameters: []string{paramValue}, documentation: "値のディープコピーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCloneBuiltin, pureEvaluation: evaluateCloneBuiltin, deferred: builtinDeferredEvaluationClone},
 	{name: fnContains, module: stdlibListModule, exportName: fnContains, parameters: []string{paramValues, paramValue}, documentation: "リスト内の値、または文字列内の部分文字列を検索します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticContainsBuiltin, pureEvaluation: evaluateContainsBuiltin},
 	{name: fnCryptoSHA256, module: "std:crypto", exportName: "sha256", parameters: []string{paramValue, "hexLength"}, documentation: "値を決定的なJSON bytesへ変換し、指定した16進文字数の小文字SHA-256 digestを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticCryptoSHA256, pureEvaluation: evaluateCryptoSHA256},
+	{name: fnJSONEncode, module: "std:json", exportName: "encode", parameters: []string{paramValue}, documentation: "値を決定的なJSON文字列へ変換します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticJSONEncode, pureEvaluation: evaluateJSONEncode},
 	{name: fnHashFNV1a64, module: "std:hash", exportName: "fnv1a64", parameters: []string{paramValue}, documentation: "値を決定的なJSON bytesへ変換し、非暗号学的なFNV-1a 64-bit digestを小文字16進数で返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticFNV1a64, pureEvaluation: evaluateFNV1a64},
 	{name: fnConcat, module: stdlibListModule, exportName: fnConcat, parameters: []string{"first", "second"}, documentation: "2つのリストを連結します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticConcatBuiltin, pureEvaluation: evaluateConcatBuiltin},
 	{name: fnUnion, module: stdlibListModule, exportName: fnUnion, parameters: []string{"first", "second"}, documentation: "重複を除きながら2つのリストを結合します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticUnionBuiltin, pureEvaluation: evaluateUnionBuiltin},
@@ -107,6 +108,7 @@ var builtinRegistry = []builtin{
 	{name: fnKeyOf, module: "std:map", exportName: fnKeyOf, parameters: []string{"mapping", paramKey}, documentation: "マップに指定したキーが存在することを確認し、そのキーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticKeyOfBuiltin, pureEvaluation: evaluateKeyOfBuiltin},
 	{name: fnKustomizeBuild, module: "std:kustomize", exportName: "build", parameters: []string{paramSource, "revision", "directory"}, documentation: "指定したKustomizeディレクトリをビルドします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, documentation: "指定したソースからManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
+	{name: fnManifestLoadOne, module: "std:manifest", exportName: "loadOne", parameters: []string{paramSource}, documentation: "指定したソースから単一のManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, documentation: "指定したHelmチャートをレンダリングします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, documentation: "値にLifecycleイベントを関連付けます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
 }
@@ -258,6 +260,22 @@ func evaluateCryptoSHA256(arguments []RuntimeValue) (RuntimeValue, error) {
 	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: hex.EncodeToString(digest[:])[:length]}}, nil
 }
 
+func evaluateJSONEncode(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 1 {
+		return RuntimeValue{}, errors.New("json.encode expects a value")
+	}
+	value, err := runtimeValueAsJSON(arguments[0])
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("json.encode value: %w", err)
+	}
+	encoded, err := jsonv2.Marshal(value, jsonv2.Deterministic(true))
+	if err != nil {
+		return RuntimeValue{}, fmt.Errorf("encode json.encode value: %w", err)
+	}
+
+	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: string(encoded)}}, nil
+}
+
 func evaluateFNV1a64(arguments []RuntimeValue) (RuntimeValue, error) {
 	if len(arguments) != 1 {
 		return RuntimeValue{}, errors.New("hash.fnv1a64 expects a value")
@@ -298,6 +316,8 @@ func callRuntimeAdapter(name string, arguments []RuntimeValue, state *Evaluation
 		return kustomizeBuild(arguments, state)
 	case fnManifestLoad:
 		return manifestLoad(arguments, state)
+	case fnManifestLoadOne:
+		return manifestLoadOne(arguments, state)
 	case fnHelmRender:
 		return helmRender(arguments, state)
 	default:

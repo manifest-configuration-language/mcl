@@ -114,6 +114,7 @@ func (p *Parser) expressionTreeSpan(expression Expr) SourceSpan {
 
 type Parser struct {
 	tokens                   []sourceToken
+	spanTokenIndexes         []int
 	tokenIndex               int
 	diagnosticSpan           SourceSpan
 	topLevelLexemeIndex      int
@@ -150,7 +151,13 @@ func parseASTWithTokens(source string) (ModuleAST, []sourceToken, error) {
 }
 
 func parseASTWithLexedTokens(source string, tokens []sourceToken) (module ModuleAST, resultErr error) {
-	parser := Parser{tokens: tokens, source: source, literals: make(map[SourceSpan]string)}
+	spanTokenIndexes := make([]int, 0, len(tokens))
+	for index, token := range tokens {
+		if token.kind == sourceTokenLexeme || token.kind == sourceTokenNewline || token.kind == sourceTokenTrivia {
+			spanTokenIndexes = append(spanTokenIndexes, index)
+		}
+	}
+	parser := Parser{tokens: tokens, spanTokenIndexes: spanTokenIndexes, source: source, literals: make(map[SourceSpan]string)}
 	defer func() {
 		resultErr = syntaxDiagnostic(resultErr, parser.diagnosticSpan)
 	}()
@@ -1416,11 +1423,11 @@ func (p *Parser) sourceTokenLexemesInSpan(span SourceSpan) []sourceToken {
 }
 
 func (p *Parser) sourceSpanLexemeCursor(span SourceSpan) sourceSpanLexemeCursor {
-	index := sort.Search(len(p.tokens), func(index int) bool {
-		return p.tokens[index].span.Start >= span.Start
+	index := sort.Search(len(p.spanTokenIndexes), func(index int) bool {
+		return p.tokens[p.spanTokenIndexes[index]].span.Start >= span.Start
 	})
 
-	return sourceSpanLexemeCursor{tokens: p.tokens, index: index, bounds: span}
+	return sourceSpanLexemeCursor{tokens: p.tokens, spanTokenIndexes: p.spanTokenIndexes, index: index, bounds: span}
 }
 
 func (p *Parser) sourceTokenLexemesInSpanFromStart(span SourceSpan) []sourceToken {
@@ -2019,13 +2026,14 @@ func (p *Parser) expressionCommentSpans(span SourceSpan) ([]SourceSpan, bool) {
 		return nil, false
 	}
 	var spans []SourceSpan
-	firstToken := sort.Search(len(p.tokens), func(index int) bool {
-		return p.tokens[index].span.Start >= span.Start
+	firstToken := sort.Search(len(p.spanTokenIndexes), func(index int) bool {
+		return p.tokens[p.spanTokenIndexes[index]].span.Start >= span.Start
 	})
 	if firstToken > 0 {
 		firstToken--
 	}
-	for _, token := range p.tokens[firstToken:] {
+	for _, tokenIndex := range p.spanTokenIndexes[firstToken:] {
+		token := p.tokens[tokenIndex]
 		if token.span.Start >= span.End {
 			break
 		}
@@ -2130,7 +2138,7 @@ type continuedExpressionDepth struct {
 }
 
 func (scanner *continuedExpressionDepth) scanTokens(parser *Parser, bounds SourceSpan) (int, error) {
-	cursor := sourceSpanLexemeCursor{tokens: parser.tokens, bounds: bounds}
+	cursor := sourceSpanLexemeCursor{tokens: parser.tokens, spanTokenIndexes: parser.spanTokenIndexes, bounds: bounds}
 	for {
 		token, ok := cursor.next()
 		if !ok {

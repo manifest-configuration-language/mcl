@@ -150,12 +150,12 @@ func (p *Parser) sourceListItemLineLexemes(lineToken sourceToken) ([]sourceToken
 		return nil, 0, false
 	}
 	lineEnd := lineToken.span.End
-	firstToken := sort.Search(len(p.tokens), func(index int) bool {
-		return p.tokens[index].span.Start >= lineToken.span.Start
+	firstToken := sort.Search(len(p.spanTokenIndexes), func(index int) bool {
+		return p.tokens[p.spanTokenIndexes[index]].span.Start >= lineToken.span.Start
 	})
 	lineLexemes := make([]sourceToken, 0)
-	for index := firstToken; index < len(p.tokens); index++ {
-		token := p.tokens[index]
+	for _, tokenIndex := range p.spanTokenIndexes[firstToken:] {
+		token := p.tokens[tokenIndex]
 		if token.span.Start >= lineEnd {
 			break
 		}

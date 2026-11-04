@@ -44,6 +44,73 @@ func TestEvaluateProjectSourceReadsDependencyLockFromFilesystem(t *testing.T) {
 	}
 }
 
+func TestEvaluateProjectSourceValidatesAgainstConfiguredCRDSchema(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := fstest.MapFS{
+		"mcl.toml": &fstest.MapFile{Data: []byte("crd_schemas = [\"crds/widget.yaml\"]\n")},
+		"crds/widget.yaml": &fstest.MapFile{Data: []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.test
+spec:
+  group: example.test
+  scope: Namespaced
+  names:
+    plural: widgets
+    singular: widget
+    kind: Widget
+    listKind: WidgetList
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                size:
+                  type: integer
+`)},
+	}
+	for _, test := range []struct {
+		name      string
+		size      string
+		wantError bool
+	}{
+		{name: "valid resource", size: "2"},
+		{name: "invalid field type", size: `"large"`, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			source := "let widget =\n" +
+				"  apiVersion: \"example.test/v1\"\n" +
+				"  kind: \"Widget\"\n" +
+				"  metadata:\n" +
+				"    name: \"sample\"\n" +
+				"  spec:\n" +
+				"    size: " + test.size + "\n" +
+				"emit widget\n"
+			_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, source, files, nil)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "must be of type integer")) {
+				t.Fatalf("EvaluateProjectSourceContext() error = %v, want a CRD schema type error", err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("EvaluateProjectSourceContext() error = %v, want configured CRD schema validation to pass", err)
+			}
+		})
+	}
+}
+
 func TestEvaluateProjectFileUsesRootRelativeFilesystem(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
@@ -80,6 +147,51 @@ func TestEvaluateProjectFileLoadsManifestFromRootRelativeFilesystem(t *testing.T
 		if artifact.Lifecycle.Origin != "fixtures/resources.yaml" {
 			t.Fatalf("Manifest origin = %q, want root-relative source path", artifact.Lifecycle.Origin)
 		}
+	}
+}
+
+func TestEvaluateProjectFileLoadsOneManifestDocument(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := fstest.MapFS{
+		projectFileEntrypoint: &fstest.MapFile{Data: []byte("import \"std:manifest\" as manifest\nemit manifest.loadOne(\"./fixtures/one.yaml\")\n")},
+		"fixtures/one.yaml":   &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\n")},
+	}
+
+	bundle, err := EvaluateProjectFileContext(t.Context(), root, projectFileEntrypoint, files)
+	if err != nil {
+		t.Fatalf("evaluate project file with one Manifest: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != Map {
+		t.Fatalf("project file bundle = %#v, want one Map artifact", bundle.Artifacts)
+	}
+	if got, want := bundle.Artifacts[0].Lifecycle.Origin, "fixtures/one.yaml"; got != want {
+		t.Fatalf("Manifest origin = %q, want %q", got, want)
+	}
+}
+
+func TestEvaluateProjectFileLoadOneRequiresExactlyOneDocument(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	for _, test := range []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "zero", data: "", want: "got 0"},
+		{name: "multiple", data: "kind: ConfigMap\n---\nkind: Service\n", want: "got 2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			files := fstest.MapFS{
+				projectFileEntrypoint: &fstest.MapFile{Data: []byte("import \"std:manifest\" as manifest\nemit manifest.loadOne(\"input.yaml\")\n")},
+				"input.yaml":          &fstest.MapFile{Data: []byte(test.data)},
+			}
+			_, err := EvaluateProjectFileContext(t.Context(), root, projectFileEntrypoint, files)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("evaluate project file with %s Manifest: error = %v, want %q", test.name, err, test.want)
+			}
+		})
 	}
 }
 

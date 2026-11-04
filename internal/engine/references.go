@@ -262,7 +262,11 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 	if validationContext == nil {
 		validationContext = context.Background()
 	}
-	customSchemas, err := validateRuntimeBundleCustomResources(validationContext, bundle.Artifacts)
+	var catalog map[customResourceDefinitionKey]crdVersionSchema
+	if state.Module != nil {
+		catalog = state.Module.CRDSchemas
+	}
+	customSchemas, err := validateRuntimeBundleCustomResourcesWithCatalog(validationContext, bundle.Artifacts, catalog)
 	if err != nil {
 		return err
 	}

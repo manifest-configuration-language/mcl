@@ -47,6 +47,12 @@ type diagnostic struct {
 	RelatedInformation []diagnosticRelatedInformation `json:"relatedInformation,omitempty"`
 }
 
+type diagnosticIdentity struct {
+	code, message          string
+	startLine, startColumn int
+	endLine, endColumn     int
+}
+
 func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string, includeEvaluation bool) []diagnostic {
 	byURI, _ := s.diagnosticsByURIForDocument(ctx, uri, source, includeEvaluation)
 	diagnosticURIs := make([]string, 0, len(byURI))
@@ -64,7 +70,20 @@ func (s *server) diagnosticsForDocument(ctx context.Context, uri, source string,
 
 func (s *server) diagnosticsByURIForDocument(ctx context.Context, uri, source string, includeEvaluation bool) (map[string][]diagnostic, []string) {
 	diagnostics := make(map[string][]diagnostic)
+	seen := make(map[string]map[diagnosticIdentity]struct{})
 	appendDiagnostic := func(uri string, value diagnostic) {
+		identity := diagnosticIdentity{
+			code: value.Code, message: value.Message,
+			startLine: value.Range.Start.Line, startColumn: value.Range.Start.Character,
+			endLine: value.Range.End.Line, endColumn: value.Range.End.Character,
+		}
+		if seen[uri] == nil {
+			seen[uri] = make(map[diagnosticIdentity]struct{})
+		}
+		if _, exists := seen[uri][identity]; exists {
+			return
+		}
+		seen[uri][identity] = struct{}{}
 		diagnostics[uri] = append(diagnostics[uri], value)
 	}
 	indices := map[string]*sourceindex.Index{uri: sourceindex.New(source)}

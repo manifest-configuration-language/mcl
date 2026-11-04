@@ -47,6 +47,45 @@ func TestFormatSourcePreservesNestedListConditionalBranches(t *testing.T) {
 	}
 }
 
+func TestParseASTHandlesMultipleExportedNodeFunctions(t *testing.T) {
+	t.Parallel()
+
+	functionTemplate := `export fn FUNCTION(namespace: String) -> Map<String, Any> = node:
+  apiVersion: "external-secrets.io/v1"
+  kind: "ExternalSecret"
+  metadata:
+    name: names.secretName
+    namespace: namespace
+  spec:
+    data: names.secretData
+    refreshInterval: "1m"
+    secretStoreRef:
+      kind: "ClusterSecretStore"
+      name: "onepassword"
+    target:
+      name: names.secretName
+      template:
+        data: names.secretTemplateData
+        engineVersion: "v2"
+        type: "Opaque"
+
+`
+	var source strings.Builder
+	source.WriteString(`import "./names.mcl" as names
+
+`)
+	for _, name := range []string{"first", "second", "third", "fourth", "fifth", "sixth"} {
+		source.WriteString(strings.ReplaceAll(functionTemplate, "FUNCTION", name))
+	}
+	module, err := ParseAST(source.String())
+	if err != nil {
+		t.Fatalf("ParseAST() error = %v, want six exported node functions to parse", err)
+	}
+	if len(module.Nodes) != 7 {
+		t.Fatalf("ParseAST() returned %d nodes, want an import and 6 functions", len(module.Nodes))
+	}
+}
+
 func TestFormatSourcePreservesTriviaAttachmentsAndCRLF(t *testing.T) {
 	t.Parallel()
 

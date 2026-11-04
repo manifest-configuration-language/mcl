@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,18 @@ func manifestLoad(arguments []RuntimeValue, state *EvaluationState) (RuntimeValu
 	}
 
 	return manifestRuntimeBundle(value, Lifecycle{Events: []string{phaseMain}, Origin: loaded.Origin}, loaded.LocalSourcePath, runtimeAllocationBudgetOf(state))
+}
+
+func manifestLoadOne(arguments []RuntimeValue, state *EvaluationState) (RuntimeValue, error) {
+	bundle, err := manifestLoad(arguments, state)
+	if err != nil {
+		return RuntimeValue{}, err
+	}
+	if len(bundle.List) != 1 {
+		return RuntimeValue{}, fmt.Errorf("manifest.loadOne expects exactly one document, got %d", len(bundle.List))
+	}
+
+	return bundle.List[0], nil
 }
 
 func manifestRuntimeBundle(documents RuntimeValue, lifecycle Lifecycle, sourcePath string, allocations *runtimeAllocationBudget) (RuntimeValue, error) {

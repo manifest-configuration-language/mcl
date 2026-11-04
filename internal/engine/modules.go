@@ -58,6 +58,7 @@ type moduleLoader struct {
 	budget        *functionBudget
 	allocations   *runtimeAllocationBudget
 	analysis      *TypeAnalysisContext
+	crdSchemas    map[customResourceDefinitionKey]crdVersionSchema
 }
 
 func runtimeBundleToBundle(runtimeBundle RuntimeBundle) (Bundle, error) {
@@ -1075,12 +1076,17 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	if err != nil {
 		return Bundle{}, err
 	}
+	crdSchemas, err := loadCRDSchemaCatalog(files)
+	if err != nil {
+		return Bundle{}, err
+	}
 	loader := moduleLoader{
 		ctx:  ctx,
 		root: root, files: files, entry: canonical, entryText: string(source),
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
-		analysis: &TypeAnalysisContext{},
+		analysis:   &TypeAnalysisContext{},
+		crdSchemas: crdSchemas,
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(canonical, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	if err != nil {
@@ -1222,6 +1228,10 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 	} else if _, err := files.relativePath(absolute); err != nil {
 		return Bundle{}, nil, fmt.Errorf("resolve entry source %q: %w", absolute, err)
 	}
+	crdSchemas, err := loadCRDSchemaCatalog(files)
+	if err != nil {
+		return Bundle{}, nil, err
+	}
 	canonicalOverlays := make(map[string]string, len(overlays))
 	for overlayPath, overlaySource := range overlays {
 		absoluteOverlay, err := filepath.Abs(overlayPath)
@@ -1255,6 +1265,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		budget:        &functionBudget{},
 		allocations:   &runtimeAllocationBudget{},
 		analysis:      &TypeAnalysisContext{},
+		crdSchemas:    crdSchemas,
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(entry, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	loadedModules := loader.loadedModulePaths()
@@ -1333,7 +1344,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
 	if entry {
 		state.Parameters = maps.Clone(loader.parameters)

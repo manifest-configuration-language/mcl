@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[customResourceDefinitionKey]struct{}) error {
@@ -51,5 +53,53 @@ func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[cus
 		return nil
 	}
 
-	return fmt.Errorf("kubernetes resource %s (%s): %w", identity.kind, apiVersion, errors.Join(validationErrors...))
+	return builtinKubernetesValidationDiagnostic(value, identity.kind, apiVersion, validationErrors)
+}
+
+func builtinKubernetesValidationDiagnostic(value RuntimeValue, kind, apiVersion string, validationErrors []error) error {
+	messages := make([]string, 0, len(validationErrors))
+	var primary RuntimeValue
+	primaryFound := false
+	var related []SourceDiagnosticLocation
+	for _, validationError := range validationErrors {
+		messages = append(messages, validationError.Error())
+		var path []string
+		if fieldError, ok := errors.AsType[*field.Error](validationError); ok {
+			path = customResourceFieldPath(fieldError.Field)
+		} else if schemaError, ok := errors.AsType[*jsonschema.ValidationError](validationError); ok {
+			path = builtinJSONSchemaInstancePath(schemaError)
+		} else if before, _, ok := strings.Cut(validationError.Error(), ": unknown field"); ok {
+			path = customResourceFieldPath(before)
+		}
+		if len(path) == 0 {
+			continue
+		}
+		current, locations := customResourceRuntimeFieldValueAtPath(value, path)
+		related = appendSourceLocations(related, locations, "", SourceSpan{}, "")
+		metadata := current.Metadata()
+		if !primaryFound && metadata.SourcePath != "" && metadata.Span.End > metadata.Span.Start {
+			primary = current
+			primaryFound = true
+		}
+	}
+	message := fmt.Sprintf("kubernetes resource %s (%s): %s", kind, apiVersion, strings.Join(messages, "; "))
+	if primaryFound {
+		metadata := primary.Metadata()
+		related = withoutSourceLocation(related, metadata.SourcePath, metadata.Span)
+
+		return SourceDiagnosticError{Path: metadata.SourcePath, Code: "MCL-K8S", Message: message, Span: metadata.Span, Related: related, Cause: errors.Join(validationErrors...)}
+	}
+
+	return fmt.Errorf("%s: %w", message, errors.Join(validationErrors...))
+}
+
+func builtinJSONSchemaInstancePath(validationError *jsonschema.ValidationError) []string {
+	path := validationError.InstanceLocation
+	for _, cause := range validationError.Causes {
+		if causePath := builtinJSONSchemaInstancePath(cause); len(causePath) > len(path) {
+			path = causePath
+		}
+	}
+
+	return path
 }

@@ -119,6 +119,7 @@ type DiagnosticTextEdit struct {
 }
 
 func LintAST(module ModuleAST) []Diagnostic {
+	diagnostics := lintUndefinedNames(module)
 	type lintDefinition struct {
 		kind     string
 		metadata NodeMetadata
@@ -234,7 +235,6 @@ func LintAST(module ModuleAST) []Diagnostic {
 	for _, root := range roots {
 		visit(root)
 	}
-	var diagnostics []Diagnostic
 	for name, definition := range definitions {
 		if !reachable[name] {
 			diagnostics = append(diagnostics, Diagnostic{

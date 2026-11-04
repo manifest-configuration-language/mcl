@@ -669,6 +669,9 @@ func equalStaticTypes(left, right ResolvedType) bool {
 }
 
 func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedType, resolving map[string]bool) (ResolvedType, bool, bool, bool) {
+	if typeExpr.Name == typeMap && typeExpr.Element != nil {
+		return *typeExpr.Element, true, true, false
+	}
 	if typeExpr.SchemaID != "" && typeExpr.Fields == nil && !typeExpr.OpenRecord {
 		inferred, known := staticSchemaType(nil, make(map[*jsonschema.Schema]bool))
 		if !known {

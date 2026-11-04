@@ -109,22 +109,23 @@ func TestCollectSourceDiagnosticsFromJoinedErrors(t *testing.T) {
 	}
 }
 
-func TestDocumentDiagnosticsSkipEvaluationUntilRequested(t *testing.T) {
+func TestDocumentDiagnosticsFindUndefinedNamesWithoutEvaluation(t *testing.T) {
 	t.Parallel()
 	uri := filePathToURI(filepath.Join(t.TempDir(), "main.mcl"))
 	s := &server{}
 	staticDiagnostics := s.diagnosticsForDocument(t.Context(), uri, "emit missing\n", false)
-	for _, diagnostic := range staticDiagnostics {
-		if strings.Contains(diagnostic.Message, "undefined name") {
-			t.Fatalf("static diagnostics unexpectedly evaluated the source: %#v", staticDiagnostics)
-		}
+	if len(staticDiagnostics) != 1 || !strings.Contains(staticDiagnostics[0].Message, "undefined name") {
+		t.Fatalf("static diagnostics = %#v, want an undefined-name diagnostic without evaluation", staticDiagnostics)
 	}
 	evaluatedDiagnostics := s.diagnosticsForDocument(t.Context(), uri, "emit missing\n", true)
-	foundUndefinedName := slices.ContainsFunc(evaluatedDiagnostics, func(diagnostic diagnostic) bool {
-		return strings.Contains(diagnostic.Message, "undefined name")
-	})
-	if !foundUndefinedName {
-		t.Fatalf("evaluated diagnostics = %#v, want the undefined name error", evaluatedDiagnostics)
+	var undefinedNameCount int
+	for _, diagnostic := range evaluatedDiagnostics {
+		if strings.Contains(diagnostic.Message, "undefined name") {
+			undefinedNameCount++
+		}
+	}
+	if undefinedNameCount != 1 {
+		t.Fatalf("evaluated diagnostics = %#v, want one undefined-name diagnostic", evaluatedDiagnostics)
 	}
 }
 

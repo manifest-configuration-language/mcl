@@ -2,9 +2,11 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -20,12 +22,13 @@ import (
 )
 
 type crdVersionSchema struct {
-	validator  crdvalidation.SchemaValidator
-	structural *structuralschema.Structural
-	typeExpr   *ResolvedType
-	cel        *crdcel.Validator
-	location   SourceDiagnosticLocation
-	served     bool
+	validator   crdvalidation.SchemaValidator
+	structural  *structuralschema.Structural
+	typeExpr    *ResolvedType
+	cel         *crdcel.Validator
+	location    SourceDiagnosticLocation
+	served      bool
+	fingerprint [sha256.Size]byte
 }
 
 type customResourceDefinitionKey struct {
@@ -37,8 +40,11 @@ type customResourceDefinitionKey struct {
 // KubernetesのCustomResourceDefinitionのKind名。
 const kindCustomResourceDefinition = "CustomResourceDefinition"
 
-func validateRuntimeBundleCustomResources(ctx context.Context, artifacts []RuntimeArtifact) (map[customResourceDefinitionKey]struct{}, error) {
-	schemas := make(map[customResourceDefinitionKey]crdVersionSchema)
+func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifacts []RuntimeArtifact, catalog map[customResourceDefinitionKey]crdVersionSchema) (map[customResourceDefinitionKey]struct{}, error) {
+	schemas := maps.Clone(catalog)
+	if schemas == nil {
+		schemas = make(map[customResourceDefinitionKey]crdVersionSchema)
+	}
 	for index := range artifacts {
 		artifact := &artifacts[index]
 		resource := runtimeNodeContents(artifact.Value)
@@ -125,15 +131,17 @@ func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitio
 			return errors.New("each spec.versions entry requires name and Bool served fields")
 		}
 		key := customResourceDefinitionKey{group: group, version: version, kind: kind}
-		if _, duplicate := schemas[key]; duplicate {
-			return fmt.Errorf("duplicate schema for %s %s/%s", kind, group, version)
-		}
 		registered := crdVersionSchema{served: served.BoolValue()}
 		if served.BoolValue() {
 			openAPISchema, location, err := customResourceOpenAPISchemaRuntime(versionEntry)
 			if err != nil {
 				return fmt.Errorf("schema for %s %s/%s: %w", kind, group, version, err)
 			}
+			encodedSchema, err := jsonv2.Marshal(openAPISchema, jsonv2.Deterministic(true))
+			if err != nil {
+				return fmt.Errorf("encode schema for %s %s/%s: %w", kind, group, version, err)
+			}
+			registered.fingerprint = sha256.Sum256(encodedSchema)
 			validator, structural, celValidator, err := compileCRDValidatorJSON(openAPISchema)
 			if err != nil {
 				return fmt.Errorf("compile schema for %s %s/%s: %w", kind, group, version, err)
@@ -144,6 +152,13 @@ func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitio
 			registered.typeExpr = &typeExpr
 			registered.cel = celValidator
 			registered.location = location
+		}
+		if existing, duplicate := schemas[key]; duplicate {
+			if existing.served != registered.served || existing.fingerprint != registered.fingerprint {
+				return fmt.Errorf("conflicting schemas for %s %s/%s", kind, group, version)
+			}
+
+			continue
 		}
 		schemas[key] = registered
 	}
@@ -201,9 +216,13 @@ func customResourceRuntimeValidationDiagnostic(value RuntimeValue, validationErr
 }
 
 func customResourceRuntimeFieldValue(value RuntimeValue, path string) (RuntimeValue, []SourceDiagnosticLocation) {
+	return customResourceRuntimeFieldValueAtPath(value, customResourceFieldPath(path))
+}
+
+func customResourceRuntimeFieldValueAtPath(value RuntimeValue, path []string) (RuntimeValue, []SourceDiagnosticLocation) {
 	current := runtimeNodeContents(value)
 	var related []SourceDiagnosticLocation
-	for _, segment := range customResourceFieldPath(path) {
+	for _, segment := range path {
 		current = runtimeNodeContents(current)
 		metadata := current.Metadata()
 		if current.Kind() == Map || current.Kind() == List || current.Kind() == AdapterBundle {
