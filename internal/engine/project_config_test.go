@@ -26,8 +26,9 @@ func TestLoadCRDSchemaCatalogUsesLockedHTTPSGitAndOCIInputs(t *testing.T) {
 	ociVersion := "1.2.3"
 	httpsCRD := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ignored\n---\n" + projectCRD("https.example.test", "HTTPSWidget", "httpswidgets")
 	gitCRD := projectCRD("git.example.test", "GitWidget", "gitwidgets")
+	gitSecondCRD := projectCRD("git.example.test", "GitGadget", "gitgadgets")
 	ociCRD := projectCRD("oci.example.test", "OCIWidget", "ociwidgets")
-	gitArchive := projectCRDArchive(t, map[string][]byte{"widget.yaml": []byte(gitCRD)})
+	gitArchive := projectCRDArchive(t, map[string][]byte{"widget.yaml": []byte(gitCRD), "gadget.yaml": []byte(gitSecondCRD)})
 	ociArchive := projectHelmChartArchive(t, "operator-chart", ociVersion, map[string][]byte{"widget.yaml": []byte(ociCRD)})
 	gitDigest := content.SHA256(gitArchive)
 	ociDigest := content.SHA256(ociArchive)
@@ -65,13 +66,19 @@ select_kind = "CustomResourceDefinition"
 source = %q
 revision = %q
 directory = %q
-file = "widget.yaml"
+files = ["widget.yaml"]
+
+[[crd_schemas]]
+source = %q
+revision = %q
+directory = %q
+files = ["gadget.yaml"]
 
 [[crd_schemas]]
 source = %q
 version = %q
-file = "widget.yaml"
-`, httpsSource, gitSource, gitRevision, gitDirectory, ociSource, ociVersion))},
+files = ["widget.yaml"]
+`, httpsSource, gitSource, gitRevision, gitDirectory, gitSource, gitRevision, gitDirectory, ociSource, ociVersion))},
 		"mcl.lock": {Data: lockData},
 		filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", content.SHA256([]byte(httpsCRD)))): {Data: []byte(httpsCRD)},
 		filepath.ToSlash(filepath.Join(".mcl", "cache", "sha256", gitDigest)):                        {Data: gitArchive},
@@ -88,6 +95,7 @@ file = "widget.yaml"
 	for _, key := range []customResourceDefinitionKey{
 		{group: "https.example.test", version: "v1", kind: "HTTPSWidget"},
 		{group: "git.example.test", version: "v1", kind: "GitWidget"},
+		{group: "git.example.test", version: "v1", kind: "GitGadget"},
 		{group: "oci.example.test", version: "v1", kind: "OCIWidget"},
 	} {
 		if _, exists := catalog[key]; !exists {

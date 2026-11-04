@@ -560,6 +560,7 @@ const (
 	testChartRepository        = "https://charts.example.test"
 	testChartVersion           = "0.1.0"
 	testExactDependencyVersion = "1.0.0"
+	testIgnoredValue           = "ignored"
 	testKubeVersion            = "1.36.0"
 )
 
@@ -721,7 +722,7 @@ func TestRenderVerifiedTracksNondeterministicFunctions(t *testing.T) {
 	t.Parallel()
 	chart := Chart{source: &v2.Chart{
 		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
-		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("{{- $ca := genCA \"test\" 365 -}}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stable\n")}},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: []byte("{{- $ca := genCA \"test\" 365 -}}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stable\n")}},
 	}}
 	verified, err := RenderVerified(t.Context(), chart, map[string]any{}, false)
 	if err != nil {
@@ -730,7 +731,7 @@ func TestRenderVerifiedTracksNondeterministicFunctions(t *testing.T) {
 	if !verified.UsedNondeterminism {
 		t.Fatal("RenderVerified() did not report genCA call")
 	}
-	if verified.Templates["test/templates/configmap.yaml"] == "" {
+	if verified.Templates["test/"+localTestTemplatePath] == "" {
 		t.Fatal("RenderVerified() did not return rendered template")
 	}
 }
@@ -756,8 +757,8 @@ func TestRenderVerifiedRejectsNondeterministicManifestAndCanAllowIt(t *testing.T
 func TestRenderVerifiedSupportsNondeterministicNonStringResults(t *testing.T) {
 	t.Parallel()
 	chart := Chart{source: &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
-		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("{{- define \"random\" }}{{ randAlpha 4 }}{{ end }}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: generated\ndata:\n  number: {{ randInt 1 10 | quote }}\n  uuid: {{ uuidv4 | quote }}\n  shuffled: {{ shuffle \"abcd\" | quote }}\n  included: {{ include \"random\" . | quote }}\n  templated: {{ tpl \"{{ randAlphaNum 4 }}\" . | quote }}\n")}},
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: []byte("{{- define \"random\" }}{{ randAlpha 4 }}{{ end }}\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: generated\ndata:\n  number: {{ randInt 1 10 | quote }}\n  uuid: {{ uuidv4 | quote }}\n  shuffled: {{ shuffle \"abcd\" | quote }}\n  included: {{ include \"random\" . | quote }}\n  templated: {{ tpl \"{{ randAlphaNum 4 }}\" . | quote }}\n")}},
 	}}
 	result, err := RenderVerified(t.Context(), chart, map[string]any{}, true)
 	if err != nil {
@@ -771,14 +772,14 @@ func TestRenderVerifiedSupportsNondeterministicNonStringResults(t *testing.T) {
 func TestRenderUsesHermeticDateFunctions(t *testing.T) {
 	t.Parallel()
 	chart := Chart{source: &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
-		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("date: {{ date \"2006-01-02 15:04 MST\" 86399 | quote }}\ndateInZone: {{ dateInZone \"2006-01-02 15:04 MST\" 86399 \"Asia/Tokyo\" | quote }}\nhtmlDate: {{ htmlDate 86399 | quote }}\nhtmlDateInZone: {{ htmlDateInZone 86399 \"Asia/Tokyo\" | quote }}\nparsed: {{ date \"2006-01-02 15:04 MST\" (toDate \"2006-01-02 15:04\" \"1970-01-01 12:34\") | quote }}\n")}},
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: []byte("date: {{ date \"2006-01-02 15:04 MST\" 86399 | quote }}\ndateInZone: {{ dateInZone \"2006-01-02 15:04 MST\" 86399 \"Asia/Tokyo\" | quote }}\nhtmlDate: {{ htmlDate 86399 | quote }}\nhtmlDateInZone: {{ htmlDateInZone 86399 \"Asia/Tokyo\" | quote }}\nparsed: {{ date \"2006-01-02 15:04 MST\" (toDate \"2006-01-02 15:04\" \"1970-01-01 12:34\") | quote }}\n")}},
 	}}
 	rendered, err := Render(t.Context(), chart, map[string]any{})
 	if err != nil {
 		t.Fatalf("render deterministic date functions: %v", err)
 	}
-	output := rendered["test/templates/configmap.yaml"]
+	output := rendered["test/"+localTestTemplatePath]
 	for _, expected := range []string{
 		`date: "1970-01-01 23:59 UTC"`,
 		`dateInZone: "1970-01-02 08:59 JST"`,
@@ -804,19 +805,19 @@ func TestRenderUsesHermeticDateFunctions(t *testing.T) {
 func TestRenderSortsSprigKeysAndValues(t *testing.T) {
 	t.Parallel()
 	chart := Chart{source: &v2.Chart{
-		Metadata:  &v2.Metadata{Name: "test", Version: "1.0.0", APIVersion: v2.APIVersionV2},
-		Templates: []*common.File{{Name: "templates/configmap.yaml", Data: []byte("keys: {{ keys .Values.first .Values.second | join \",\" | quote }}\nvalues: {{ values .Values.values | join \",\" | quote }}\n")}},
+		Metadata:  &v2.Metadata{Name: "test", Version: testExactDependencyVersion, APIVersion: v2.APIVersionV2},
+		Templates: []*common.File{{Name: localTestTemplatePath, Data: []byte("keys: {{ keys .Values.first .Values.second | join \",\" | quote }}\nvalues: {{ values .Values.values | join \",\" | quote }}\n")}},
 	}}
 	values := map[string]any{"Values": map[string]any{
-		"first":  map[string]any{"b": "ignored", "a": "ignored"},
-		"second": map[string]any{"c": "ignored", "b": "ignored"},
+		"first":  map[string]any{"b": testIgnoredValue, "a": testIgnoredValue},
+		"second": map[string]any{"c": testIgnoredValue, "b": testIgnoredValue},
 		"values": map[string]any{"z": "last", "a": "first"},
 	}}
 	rendered, err := Render(t.Context(), chart, values)
 	if err != nil {
 		t.Fatalf("render sorted Sprig map functions: %v", err)
 	}
-	output := rendered["test/templates/configmap.yaml"]
+	output := rendered["test/"+localTestTemplatePath]
 	for _, expected := range []string{`keys: "a,b,b,c"`, `values: "first,last"`} {
 		if !strings.Contains(output, expected) {
 			t.Errorf("rendered output %q does not contain %q", output, expected)

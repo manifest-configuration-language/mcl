@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -25,13 +26,23 @@ type projectConfig struct {
 }
 
 type projectCRDSchemaSource struct {
-	Path       string `toml:"path"`
-	File       string `toml:"file"`
-	Source     string `toml:"source"`
-	Revision   string `toml:"revision"`
-	Directory  string `toml:"directory"`
-	Version    string `toml:"version"`
-	SelectKind string `toml:"select_kind"`
+	Path       string   `toml:"path"`
+	Files      []string `toml:"files"`
+	Source     string   `toml:"source"`
+	Revision   string   `toml:"revision"`
+	Directory  string   `toml:"directory"`
+	Version    string   `toml:"version"`
+	SelectKind string   `toml:"select_kind"`
+}
+
+type indexedCRDSchemaSource struct {
+	index  int
+	source projectCRDSchemaSource
+}
+
+type groupedCRDSchemaSource struct {
+	source projectCRDSchemaSource
+	files  []string
 }
 
 type resolvedCRDSchemaFile struct {
@@ -58,21 +69,24 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 		return nil, fmt.Errorf("decode %s: unsupported setting %q", projectConfigFileName, undecoded[0].String())
 	}
 
-	sources := slices.Clone(config.CRDSchemas)
-	slices.SortFunc(sources, func(left, right projectCRDSchemaSource) int {
-		return strings.Compare(crdSchemaSourceKey(left), crdSchemaSourceKey(right))
-	})
-	for index, source := range sources {
+	sources := make([]indexedCRDSchemaSource, len(config.CRDSchemas))
+	for index, source := range config.CRDSchemas {
+		sources[index] = indexedCRDSchemaSource{index: index + 1, source: source}
+	}
+	for _, indexed := range sources {
+		source := indexed.source
 		if err := validateCRDSchemaSource(source); err != nil {
-			return nil, fmt.Errorf("%s crd_schemas entry %d: %w", projectConfigFileName, index+1, err)
+			return nil, fmt.Errorf("%s crd_schemas entry %d: %w", projectConfigFileName, indexed.index, err)
 		}
-		if index > 0 && crdSchemaSourceKey(sources[index-1]) == crdSchemaSourceKey(source) {
-			return nil, fmt.Errorf("%s: duplicate crd_schemas source %q", projectConfigFileName, crdSchemaSourceKey(source))
-		}
+	}
+	groups, err := groupCRDSchemaSources(sources)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", projectConfigFileName, err)
 	}
 
 	catalog := make(map[customResourceDefinitionKey]crdVersionSchema)
-	for _, source := range sources {
+	for _, group := range groups {
+		source := group.source
 		resolvedFiles, err := loadCRDSchemaSource(ctx, files, dependencies, source)
 		if err != nil {
 			return nil, fmt.Errorf("load CRD schema source %q: %w", crdSchemaSourceKey(source), err)
@@ -109,8 +123,45 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 	return catalog, nil
 }
 
+func crdSchemaSourceIdentity(source projectCRDSchemaSource) string {
+	return strings.Join([]string{source.Path, source.Source, source.Revision, source.Directory, source.Version}, "\n")
+}
+
 func crdSchemaSourceKey(source projectCRDSchemaSource) string {
-	return strings.Join([]string{source.Path, source.File, source.Source, source.Revision, source.Directory, source.Version, source.SelectKind}, "\n")
+	return crdSchemaSourceIdentity(source)
+}
+
+func groupCRDSchemaSources(sources []indexedCRDSchemaSource) ([]groupedCRDSchemaSource, error) {
+	groupsByIdentity := make(map[string]*groupedCRDSchemaSource, len(sources))
+	for _, indexed := range sources {
+		source := indexed.source
+		key := crdSchemaSourceIdentity(source)
+		group := groupsByIdentity[key]
+		if group == nil {
+			group = &groupedCRDSchemaSource{source: source}
+			groupsByIdentity[key] = group
+		} else if group.source.SelectKind != source.SelectKind {
+			return nil, fmt.Errorf("crd_schemas entry %d has a conflicting select_kind for source %q", indexed.index, key)
+		}
+		for _, file := range source.Files {
+			if slices.Contains(group.files, file) {
+				return nil, fmt.Errorf("crd_schemas entry %d repeats file %q for source %q", indexed.index, file, key)
+			}
+			group.files = append(group.files, file)
+		}
+	}
+
+	groups := make([]groupedCRDSchemaSource, 0, len(groupsByIdentity))
+	for _, group := range groupsByIdentity {
+		slices.Sort(group.files)
+		group.source.Files = group.files
+		groups = append(groups, *group)
+	}
+	slices.SortFunc(groups, func(left, right groupedCRDSchemaSource) int {
+		return strings.Compare(crdSchemaSourceIdentity(left.source), crdSchemaSourceIdentity(right.source))
+	})
+
+	return groups, nil
 }
 
 func validateCRDSchemaSource(source projectCRDSchemaSource) error {
@@ -118,7 +169,7 @@ func validateCRDSchemaSource(source projectCRDSchemaSource) error {
 		return fmt.Errorf("select_kind must be %q", kindCustomResourceDefinition)
 	}
 	if source.Path != "" {
-		if source.File != "" || source.Source != "" || source.Revision != "" || source.Directory != "" || source.Version != "" {
+		if len(source.Files) != 0 || source.Source != "" || source.Revision != "" || source.Directory != "" || source.Version != "" {
 			return errors.New("local path cannot be combined with remote source fields")
 		}
 		if filepath.IsAbs(source.Path) || strings.Contains(source.Path, "\\") || filepath.ToSlash(filepath.Clean(source.Path)) != source.Path || source.Path == "." || source.Path == ".." || strings.HasPrefix(source.Path, "../") {
@@ -130,10 +181,15 @@ func validateCRDSchemaSource(source projectCRDSchemaSource) error {
 	if source.Source == "" {
 		return errors.New("either path or source is required")
 	}
+	for _, file := range source.Files {
+		if !validCRDSchemaArchivePath(file) {
+			return errors.New("files must contain normalized relative YAML file paths")
+		}
+	}
 	switch {
 	case strings.HasPrefix(source.Source, "https://"):
-		if source.File != "" || source.Revision != "" || source.Directory != "" || source.Version != "" {
-			return errors.New("HTTPS YAML source cannot include file, revision, directory, or version")
+		if len(source.Files) != 0 || source.Revision != "" || source.Directory != "" || source.Version != "" {
+			return errors.New("HTTPS YAML source cannot include files, revision, directory, or version")
 		}
 		parsed, err := url.Parse(source.Source)
 		if err != nil {
@@ -158,9 +214,6 @@ func validateCRDSchemaSource(source projectCRDSchemaSource) error {
 		if err := dependency.ValidateGitDirectory(source.Directory); err != nil {
 			return err
 		}
-		if source.File != "" && !validCRDSchemaArchivePath(source.File) {
-			return errors.New("git path must be a normalized relative YAML file path")
-		}
 	case strings.HasPrefix(source.Source, "oci://"):
 		if source.Revision != "" || source.Directory != "" {
 			return errors.New("OCI source cannot include revision or directory")
@@ -170,9 +223,6 @@ func validateCRDSchemaSource(source projectCRDSchemaSource) error {
 		}
 		if source.Version == "" {
 			return errors.New("OCI Helm Chart source requires a version")
-		}
-		if source.File != "" && !validCRDSchemaArchivePath(source.File) {
-			return errors.New("OCI path must be a normalized relative YAML file path under crds/")
 		}
 	default:
 		return errors.New("source must be an HTTPS YAML URL, git+https repository, or OCI Helm Chart")
@@ -218,7 +268,7 @@ func loadCRDSchemaSource(ctx context.Context, files *projectFilesystem, dependen
 			return nil, err
 		}
 
-		return crdSchemasFromTar(source.Source+"@"+source.Revision+"/"+source.Directory, archive, source.File)
+		return crdSchemasFromTar(source.Source+"@"+source.Revision+"/"+source.Directory, archive, source.Files)
 	case strings.HasPrefix(source.Source, "oci://"):
 		archive, err := dependencies.LoadOCIChart(source.Source, source.Version)
 		if err != nil {
@@ -234,6 +284,11 @@ func loadCRDSchemaSource(ctx context.Context, files *projectFilesystem, dependen
 		}
 		files := make([]resolvedCRDSchemaFile, 0, len(loadedChart.CRDObjects()))
 		var totalBytes int
+		selectedFiles := make(map[string]struct{}, len(source.Files))
+		selectFiles := len(source.Files) != 0
+		for _, file := range source.Files {
+			selectedFiles[file] = struct{}{}
+		}
 		for _, crd := range loadedChart.CRDObjects() {
 			if crd.File == nil || crd.File.Name == "" || crd.File.Data == nil {
 				return nil, errors.New("OCI Helm Chart contains an invalid CRD file")
@@ -242,8 +297,12 @@ func loadCRDSchemaSource(ctx context.Context, files *projectFilesystem, dependen
 			if !strings.HasPrefix(name, "crds/") || !validCRDSchemaArchivePath(name) {
 				return nil, fmt.Errorf("OCI Helm Chart contains invalid CRD path %q", name)
 			}
-			if source.File != "" && strings.TrimPrefix(name, "crds/") != source.File {
-				continue
+			if selectFiles {
+				fileName := strings.TrimPrefix(name, "crds/")
+				if _, selected := selectedFiles[fileName]; !selected {
+					continue
+				}
+				delete(selectedFiles, fileName)
 			}
 			if len(crd.File.Data) > dependency.MaxKustomizeSourceBytes {
 				return nil, fmt.Errorf("OCI Helm Chart CRD %q exceeds the %d-byte limit", name, dependency.MaxKustomizeSourceBytes)
@@ -253,6 +312,9 @@ func loadCRDSchemaSource(ctx context.Context, files *projectFilesystem, dependen
 				return nil, fmt.Errorf("OCI Helm Chart CRD files exceed the %d-byte limit", dependency.MaxKustomizeSourceBytes)
 			}
 			files = append(files, resolvedCRDSchemaFile{name: source.Source + "@" + source.Version + "/" + name, data: crd.File.Data})
+		}
+		if len(selectedFiles) != 0 {
+			return nil, fmt.Errorf("OCI Helm Chart does not contain selected CRD files %q", slices.Sorted(maps.Keys(selectedFiles)))
 		}
 		if len(files) == 0 {
 			return nil, errors.New("OCI Helm Chart contains no matching static CRDs under crds/")
@@ -265,9 +327,14 @@ func loadCRDSchemaSource(ctx context.Context, files *projectFilesystem, dependen
 	}
 }
 
-func crdSchemasFromTar(source string, archive []byte, selectedPath string) ([]resolvedCRDSchemaFile, error) {
+func crdSchemasFromTar(source string, archive []byte, selectedPaths []string) ([]resolvedCRDSchemaFile, error) {
 	reader := tar.NewReader(bytes.NewReader(archive))
 	files := make([]resolvedCRDSchemaFile, 0)
+	selected := make(map[string]struct{}, len(selectedPaths))
+	selectFiles := len(selectedPaths) != 0
+	for _, selectedPath := range selectedPaths {
+		selected[selectedPath] = struct{}{}
+	}
 	seen := make(map[string]struct{})
 	var totalBytes int64
 	for {
@@ -290,8 +357,11 @@ func crdSchemasFromTar(source string, archive []byte, selectedPath string) ([]re
 			return nil, errors.New("locked Git source archive exceeds the CRD schema size limit")
 		}
 		totalBytes += header.Size
-		if selectedPath != "" && name != selectedPath {
-			continue
+		if selectFiles {
+			if _, ok := selected[name]; !ok {
+				continue
+			}
+			delete(selected, name)
 		}
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
@@ -305,8 +375,8 @@ func crdSchemasFromTar(source string, archive []byte, selectedPath string) ([]re
 		}
 		files = append(files, resolvedCRDSchemaFile{name: source + "/" + name, data: data})
 	}
-	if selectedPath != "" && len(files) == 0 {
-		return nil, fmt.Errorf("git source does not contain CRD schema file %q", selectedPath)
+	if len(selected) != 0 {
+		return nil, fmt.Errorf("git source does not contain selected CRD schema files %q", slices.Sorted(maps.Keys(selected)))
 	}
 	if len(files) == 0 {
 		return nil, errors.New("git source directory contains no YAML CRD schema files")
