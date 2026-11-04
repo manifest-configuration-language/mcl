@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,7 @@ type crdVersionSchema struct {
 	cel         *crdcel.Validator
 	location    SourceDiagnosticLocation
 	served      bool
+	descriptor  KubernetesResourceDescriptor
 	fingerprint [sha256.Size]byte
 }
 
@@ -52,7 +54,7 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 		if kind != kindCustomResourceDefinition {
 			continue
 		}
-		if err := registerRuntimeCustomResourceDefinition(schemas, resource); err != nil {
+		if err := registerRuntimeCustomResourceDefinition(ctx, schemas, resource); err != nil {
 			metadata := artifact.Value.Metadata()
 
 			return nil, sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("CustomResourceDefinition: %w", err))
@@ -105,7 +107,10 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 	return registeredSchemas, nil
 }
 
-func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitionKey]crdVersionSchema, value RuntimeValue) error {
+func registerRuntimeCustomResourceDefinition(ctx context.Context, schemas map[customResourceDefinitionKey]crdVersionSchema, value RuntimeValue) error {
+	if err := validateRuntimeCustomResourceDefinition(ctx, value); err != nil {
+		return err
+	}
 	apiVersion, hasAPIVersion := runtimeStringField(value, "apiVersion")
 	if !hasAPIVersion || apiVersion != "apiextensions.k8s.io/v1" {
 		return fmt.Errorf("unsupported apiVersion %q", apiVersion)
@@ -115,10 +120,16 @@ func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitio
 		return errors.New("spec is missing")
 	}
 	group, hasGroup := runtimeStringField(spec, "group")
+	scope, hasScope := runtimeStringField(spec, "scope")
 	names, hasNames := runtimeMapValue(spec, "names")
 	kind, hasKind := runtimeStringField(names, "kind")
-	if !hasGroup || !hasNames || !hasKind {
-		return errors.New("spec.group and spec.names.kind are required")
+	plural, hasPlural := runtimeStringField(names, "plural")
+	if !hasGroup || !hasNames || !hasKind || !hasScope || !hasPlural {
+		return errors.New("spec.group, spec.scope, spec.names.kind, and spec.names.plural are required")
+	}
+	descriptor := KubernetesResourceDescriptor{APIGroup: group, Kind: kind, ResourceName: plural, Scope: KubernetesResourceScope(scope)}
+	if _, _, err := kubernetesResourceDescriptorFromPublic(descriptor); err != nil {
+		return err
 	}
 	versions, exists := runtimeMapValue(spec, "versions")
 	if !exists || (versions.Kind() != List && versions.Kind() != AdapterBundle) || len(versions.List) == 0 {
@@ -131,7 +142,7 @@ func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitio
 			return errors.New("each spec.versions entry requires name and Bool served fields")
 		}
 		key := customResourceDefinitionKey{group: group, version: version, kind: kind}
-		registered := crdVersionSchema{served: served.BoolValue()}
+		registered := crdVersionSchema{served: served.BoolValue(), descriptor: descriptor}
 		if served.BoolValue() {
 			openAPISchema, location, err := customResourceOpenAPISchemaRuntime(versionEntry)
 			if err != nil {
@@ -164,6 +175,42 @@ func registerRuntimeCustomResourceDefinition(schemas map[customResourceDefinitio
 	}
 
 	return nil
+}
+
+func kubernetesResourceDescriptorsFromCRDSchemas(schemas map[customResourceDefinitionKey]crdVersionSchema) ([]KubernetesResourceDescriptor, error) {
+	byKind := make(map[kubernetesResourceKey]KubernetesResourceDescriptor)
+	for key, schema := range schemas {
+		descriptor := schema.descriptor
+		if descriptor.APIGroup == "" {
+			descriptor.APIGroup = key.group
+		}
+		if descriptor.Kind == "" {
+			descriptor.Kind = key.kind
+		}
+		resourceKey := kubernetesResourceKey{group: descriptor.APIGroup, kind: descriptor.Kind}
+		if existing, exists := byKind[resourceKey]; exists {
+			if existing != descriptor {
+				return nil, fmt.Errorf("CRD versions have conflicting resource descriptors for %s", kubernetesResourceKeyName(resourceKey))
+			}
+
+			continue
+		}
+		byKind[resourceKey] = descriptor
+	}
+	descriptors := make([]KubernetesResourceDescriptor, 0, len(byKind))
+	for _, descriptor := range byKind {
+		descriptors = append(descriptors, descriptor)
+	}
+
+	slices.SortFunc(descriptors, func(left, right KubernetesResourceDescriptor) int {
+		if comparison := strings.Compare(left.APIGroup, right.APIGroup); comparison != 0 {
+			return comparison
+		}
+
+		return strings.Compare(left.Kind, right.Kind)
+	})
+
+	return descriptors, nil
 }
 
 func customResourceOpenAPISchemaRuntime(version RuntimeValue) (any, SourceDiagnosticLocation, error) {

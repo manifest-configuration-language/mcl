@@ -130,8 +130,36 @@ func newKubernetesResourceScopeIndexWithCatalog(artifacts []Artifact, catalog Ku
 	return index, nil
 }
 
-func KubernetesResourceScopeForBundle(bundle Bundle, catalog KubernetesResourceCatalog, apiVersion, kind string) (KubernetesResourceScope, bool, error) {
+func newKubernetesResourceScopeIndexForBundle(bundle Bundle, catalog KubernetesResourceCatalog) (kubernetesResourceScopeIndex, error) {
 	index, err := newKubernetesResourceScopeIndexWithCatalog(bundle.Artifacts, catalog)
+	if err != nil {
+		return nil, err
+	}
+
+	return mergeKubernetesResourceDescriptors(index, bundle.resourceDescriptors)
+}
+
+func mergeKubernetesResourceDescriptors(index kubernetesResourceScopeIndex, descriptors []KubernetesResourceDescriptor) (kubernetesResourceScopeIndex, error) {
+	for _, descriptor := range descriptors {
+		key, value, err := kubernetesResourceDescriptorFromPublic(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		if previous, exists := index[key]; exists {
+			if previous != value {
+				return nil, fmt.Errorf("project CRD descriptor %q conflicts with an existing descriptor", kubernetesResourceKeyName(key))
+			}
+
+			continue
+		}
+		index[key] = value
+	}
+
+	return index, nil
+}
+
+func KubernetesResourceScopeForBundle(bundle Bundle, catalog KubernetesResourceCatalog, apiVersion, kind string) (KubernetesResourceScope, bool, error) {
+	index, err := newKubernetesResourceScopeIndexForBundle(bundle, catalog)
 	if err != nil {
 		return "", false, err
 	}

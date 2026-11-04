@@ -49,11 +49,11 @@ func DiffBundles(before, after Bundle) ([]BundleChange, error) {
 
 // DiffBundlesWithCatalogsは各BundleのCatalogを使ってResource identityを解決し、差分を返します。
 func DiffBundlesWithCatalogs(before, after Bundle, beforeCatalog, afterCatalog KubernetesResourceCatalog) ([]BundleChange, error) {
-	beforeScopes, err := newKubernetesResourceScopeIndexWithCatalog(before.Artifacts, beforeCatalog)
+	beforeScopes, err := newKubernetesResourceScopeIndexForBundle(before, beforeCatalog)
 	if err != nil {
 		return nil, fmt.Errorf("resolve before Resource scopes: %w", err)
 	}
-	afterScopes, err := newKubernetesResourceScopeIndexWithCatalog(after.Artifacts, afterCatalog)
+	afterScopes, err := newKubernetesResourceScopeIndexForBundle(after, afterCatalog)
 	if err != nil {
 		return nil, fmt.Errorf("resolve after Resource scopes: %w", err)
 	}

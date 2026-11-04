@@ -72,14 +72,14 @@ type BundleOutputPlan struct {
 
 // NewBundleOutputPlanはBundle全体のScope indexとphaseごとのArtifact群を構築します。phaseのYAML検証はせず、lifecycle metadataの検証エラーは出力メソッドで返します。戻り値は入力BundleとValueを浅く参照するため、以後それらを変更してはいけません。同一Planのメソッドを並行して呼び出すことはできません。
 func NewBundleOutputPlan(bundle Bundle) *BundleOutputPlan {
-	scopes, err := newKubernetesResourceScopeIndex(bundle.Artifacts)
+	scopes, err := newKubernetesResourceScopeIndexForBundle(bundle, DefaultKubernetesResourceCatalog())
 
 	return newBundleOutputPlan(bundle, scopes, err)
 }
 
 // NewBundleOutputPlanWithCatalogは指定CatalogとBundle内CRDからScope indexを構築します。Catalogのrevision、追加Descriptor、Bundle内CRDに問題がある場合はエラーを返します。
 func NewBundleOutputPlanWithCatalog(bundle Bundle, catalog KubernetesResourceCatalog) (*BundleOutputPlan, error) {
-	scopes, err := newKubernetesResourceScopeIndexWithCatalog(bundle.Artifacts, catalog)
+	scopes, err := newKubernetesResourceScopeIndexForBundle(bundle, catalog)
 	if err != nil {
 		return nil, err
 	}

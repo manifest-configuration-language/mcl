@@ -1076,7 +1076,7 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	if err != nil {
 		return Bundle{}, err
 	}
-	crdSchemas, err := loadCRDSchemaCatalog(files)
+	crdSchemas, err := loadCRDSchemaCatalog(ctx, files, dependencies)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -1098,6 +1098,12 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	bundle, err := runtimeBundleToBundle(*runtimeBundle)
 	if err != nil {
 		return Bundle{}, err
+	}
+	if state.Module != nil {
+		bundle.resourceDescriptors, err = kubernetesResourceDescriptorsFromCRDSchemas(state.Module.CRDSchemas)
+		if err != nil {
+			return Bundle{}, err
+		}
 	}
 	if update {
 		if err := dependencies.Save(); err != nil {
@@ -1228,7 +1234,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 	} else if _, err := files.relativePath(absolute); err != nil {
 		return Bundle{}, nil, fmt.Errorf("resolve entry source %q: %w", absolute, err)
 	}
-	crdSchemas, err := loadCRDSchemaCatalog(files)
+	crdSchemas, err := loadCRDSchemaCatalog(ctx, files, dependencies)
 	if err != nil {
 		return Bundle{}, nil, err
 	}
@@ -1278,6 +1284,12 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 	bundle, err := runtimeBundleToBundle(*runtimeBundle)
 	if err != nil {
 		return Bundle{}, loadedModules, err
+	}
+	if state.Module != nil {
+		bundle.resourceDescriptors, err = kubernetesResourceDescriptorsFromCRDSchemas(state.Module.CRDSchemas)
+		if err != nil {
+			return Bundle{}, loadedModules, err
+		}
 	}
 
 	return bundle, loadedModules, nil

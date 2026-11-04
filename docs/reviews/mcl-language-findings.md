@@ -3,3 +3,7 @@
 ## Kubernetes Schemaからの構築時型推論
 
 `node:`内で`apiVersion`と`kind`が静的に決まる場合でも、MCLは既知のKubernetes Schemaを構築中の値の型検査に十分活用していません。既知のGVKではSchemaから型を推論し、`spec`の構築時に誤ったフィールド名や値の型を検出できる必要があります。CRDもプロジェクトの`crd_schemas`と同一評価内のCRD定義から型を解決する必要があります。
+
+## CRD Catalogの評価ごとの再コンパイル
+
+プロジェクト設定に`crd_schemas`を指定すると、各評価でCRDファイルを読み込み、Structural Schema、OpenAPI Validator、CEL Validatorを再構築します。複数のエントリーポイントを個別評価する利用方法では同じSchemaのコンパイルが繰り返されます。実際の性能影響は測定されていないため、Catalogを使う代表的な評価でコンパイル時間と割り当て量を計測し、必要な場合にのみコンテンツハッシュで再利用するべきです。

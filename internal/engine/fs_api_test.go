@@ -48,7 +48,7 @@ func TestEvaluateProjectSourceValidatesAgainstConfiguredCRDSchema(t *testing.T) 
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
 	files := fstest.MapFS{
-		"mcl.toml": &fstest.MapFile{Data: []byte("crd_schemas = [\"crds/widget.yaml\"]\n")},
+		projectConfigFileName: &fstest.MapFile{Data: []byte("[[crd_schemas]]\npath = \"crds/widget.yaml\"\n")},
 		"crds/widget.yaml": &fstest.MapFile{Data: []byte(`apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -108,6 +108,37 @@ spec:
 				t.Fatalf("EvaluateProjectSourceContext() error = %v, want configured CRD schema validation to pass", err)
 			}
 		})
+	}
+}
+
+func TestEvaluateProjectSourceRejectsInvalidConfiguredCRD(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := fstest.MapFS{
+		projectConfigFileName: &fstest.MapFile{Data: []byte("[[crd_schemas]]\npath = \"crds/widget.yaml\"\n")},
+		"crds/widget.yaml": &fstest.MapFile{Data: []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {}
+spec:
+  group: example.test
+  scope: Namespaced
+  names:
+    plural: widgets
+    singular: widget
+    kind: Widget
+    listKind: WidgetList
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)},
+	}
+	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, "", files, nil)
+	if err == nil || !strings.Contains(err.Error(), "metadata.name") {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want a CRD metadata.name validation error", err)
 	}
 }
 

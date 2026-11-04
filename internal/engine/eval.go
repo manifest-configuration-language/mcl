@@ -14,7 +14,8 @@ import (
 )
 
 type Bundle struct {
-	Artifacts []Artifact
+	Artifacts           []Artifact
+	resourceDescriptors []KubernetesResourceDescriptor
 }
 
 type Artifact struct {
