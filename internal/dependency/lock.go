@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -620,6 +621,11 @@ func fetchRemote(ctx context.Context, source, category string) ([]byte, error) {
 	transport, err := netpolicy.NewExternalHTTPTransport()
 	if err != nil {
 		return nil, err
+	}
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		if data, handled, err := fetchGitHubReleaseAsset(ctx, source, token, transport, githubAPIBaseURL, remoteResponseLimit(category)); handled {
+			return data, err
+		}
 	}
 	client := &http.Client{
 		Transport:     transport,

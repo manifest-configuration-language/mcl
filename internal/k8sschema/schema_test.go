@@ -5,6 +5,7 @@ import "testing"
 const (
 	apiVersionField = "apiVersion"
 	metadataField   = "metadata"
+	objectName      = "sample"
 )
 
 func TestBuiltinOpenAPILimitsResourcesToSupportedKubernetesVersion(t *testing.T) {
@@ -43,7 +44,7 @@ func TestValidateBuiltinResolvesCurrentDefinitions(t *testing.T) {
 	value := map[string]any{
 		apiVersionField: "v1",
 		"kind":          "Pod",
-		metadataField:   map[string]any{"name": "sample"},
+		metadataField:   map[string]any{"name": objectName},
 		"spec": map[string]any{
 			"containers": []any{map[string]any{"name": "app", "image": "alpine"}},
 		},
@@ -59,7 +60,7 @@ func TestValidateBuiltinTreatsNullObjectFieldsAsOmitted(t *testing.T) {
 	configMap := map[string]any{
 		apiVersionField: "v1",
 		"kind":          "ConfigMap",
-		metadataField:   map[string]any{"name": "sample", "annotations": nil},
+		metadataField:   map[string]any{"name": objectName, "annotations": nil},
 	}
 	if errors := ValidateBuiltin("v1", "ConfigMap", configMap); len(errors) > 0 {
 		t.Fatalf("validate ConfigMap with a null optional field: %v", errors)
@@ -72,10 +73,45 @@ func TestValidateBuiltinTreatsNullObjectFieldsAsOmitted(t *testing.T) {
 	pod := map[string]any{
 		apiVersionField: "v1",
 		"kind":          "Pod",
-		metadataField:   map[string]any{"name": "sample"},
+		metadataField:   map[string]any{"name": objectName},
 		"spec":          map[string]any{"containers": nil},
 	}
 	if errors := ValidateBuiltin("v1", "Pod", pod); len(errors) == 0 {
 		t.Fatal("Pod with a null required field passed validation")
+	}
+}
+
+func TestValidateBuiltinAllowsNullOptionalNestedProperties(t *testing.T) {
+	t.Parallel()
+
+	podSpec := map[string]any{
+		"priorityClassName": nil,
+		"initContainers":    nil,
+		"containers": []any{
+			map[string]any{"name": "app", "image": "alpine", "args": nil},
+		},
+	}
+	pod := map[string]any{
+		apiVersionField: "v1",
+		"kind":          "Pod",
+		metadataField:   map[string]any{"name": objectName},
+		"spec":          podSpec,
+	}
+	if validationErrors := ValidateBuiltin("v1", "Pod", pod); len(validationErrors) > 0 {
+		t.Fatalf("validate Pod with null optional properties: %v", validationErrors)
+	}
+	podSpec["containers"] = []any{nil}
+	if validationErrors := ValidateBuiltin("v1", "Pod", pod); len(validationErrors) == 0 {
+		t.Fatal("Pod with a null list item passed validation")
+	}
+
+	role := map[string]any{
+		apiVersionField: "rbac.authorization.k8s.io/v1",
+		"kind":          "Role",
+		metadataField:   map[string]any{"name": objectName, "namespace": "default"},
+		"rules":         nil,
+	}
+	if validationErrors := ValidateBuiltin("rbac.authorization.k8s.io/v1", "Role", role); len(validationErrors) > 0 {
+		t.Fatalf("validate Role with null optional rules: %v", validationErrors)
 	}
 }

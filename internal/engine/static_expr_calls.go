@@ -429,6 +429,14 @@ func inferStaticReplaceAtBuiltin(_ []Expr, argumentTypes []ResolvedType, known [
 	if len(argumentTypes) != 3 || len(known) != 3 || !known[0] || !known[1] {
 		return ResolvedType{}, false, nil
 	}
+	if argumentTypes[0].Name == typeAny {
+		if argumentTypes[1].Name != typeInt {
+			return ResolvedType{}, false, errors.New("replaceAt expects a List and an Integer index")
+		}
+		anyType := ResolvedType{Name: typeAny}
+
+		return ResolvedType{Name: typeList, Element: &anyType}, true, nil
+	}
 	elementType, isList := staticListElement(argumentTypes[0], types)
 	if !isList {
 		return ResolvedType{}, false, errors.New("replaceAt expects a List and an Integer index")
@@ -687,13 +695,21 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 			return ResolvedType{}, false, fmt.Errorf("%s expects String arguments", item.name)
 		}
 	}
-	if item.name == fnHelmRender && known[1] && argumentTypes[1].Fields == nil && !argumentTypes[1].OpenRecord && argumentTypes[1].Name != typeAny {
-		return ResolvedType{}, false, errors.New("helm.render options must be a Map")
+	if item.name == fnHelmRender && known[1] {
+		optionsType := argumentTypes[1]
+		if optionsType.Name != typeMap && optionsType.Fields == nil && !optionsType.OpenRecord && optionsType.Name != typeAny {
+			return ResolvedType{}, false, errors.New("helm.render options must be a Map")
+		}
 	}
 	anyType := ResolvedType{Name: typeAny}
 
 	if item.name == fnManifestLoadOne {
 		return anyType, true, nil
+	}
+	if item.name == fnHelmRender {
+		mapType := ResolvedType{Name: typeMap, Element: &anyType}
+
+		return ResolvedType{Name: typeList, Element: &mapType}, true, nil
 	}
 
 	return ResolvedType{Name: typeList, Element: &anyType}, true, nil

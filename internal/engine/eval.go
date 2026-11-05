@@ -1099,7 +1099,7 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 		if compatibility.isDefinitelyIncompatible() {
 			return TypeAnalysis{}, typeDiagnostic(fmt.Errorf("body returns %s, declared %s", staticTypeName(inferred), staticTypeName(*returnType)))
 		}
-		if compatibility == typeCompatibilityUnknown {
+		if compatibility == typeCompatibilityUnknown && (inferred.Name == typeAny || !staticTypeContainsAny(*returnType)) {
 			return TypeAnalysis{}, typeDiagnostic(fmt.Errorf("body return type cannot be checked against %s", staticTypeName(*returnType)))
 		}
 		updated := preserveBundleProvenance(inferredAnalysis, *returnType, types)

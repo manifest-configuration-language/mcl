@@ -157,6 +157,9 @@ func typedExpressionAssignable(expression Expr, actual, expected ResolvedType, c
 	if compatibility.isAssignable() {
 		return true
 	}
+	if compatibility == typeCompatibilityUnknown && actual.Name != typeAny && staticTypeContainsAny(expected) {
+		return true
+	}
 	if containsEmptyCollectionLiteral(expression) {
 		return staticExpressionAssignableWithEmptyCollections(expression, actual, expected, context)
 	}

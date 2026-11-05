@@ -60,6 +60,46 @@ func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
 	}
 }
 
+func TestHelmRenderAcceptsOptionsFunctionReturningMap(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Clean(t.TempDir())
+	files := fstest.MapFS{
+		"chart/Chart.yaml":               &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 1.0.0\n")},
+		"chart/templates/configmap.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n")},
+	}
+	source := `import "std:helm" as helm
+fn options() -> Map<String, Any> =
+  releaseName: "mcl"
+  namespace: "default"
+  kubeVersion: "1.36.0"
+  apiVersions: []
+fn chartResources() -> List<Map<String, Any>> = helm.render("chart", options())
+emit each chartResources()
+`
+	bundle, err := EvaluateProjectSourceContext(t.Context(), root, "main.mcl", source, files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != Map {
+		t.Fatalf("rendered artifacts = %#v; want one resource Map", bundle.Artifacts)
+	}
+	var name string
+	for _, entry := range bundle.Artifacts[0].Value.Map {
+		if entry.Key != metadataFieldName {
+			continue
+		}
+		for _, metadataEntry := range entry.Value.Map {
+			if metadataEntry.Key == "name" {
+				name = metadataEntry.Value.Text
+			}
+		}
+	}
+	if name != "mcl" {
+		t.Fatalf("rendered resource name = %q; want mcl", name)
+	}
+}
+
 func TestHelmRenderAllowNondeterministicOutput(t *testing.T) {
 	t.Parallel()
 	root := filepath.Clean(t.TempDir())

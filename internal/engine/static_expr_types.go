@@ -1107,7 +1107,11 @@ func staticIndexExprTypeWithConstant(base, key ResolvedType, types map[string]Re
 		return result, true, nil
 	}
 	if base.Name == typeAny {
-		return ResolvedType{}, false, nil
+		if !staticIndexKeyIs(key, typeString, types) && !staticIndexKeyIs(key, typeInt, types) {
+			return ResolvedType{}, false, fmt.Errorf("index must be String or Integer, got %s", staticTypeName(key))
+		}
+
+		return ResolvedType{Name: typeAny}, true, nil
 	}
 	if base.Fields != nil || base.OpenRecord {
 		if !staticIndexKeyIs(key, typeString, types) {

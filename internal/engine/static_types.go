@@ -669,6 +669,9 @@ func equalStaticTypes(left, right ResolvedType) bool {
 }
 
 func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedType, resolving map[string]bool) (ResolvedType, bool, bool, bool) {
+	if typeExpr.Name == typeAny {
+		return ResolvedType{Name: typeAny}, true, true, false
+	}
 	if typeExpr.Name == typeMap && typeExpr.Element != nil {
 		return *typeExpr.Element, true, true, false
 	}
@@ -765,6 +768,33 @@ func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedTy
 	}
 
 	return ResolvedType{}, true, false, false
+}
+
+func staticTypeContainsAny(typeExpr ResolvedType) bool {
+	if typeExpr.Name == typeAny {
+		return true
+	}
+	if slices.ContainsFunc(typeExpr.Arguments, staticTypeContainsAny) || slices.ContainsFunc(typeExpr.Options, staticTypeContainsAny) {
+		return true
+	}
+	if typeExpr.Element != nil && staticTypeContainsAny(*typeExpr.Element) {
+		return true
+	}
+	if typeExpr.AdditionalProperties != nil && staticTypeContainsAny(*typeExpr.AdditionalProperties) {
+		return true
+	}
+	for _, field := range typeExpr.Fields {
+		if staticTypeContainsAny(field.Type) {
+			return true
+		}
+	}
+	for _, parameter := range typeExpr.Parameters {
+		if staticTypeContainsAny(parameter.Type) {
+			return true
+		}
+	}
+
+	return typeExpr.ReturnType != nil && staticTypeContainsAny(*typeExpr.ReturnType)
 }
 
 func staticTypeAssignable(inferred, expected ResolvedType, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (bool, bool) {

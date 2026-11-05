@@ -149,49 +149,86 @@ func normalizeKubernetesSchemaExtensions(value any) {
 	}
 }
 
-// normalizeToNullable treats object fields as nullable so that null values
-// are accepted (matching Kubernetes "null means omitted" semantics).
-// Only leaf objects without sub-schemas are made nullable to avoid
-// over-permissive validation of nested structure.
+// normalizeToNullable accepts null for optional object properties, matching
+// Kubernetes "null means omitted" semantics.
 func normalizeToNullable(value any) {
-	var visit func(any) bool
-	visit = func(v any) bool {
-		switch m := v.(type) {
+	var visit func(any)
+	visit = func(value any) {
+		switch schema := value.(type) {
 		case map[string]any:
-			if t, ok := m["type"]; ok && (t == schemaTypeObject || t == "array") {
-				hasSubSchema := false
-				for k := range m {
-					if k == "properties" || k == "items" || k == "allOf" || k == "anyOf" || k == "oneOf" || k == "$ref" {
-						hasSubSchema = true
-
-						break
+			properties, hasProperties := schema["properties"].(map[string]any)
+			if hasProperties {
+				required := make(map[string]struct{})
+				if requiredProperties, ok := schema["required"].([]any); ok {
+					for _, property := range requiredProperties {
+						if name, ok := property.(string); ok {
+							required[name] = struct{}{}
+						}
 					}
 				}
-				if !hasSubSchema {
-					delete(m, "type")
-					delete(m, "properties")
-					delete(m, "items")
-					m["anyOf"] = []any{map[string]any{"type": t}, map[string]any{"type": "null"}}
-
-					break
+				for name, property := range properties {
+					visit(property)
+					if _, isRequired := required[name]; !isRequired && !schemaAllowsNull(property) {
+						properties[name] = map[string]any{
+							"anyOf": []any{property, map[string]any{"type": "null"}},
+						}
+					}
 				}
 			}
-			for _, child := range m {
-				if !visit(child) {
-					return false
+			for keyword, child := range schema {
+				switch keyword {
+				case "items", "additionalItems", "additionalProperties", "allOf", "anyOf", "oneOf", "not":
+					visit(child)
+				case "definitions", "$defs", "patternProperties", "dependencies":
+					if schemas, ok := child.(map[string]any); ok {
+						for _, nestedSchema := range schemas {
+							visit(nestedSchema)
+						}
+					} else {
+						visit(child)
+					}
 				}
 			}
 		case []any:
-			for _, child := range m {
-				if !visit(child) {
-					return false
-				}
+			for _, child := range schema {
+				visit(child)
 			}
 		}
-
-		return true
 	}
 	visit(value)
+}
+
+func schemaAllowsNull(value any) bool {
+	schema, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	if schema["nullable"] == true || schema["type"] == "null" {
+		return true
+	}
+	if types, ok := schema["type"].([]any); ok {
+		for _, kind := range types {
+			if kind == "null" {
+				return true
+			}
+		}
+	}
+	if enumeration, ok := schema["enum"].([]any); ok {
+		for _, candidate := range enumeration {
+			if candidate == nil {
+				return true
+			}
+		}
+	}
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		if alternatives, ok := schema[keyword].([]any); ok {
+			if slices.ContainsFunc(alternatives, schemaAllowsNull) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 type Field struct {

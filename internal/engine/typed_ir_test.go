@@ -49,6 +49,91 @@ func TestTypedBuiltinCallUsesBuiltinIDOutsideSchemaPath(t *testing.T) {
 	}
 }
 
+func TestTypedMapAnyPathCanUseReplaceAtWithRuntimeChecks(t *testing.T) {
+	t.Parallel()
+
+	const source = `import "std:list" as lists
+fn containerWithEmptyArgs(container: Map<String, Any>) -> Map<String, Any> = container with:
+  args: []
+fn deploymentWithEmptyArgs(resource: Map<String, Any>) -> Map<String, Any> = resource with:
+  spec:
+    template:
+      spec:
+        containers: lists.replaceAt(
+          resource.spec.template.spec.containers,
+          0,
+          containerWithEmptyArgs(resource.spec.template.spec.containers[0]),
+        )
+let deployments: List<Map<String, Any>> =
+  - apiVersion: "apps/v1"
+    kind: "Deployment"
+    metadata:
+      name: "opencost"
+    spec:
+      template:
+        spec:
+          containers:
+            - name: "opencost"
+              args: []
+let normalized = lists.map(deployments, deploymentWithEmptyArgs)
+emit normalized[0].spec.template.spec.containers[0].args
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateAST() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != List || len(bundle.Artifacts[0].Value.List) != 0 {
+		t.Fatalf("bundle artifacts = %#v; want one empty args List", bundle.Artifacts)
+	}
+}
+
+func TestTypedReplaceAtPreservesKnownErrorsAndRuntimeGuardsAny(t *testing.T) {
+	t.Parallel()
+	for name, source := range map[string]string{
+		"known non-list": `import "std:list" as lists
+let result = lists.replaceAt("not-a-list", 0, "value")
+emit result
+`,
+		"dynamic non-list": `import "std:list" as lists
+let value: Any = "not-a-list"
+let result = lists.replaceAt(value, 0, "replacement")
+emit result
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			module, err := ParseAST(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = EvaluateASTContext(t.Context(), module)
+			if err == nil || !strings.Contains(err.Error(), "replaceAt expects a List and an Integer index") {
+				t.Fatalf("EvaluateAST() error = %v; want replaceAt list error", err)
+			}
+		})
+	}
+}
+
+func TestTypedFunctionRejectsBareAnyForMapReturn(t *testing.T) {
+	t.Parallel()
+	const source = `fn invalid(value: Any) -> Map<String, Any> = value
+let result = invalid(1)
+emit result
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = EvaluateASTContext(t.Context(), module)
+	if err == nil || !strings.Contains(err.Error(), "body return type cannot be checked against Map") {
+		t.Fatalf("EvaluateAST() error = %v; want unchecked Any return error", err)
+	}
+}
+
 func TestTypePrimitiveMapWithConstantDynamicKeys(t *testing.T) {
 	t.Parallel()
 
