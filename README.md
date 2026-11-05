@@ -20,6 +20,12 @@ CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`な�
 
 `render`、`check`、`diff`、`explain`、`update`はHelm Chartが乱数関数を呼び出した場合に、同じ入力で2回レンダリングしたManifestをバイト単位で比較します。出力が異なる場合はテンプレート名を示して失敗し、出力が一致すれば最初の結果を使います。乱数関数を呼び出してもManifest出力が変わらないChartは通常どおり利用できます。
 
+`render`、`check`、`explain`、`diff`、`update`には、`--parameter name=<JSON value>`または`--parameter-file path.json`で実行時パラメータを渡せます。パラメータファイルはトップレベルがJSONオブジェクトである必要があり、複数ファイルを指定できます。同じ名前を複数回指定するとエラーになります。
+
+```sh
+mcl render main.mcl --parameter-file cluster.json --parameter-file app-settings.json
+```
+
 再現性を必要としない場合は`--allow-nondeterministic-output`を指定できます。この場合は最初の出力を返し、その出力をレンダリングキャッシュへ保存しません。この検査は非決定的な関数が実行されたときの2回の結果を比較するもので、乱数による分岐などですべての実行の再現性を数学的に証明するものではありません。`lookup`は明示的なResource Snapshotを使い、`now`は固定時刻を指定した場合のみ使えます。DNS、環境変数、現在時刻への暗黙アクセスは引き続き無効です。
 
 ## 関連リポジトリ

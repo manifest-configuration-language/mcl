@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
@@ -52,6 +53,86 @@ func TestDiffParsesInterspersedFlagsWithBundleCRDs(t *testing.T) {
 	after := filepath.Join(root, "after", "main.mcl")
 	if err := run(t.Context(), []string{"diff", before, "--operation", "create", after}); err != nil {
 		t.Fatalf("run(diff) error = %v", err)
+	}
+}
+
+func TestParseParameterInputs(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	firstPath := filepath.Join(root, "cluster.json")
+	if err := os.WriteFile(firstPath, []byte(`{"cluster":{"version":"1.35"},"enabled":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondPath := filepath.Join(root, "settings.json")
+	if err := os.WriteFile(secondPath, []byte(`{"limits":{"cpu":"2"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parameters, err := parseParameterInputs([]string{`replicas=3`}, []string{firstPath, secondPath})
+	if err != nil {
+		t.Fatalf("parseParameterInputs() error = %v", err)
+	}
+	for name, want := range map[string]string{
+		"cluster":  `{"version":"1.35"}`,
+		"enabled":  "true",
+		"limits":   `{"cpu":"2"}`,
+		"replicas": "3",
+	} {
+		if got := string(parameters[name]); got != want {
+			t.Errorf("parameter %q = %s, want %s", name, got, want)
+		}
+	}
+
+	duplicatePath := filepath.Join(root, "duplicate.json")
+	if err := os.WriteFile(duplicatePath, []byte(`{"cluster":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = parseParameterInputs(nil, []string{firstPath, duplicatePath})
+	if err == nil || !strings.Contains(err.Error(), `parameter "cluster" was provided more than once`) {
+		t.Fatalf("duplicate parameter error = %v", err)
+	}
+	_, err = parseParameterInputs([]string{`cluster={}`}, []string{firstPath})
+	if err == nil || !strings.Contains(err.Error(), `--parameter-file`) {
+		t.Fatalf("parameter and file duplicate error = %v", err)
+	}
+}
+
+func TestParseParameterInputsRequiresJSONObject(t *testing.T) {
+	t.Parallel()
+	for name, content := range map[string]string{
+		"array":          `[]`,
+		"scalar":         `true`,
+		"null":           `null`,
+		"invalid":        `{"key":`,
+		"duplicate keys": `{"key":1,"key":2}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "parameters.json")
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := parseParameterInputs(nil, []string{path})
+			if err == nil {
+				t.Fatal("parseParameterInputs() succeeded for non-object or invalid JSON")
+			}
+		})
+	}
+}
+
+func TestCheckUsesParameterFileAndEnforcesType(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "main.mcl")
+	source := "param cluster: String\nlet resource =\n  apiVersion: \"v1\"\n  kind: \"ConfigMap\"\n  metadata:\n    name: cluster\nemit resource\n"
+	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parameterPath := filepath.Join(root, "parameters.json")
+	if err := os.WriteFile(parameterPath, []byte(`{"cluster":42}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run(t.Context(), []string{"check", sourcePath, "--parameter-file", parameterPath})
+	if err == nil || !strings.Contains(err.Error(), "expected String, got Int") {
+		t.Fatalf("run(check --parameter-file) error = %v, want parameter type error", err)
 	}
 }
 

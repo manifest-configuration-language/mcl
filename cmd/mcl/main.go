@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -247,7 +248,8 @@ func newRenderCommand() *cobra.Command {
 			format, _ := command.Flags().GetString("format")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
-			parameters, err := parseParameters(parameterValues)
+			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
+			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
@@ -260,6 +262,7 @@ func newRenderCommand() *cobra.Command {
 	command.Flags().String("output-dir", "", "directory for operation output files")
 	command.Flags().String("format", "yaml", "output format (yaml or json)")
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
+	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
 
 	return command
@@ -273,8 +276,9 @@ func newCheckCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			operation, _ := command.Flags().GetString("operation")
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameters(parameterValues)
+			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
@@ -284,6 +288,7 @@ func newCheckCommand() *cobra.Command {
 	}
 	command.Flags().String("operation", "", "operation to check")
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
+	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
 
 	return command
@@ -303,8 +308,9 @@ func newExplainCommand() *cobra.Command {
 			operation, _ := command.Flags().GetString("operation")
 			path, _ := command.Flags().GetString("path")
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameters(parameterValues)
+			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
@@ -320,6 +326,7 @@ func newExplainCommand() *cobra.Command {
 	command.Flags().String("operation", "", "operation to inspect")
 	command.Flags().String("path", "", "JSON Pointer within the resource")
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
+	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
 
 	return command
@@ -333,8 +340,9 @@ func newDiffCommand() *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			operation, _ := command.Flags().GetString("operation")
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameters(parameterValues)
+			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
@@ -344,6 +352,7 @@ func newDiffCommand() *cobra.Command {
 	}
 	command.Flags().String("operation", "", "operation to compare")
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
+	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
 
 	return command
@@ -394,8 +403,9 @@ func newUpdateCommand() *cobra.Command {
 				path = args[0]
 			}
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameters(parameterValues)
+			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
@@ -404,6 +414,7 @@ func newUpdateCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
+	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
 
 	return command
@@ -485,6 +496,49 @@ func parseParameters(values []string) (map[string]jsontext.Value, error) {
 			return nil, fmt.Errorf("invalid JSON value for parameter %q", name)
 		}
 		parameters[name] = jsonValue.Clone()
+	}
+
+	return parameters, nil
+}
+
+func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, error) {
+	parameters, err := parseParameters(values)
+	if err != nil {
+		return nil, err
+	}
+	sources := make(map[string]string, len(parameters))
+	for _, value := range values {
+		name, _, _ := strings.Cut(value, "=")
+		sources[name] = "--parameter"
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read parameter file %q: %w", path, err)
+		}
+		var fileParameters map[string]jsontext.Value
+		if err := json.Unmarshal(data, &fileParameters); err != nil {
+			return nil, fmt.Errorf("parse parameter file %q: %w", path, err)
+		}
+		if fileParameters == nil || len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '{' {
+			return nil, fmt.Errorf("parse parameter file %q: expected a top-level JSON object", path)
+		}
+		names := make([]string, 0, len(fileParameters))
+		for name := range fileParameters {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			value := fileParameters[name]
+			if _, exists := sources[name]; exists {
+				return nil, fmt.Errorf("parameter %q was provided more than once by %s and --parameter-file %q", name, sources[name], path)
+			}
+			if name == "" || !value.IsValid() {
+				return nil, fmt.Errorf("parse parameter file %q: invalid parameter %q", path, name)
+			}
+			parameters[name] = value.Clone()
+			sources[name] = fmt.Sprintf("--parameter-file %q", path)
+		}
 	}
 
 	return parameters, nil
