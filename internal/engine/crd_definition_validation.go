@@ -12,20 +12,8 @@ import (
 )
 
 func validateRuntimeCustomResourceDefinition(ctx context.Context, value RuntimeValue) error {
-	resource, err := runtimeValueAsKubernetesJSON(value)
+	internal, err := runtimeCustomResourceDefinitionAsInternal(value)
 	if err != nil {
-		return err
-	}
-	data, err := jsonv2.Marshal(resource)
-	if err != nil {
-		return err
-	}
-	var versioned apiextensionsv1.CustomResourceDefinition
-	if err := jsonv2.Unmarshal(data, &versioned); err != nil {
-		return err
-	}
-	internal := new(apiextensions.CustomResourceDefinition)
-	if err := apiextensionsv1.Convert_v1_CustomResourceDefinition_To_apiextensions_CustomResourceDefinition(&versioned, internal, nil); err != nil {
 		return err
 	}
 	// CRD作成時と同様にstatusを初期化し、storage versionを記録します。
@@ -48,4 +36,26 @@ func validateRuntimeCustomResourceDefinition(ctx context.Context, value RuntimeV
 	}
 
 	return errors.New(strings.Join(messages, "; "))
+}
+
+func runtimeCustomResourceDefinitionAsInternal(value RuntimeValue) (*apiextensions.CustomResourceDefinition, error) {
+	resource, err := runtimeValueAsKubernetesJSON(value)
+	if err != nil {
+		return nil, err
+	}
+	data, err := jsonv2.Marshal(resource)
+	if err != nil {
+		return nil, err
+	}
+	var versioned apiextensionsv1.CustomResourceDefinition
+	if err := jsonv2.Unmarshal(data, &versioned); err != nil {
+		return nil, err
+	}
+	apiextensionsv1.SetObjectDefaults_CustomResourceDefinition(&versioned)
+	internal := new(apiextensions.CustomResourceDefinition)
+	if err := apiextensionsv1.Convert_v1_CustomResourceDefinition_To_apiextensions_CustomResourceDefinition(&versioned, internal, nil); err != nil {
+		return nil, err
+	}
+
+	return internal, nil
 }

@@ -47,3 +47,9 @@ CiliumのDeploymentの`priorityClassName`、OpenCostのContainerの`args`とPod�
 組み込みValidatorの正規化を、親Schemaの`required`集合にないpropertyだけを`anyOf: [元Schema, null]`へ変換する実装に変更しました。必須property、配列要素、mapの各値を一律にnull許容にはしません。CRDのStructural SchemaとCEL検証は変更しません。アプリごとの出力補正関数は不要になります。
 
 回帰テストでは、Podの任意項目とRoleの`rules: null`を受け付け、必須の`containers: null`、コンテナ配列のnull要素、ConfigMapのnullデータ値を拒否することを確認します。ソース構築時の型推論と、出力後の組み込みSchema検証は別の検査であり、この変更は後者を対象にしています。
+
+## CRD Webhook Service Portの既定値
+
+Cluster APIのcore v1.14.2が生成するCRDでは、conversion webhookのService portが省略されています。Kubernetes API Serverは省略時に443を設定しますが、MCLはCRDを内部型へ変換する際にAPI型のdefaultingを実行せず、port 0としてCRDを検証していました。
+
+CRDの内部型への変換前に、apiextensions/v1が提供する`SetObjectDefaults_CustomResourceDefinition`を呼び出すよう変更しました。省略されたService portはKubernetesと同じ443になり、明示された0は既定値で上書きせず検証エラーになります。CRD Schemaの実行時defaultingとCEL検証には変更を加えません。
