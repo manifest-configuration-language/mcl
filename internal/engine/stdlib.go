@@ -1027,6 +1027,7 @@ func equalRuntimeValues(left, right RuntimeValue) bool {
 
 func mergeRuntimeValues(base, patch RuntimeValue) (RuntimeValue, error) {
 	if patch.Kind() == Null {
+		patch.Value.OmitSourceSnippet = patch.Value.OmitSourceSnippet || base.Metadata().OmitSourceSnippet
 		patch.Value.SourceLocations = mergedOverrideSourceLocations(base.Metadata(), patch.Metadata())
 		inheritRuntimeTypeProvenance(&patch, base, patch)
 		if err := validateRuntimeInheritedConstraints(patch); err != nil {
@@ -1042,6 +1043,7 @@ func mergeRuntimeValues(base, patch RuntimeValue) (RuntimeValue, error) {
 			return RuntimeValue{}, err
 		}
 		base.Base = &merged
+		base.Value.OmitSourceSnippet = base.Value.OmitSourceSnippet || merged.Metadata().OmitSourceSnippet
 
 		return base, nil
 	}
@@ -1056,6 +1058,7 @@ func mergeRuntimeValues(base, patch RuntimeValue) (RuntimeValue, error) {
 	switch baseContents.Kind() {
 	case Map:
 		result := RuntimeValue{Value: baseContents.Metadata(), Map: slices.Clone(baseContents.Map)}
+		result.Value.OmitSourceSnippet = baseContents.Metadata().OmitSourceSnippet || patchContents.Metadata().OmitSourceSnippet
 		result.Value.SourceLocations = mergedSourceLocations(baseContents.Metadata(), patchContents.Metadata())
 		indices := make(map[string]int, len(result.Map))
 		for index, entry := range result.Map {
@@ -1114,6 +1117,7 @@ func mergeRuntimeValues(base, patch RuntimeValue) (RuntimeValue, error) {
 		if baseContents.Kind() != patchContents.Kind() && baseContents.Kind() == AdapterBundle {
 			patchContents.Value.Kind = AdapterBundle
 		}
+		patchContents.Value.OmitSourceSnippet = baseContents.Metadata().OmitSourceSnippet || patchContents.Metadata().OmitSourceSnippet
 		patchContents.Value.setLifecycleMetadata(metadata)
 		patchContents.Value.SourceLocations = mergedOverrideSourceLocations(baseContents.Metadata(), patchContents.Metadata())
 		inheritRuntimeTypeProvenance(&patchContents, baseContents, patchContents)

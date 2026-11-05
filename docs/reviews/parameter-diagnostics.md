@@ -32,7 +32,7 @@ expected: String
 actual: Int
 ```
 
-`param settings`の宣言位置はRelated locationとして表示します。パラメータ診断は入力ファイルと宣言ファイルの行・列を表示しますが、両方のソース行と値の抜粋を表示しません。診断には入力値そのものを含めないため、秘密情報を持つ設定でも値をエラー文へ出しません。
+`param settings`の宣言位置はRelated locationとして表示します。パラメータ診断は入力ファイルと宣言ファイルの行・列を表示しますが、両方のソース行と値の抜粋を表示しません。パラメータの型不一致診断は指定値そのものを含めず、期待型と実際の型で説明します。
 
 人が読むパスはレコード項目にドット記法、List要素に`[index]`、記号を含むMap keyに引用符付きの角括弧記法を使います。機械的な照合にはRFC 6901 JSON Pointerを使い、`~`と`/`はそれぞれ`~0`と`~1`へ変換します。
 
@@ -50,8 +50,10 @@ ArgoCDのCMPが複数の設定を一時JSONへ集約した場合、CLIが示す�
 
 ## 検証
 
-`go test ./internal/engine ./cmd/mcl`を実行し、型不一致の入れ子パスとJSON位置、List/Mapの失敗パス、missing field、Union、JSON Pointerのエスケープ、過剰なJSON深さ、CLIの`check --parameter-file`を確認しました。リポジトリ全体のテストとlintは統合作業時に実施します。
+`go test ./internal/engine ./cmd/mcl`を実行し、型不一致の入れ子パスとJSON位置、List/Mapの失敗パス、missing field、Union、JSON Pointerのエスケープ、過剰なJSON深さ、CLIの`check --parameter-file`を確認しました。`go test ./...`と`golangci-lint run ./...`も成功しました。
+JSONのソース行を表示せずに位置を示すCLIの回帰テストと、入れ子の未知フィールドのJSONキー位置を示す回帰テストも通過しました。
 
 ## 公開バージョン
 
-公開バージョンはMCL Release workflow完了後に追記します。
+[MCL v0.3.31](https://github.com/manifest-configuration-language/mcl/releases/tag/v0.3.31)で公開済みです。
+[Release workflow](https://github.com/manifest-configuration-language/mcl/actions/runs/42042596660)のCLI、WASM、attestation、GitHub Release、npm公開がすべて成功しました。

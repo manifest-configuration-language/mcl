@@ -282,10 +282,10 @@ func customResourceRuntimeValidationDiagnostic(value RuntimeValue, validationErr
 		metadata := primary.Metadata()
 		related = withoutSourceLocation(related, metadata.SourcePath, metadata.Span)
 
-		return SourceDiagnosticError{Path: metadata.SourcePath, Code: "MCL-CRD", Message: message, Span: metadata.Span, Related: related, Cause: fmt.Errorf("%s", message)}
+		return SourceDiagnosticError{Path: metadata.SourcePath, Code: "MCL-CRD", Message: message, Span: metadata.Span, Related: related, OmitSourceSnippet: metadata.OmitSourceSnippet, Cause: fmt.Errorf("%s", message)}
 	}
 	if len(related) != 0 {
-		return SourceDiagnosticError{Code: "MCL-CRD", Message: message, Related: related, Cause: fmt.Errorf("%s", message)}
+		return SourceDiagnosticError{Code: "MCL-CRD", Message: message, Related: related, OmitSourceSnippet: value.Metadata().OmitSourceSnippet, Cause: fmt.Errorf("%s", message)}
 	}
 
 	return fmt.Errorf("%s", message)

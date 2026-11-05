@@ -164,6 +164,14 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 		if node.Name == "" {
 			return typedExpression{}, false
 		}
+		if strings.Contains(node.Name, ".") {
+			_, hasNull := removeNullStaticType(inferred)
+			if hasNull {
+				root, path, _ := strings.Cut(node.Name, ".")
+
+				return typedExpression{kind: typedExpressionOptionalReference, span: node.Span, text: root + "?." + path}, true
+			}
+		}
 
 		return typedExpression{kind: typedExpressionReference, span: node.Span, text: node.Name}, true
 	}
@@ -236,7 +244,25 @@ func typeBinaryExpression(node *BinaryExpr, inferred ResolvedType, context typed
 		return typedExpression{}, false
 	}
 	rightType, rightKnown, err := context.inferType(node.Right)
-	if err != nil || !rightKnown || !validTypedBinaryTypes(operator, inferred, leftType, rightType, context.types) {
+	if err != nil || !rightKnown {
+		return typedExpression{}, false
+	}
+	if operator == typedOperatorCoalesce {
+		leftWithoutNull, hasNull := removeNullStaticType(leftType)
+		if hasNull {
+			switch node.Right.(type) {
+			case *EmptyListExpr:
+				if _, isList := staticListElement(leftWithoutNull, context.types); isList {
+					rightType = leftWithoutNull
+				}
+			case *EmptyMapExpr:
+				if isStaticMapType(leftWithoutNull, context.types) {
+					rightType = leftWithoutNull
+				}
+			}
+		}
+	}
+	if !validTypedBinaryTypes(operator, inferred, leftType, rightType, context.types) {
 		return typedExpression{}, false
 	}
 	left, leftOK := typeExpression(node.Left, leftType, context)
@@ -303,7 +329,10 @@ func typeLambdaExpression(expression Expr, inferred ResolvedType, context typedE
 	return typedExpression{
 		kind: typedExpressionLambda, span: expression.ExprSpan(), resolvedType: resolvedFunctionType, parameters: slices.Clone(node.Parameters),
 		paramSpans: slices.Clone(node.ParameterSpans), operand: &body,
-		lambdaTyping: &LambdaTyping{ParameterTypes: parameterTypes, ReturnType: new(returnType), TypeScope: maps.Clone(context.staticTypes), InferenceBody: &body},
+		lambdaTyping: &LambdaTyping{
+			ParameterTypes: parameterTypes, ReturnType: new(returnType), TypeScope: maps.Clone(context.staticTypes),
+			Types: maps.Clone(context.types), InferenceBody: &body,
+		},
 	}, true
 }
 

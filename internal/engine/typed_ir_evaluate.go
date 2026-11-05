@@ -72,6 +72,7 @@ func runtimeValueWithExpressionSources(value RuntimeValue, sourcePath string, so
 	result := value
 	locations := slices.Clone(result.Value.SourceLocations)
 	for _, dependency := range dependencies {
+		result.Value.OmitSourceSnippet = result.Value.OmitSourceSnippet || dependency.Metadata().OmitSourceSnippet
 		appendRuntimeValueSourceLocations(&locations, dependency)
 	}
 	result.Value.Span = sourceSpan
@@ -152,6 +153,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			if err != nil {
 				return RuntimeValue{}, err
 			}
+			value.Value.OmitSourceSnippet = value.Value.OmitSourceSnippet || resolved.Metadata().OmitSourceSnippet
 			value.List = append(value.List, resolved)
 		}
 	case typedExpressionMap:
@@ -162,6 +164,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			if err != nil {
 				return RuntimeValue{}, err
 			}
+			value.Value.OmitSourceSnippet = value.Value.OmitSourceSnippet || resolved.Metadata().OmitSourceSnippet
 			result := RuntimeEntry{
 				Key: entry.key, KeySpan: entry.keySpan, KeySourcePath: context.sourcePath, Value: resolved,
 			}
@@ -170,6 +173,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				if err != nil {
 					return RuntimeValue{}, err
 				}
+				value.Value.OmitSourceSnippet = value.Value.OmitSourceSnippet || key.Metadata().OmitSourceSnippet
 				if key.IsDeferred() {
 					keyExpression := cloneTypedExpression(*entry.keyExpression)
 					result.KeyExpression = &keyExpression
@@ -441,7 +445,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 		}
 
 		return RuntimeValue{
-			Value: runtimeValueData{Kind: Node, Span: expression.span, SourcePath: context.sourcePath, NodeID: &NodeIdentity{originPath: context.sourcePath, originSpan: expression.span}},
+			Value: runtimeValueData{Kind: Node, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: body.Metadata().OmitSourceSnippet, NodeID: &NodeIdentity{originPath: context.sourcePath, originSpan: expression.span}},
 			Base:  &body,
 		}, nil
 	case typedExpressionFor:
@@ -466,7 +470,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 		if !isList {
 			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("for expression expects a List, got %s", kindName(source.Kind()))))
 		}
-		result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: expression.span, SourcePath: context.sourcePath}, List: make([]RuntimeValue, 0, len(items.List))}
+		result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: source.Metadata().OmitSourceSnippet}, List: make([]RuntimeValue, 0, len(items.List))}
 		for _, item := range items.List {
 			if err := context.budget.consumeIteration(); err != nil {
 				return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, err)
@@ -478,6 +482,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			if err != nil {
 				return RuntimeValue{}, err
 			}
+			result.Value.OmitSourceSnippet = result.Value.OmitSourceSnippet || value.Metadata().OmitSourceSnippet
 			result.List = append(result.List, value)
 		}
 

@@ -177,6 +177,15 @@ func validTypedBinaryTypesCore(operator typedOperator, inferred, left, right Res
 	if operator == typedOperatorAdd && leftResolved.Name == typeString && rightResolved.Name == typeString {
 		return true
 	}
+	if operator == typedOperatorAdd && (leftResolved.Name == typeAny || rightResolved.Name == typeAny) {
+		for _, operand := range []ResolvedType{leftResolved, rightResolved} {
+			if operand.Name != typeAny && operand.Name != typeString && operand.Name != typeInt && operand.Name != typeDecimal {
+				return false
+			}
+		}
+
+		return true
+	}
 	if !isArithmeticOperator(operator) {
 		return false
 	}

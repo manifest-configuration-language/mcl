@@ -619,7 +619,7 @@ func inferStaticExprTypeImpl(expression Expr, bindings map[string]TypeAnalysis, 
 			path = tail
 		}
 		if optional {
-			return ResolvedType{}, false, nil
+			current = joinStaticTypes(current, ResolvedType{Name: typeNull})
 		}
 
 		return current, staticTypeIsKnown(current), nil
@@ -1308,6 +1308,16 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 			return joinStaticTypes(withoutNull, right), true, nil
 		}
 	case typedOperatorAdd:
+		if leftKnown && rightKnown {
+			switch {
+			case left.Name == typeAny && (right.Name == typeString || right.Name == typeInt || right.Name == typeDecimal):
+				return right, true, nil
+			case right.Name == typeAny && (left.Name == typeString || left.Name == typeInt || left.Name == typeDecimal):
+				return left, true, nil
+			case left.Name == typeAny && right.Name == typeAny:
+				return ResolvedType{Name: typeAny}, true, nil
+			}
+		}
 		if leftKnown && left.Name != typeString && left.Name != typeInt && left.Name != typeDecimal {
 			return ResolvedType{}, false, errors.New("operator + expects two numeric operands of the same type or two String operands")
 		}

@@ -1348,6 +1348,9 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if loader.runtimeTypes == nil {
 		loader.runtimeTypes = make(map[string]map[string]ResolvedType)
 	}
+	if loader.analysis == nil {
+		loader.analysis = &TypeAnalysisContext{}
+	}
 	if err := loader.ctx.Err(); err != nil {
 		return nil, nil, nil, err
 	}
@@ -1360,7 +1363,9 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	loader.loadedModules[path] = struct{}{}
 	if !entry {
 		if exports, cached := loader.runtimeCache[path]; cached {
-			state := &EvaluationState{Types: maps.Clone(loader.runtimeTypes[path]), Allocations: loader.allocations}
+			state := &EvaluationState{
+				Types: maps.Clone(loader.runtimeTypes[path]), Allocations: loader.allocations,
+			}
 
 			return exports, &RuntimeBundle{}, state, nil
 		}
@@ -1440,8 +1445,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 				return nil, nil, nil, fmt.Errorf("%s:%d: %w", path, declaration.Line, err)
 			}
 			var dependencyBundle *RuntimeBundle
-			var dependencyState *EvaluationState
-			entries, dependencyBundle, dependencyState, err = loader.evaluateRuntime(dependency, false)
+			entries, dependencyBundle, _, err = loader.evaluateRuntime(dependency, false)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -1451,7 +1455,6 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 			for name, typeExpr := range loader.runtimeTypes[dependency] {
 				state.Types[declaration.Name+"."+name] = typeExpr
 			}
-			_ = dependencyState
 		}
 		if err := loader.allocations.consume(len(entries) + 1); err != nil {
 			return nil, nil, nil, sourceDiagnostic(path, declaration.Span, err)
@@ -1495,6 +1498,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 			if ok && declaration.Exported {
 				typeExpr := state.Types[declaration.Name]
 				typeExpr.ScopeID = scopeID
+				typeExpr = expandStaticTypeAliases(typeExpr, state.Types, state.Module.Analysis, make(map[string]bool))
 				exportedTypes[declaration.Name] = typeExpr
 			}
 		}

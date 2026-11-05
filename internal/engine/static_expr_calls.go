@@ -577,6 +577,9 @@ func inferStaticHigherOrderBuiltin(item builtin, arguments []Expr, argumentTypes
 			return ResolvedType{}, false, nil
 		}
 		element, isList := staticListElement(argumentTypes[0], types)
+		if !isList && argumentTypes[0].Name == typeAny {
+			element, isList = ResolvedType{Name: typeAny}, true
+		}
 		if !isList {
 			return ResolvedType{}, false, errors.New("fold expects a List")
 		}
@@ -626,6 +629,9 @@ func inferStaticHigherOrderBuiltin(item builtin, arguments []Expr, argumentTypes
 		return ResolvedType{}, false, nil
 	}
 	element, isList := staticListElement(argumentTypes[0], types)
+	if !isList && argumentTypes[0].Name == typeAny {
+		element, isList = ResolvedType{Name: typeAny}, true
+	}
 	if !isList {
 		return ResolvedType{}, false, fmt.Errorf("%s expects a List", function)
 	}
@@ -669,6 +675,9 @@ func inferStaticHigherOrderBuiltin(item builtin, arguments []Expr, argumentTypes
 		}
 		if function == fnExactlyOne {
 			return element, true, nil
+		}
+		if argumentTypes[0].Name == typeAny {
+			return ResolvedType{Name: typeList, Element: &element}, true, nil
 		}
 
 		return argumentTypes[0], true, nil

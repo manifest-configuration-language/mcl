@@ -292,6 +292,21 @@ func specializedBinaryResultType(operator typedOperator, left, right ResolvedTyp
 	if operator == typedOperatorAdd && left.Name == typeString && right.Name == typeString {
 		return ResolvedType{Name: typeString}, true
 	}
+	if operator == typedOperatorAdd && (left.Name == typeAny || right.Name == typeAny) {
+		for _, operand := range []ResolvedType{left, right} {
+			if operand.Name != typeAny && operand.Name != typeString && operand.Name != typeInt && operand.Name != typeDecimal {
+				return ResolvedType{}, false
+			}
+		}
+		if left.Name == typeAny && right.Name == typeAny {
+			return ResolvedType{Name: typeAny}, true
+		}
+		if left.Name == typeAny {
+			return right, true
+		}
+
+		return left, true
+	}
 	if left.Name == right.Name && (left.Name == typeInt || left.Name == typeDecimal) && isArithmeticOperator(operator) {
 		return left, true
 	}

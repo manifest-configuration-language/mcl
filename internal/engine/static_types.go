@@ -307,6 +307,9 @@ func inferStaticHigherOrder(function string, analysis TypeAnalysis, inputs []Res
 			continue
 		}
 		if parameter.Type.Name != "" || parameter.Type.Fields != nil || parameter.Type.OpenRecord || parameter.Type.Element != nil || len(parameter.Type.Options) != 0 {
+			if input.Name == typeAny {
+				continue
+			}
 			matches, compatible := staticTypeAssignable(input, parameter.Type, types, analysis.typeContext)
 			if compatible && !matches {
 				name := parameter.Name
@@ -1358,6 +1361,38 @@ func inheritStaticTypeScope(typeExpr ResolvedType, scope TypeScopeID) ResolvedTy
 	}
 	if typeExpr.ReturnType != nil {
 		returnType := inheritStaticTypeScope(*typeExpr.ReturnType, scope)
+		typeExpr.ReturnType = &returnType
+	}
+
+	return typeExpr
+}
+
+func expandStaticTypeAliases(typeExpr ResolvedType, types map[string]ResolvedType, analysis *TypeAnalysisContext, resolving map[string]bool) ResolvedType {
+	if resolved, known := resolveStaticAlias(typeExpr, types, resolving, analysis); known {
+		typeExpr = resolved
+	}
+	for index := range typeExpr.Options {
+		typeExpr.Options[index] = expandStaticTypeAliases(typeExpr.Options[index], types, analysis, resolving)
+	}
+	for index := range typeExpr.Arguments {
+		typeExpr.Arguments[index] = expandStaticTypeAliases(typeExpr.Arguments[index], types, analysis, resolving)
+	}
+	if typeExpr.Element != nil {
+		element := expandStaticTypeAliases(*typeExpr.Element, types, analysis, resolving)
+		typeExpr.Element = &element
+	}
+	if typeExpr.AdditionalProperties != nil {
+		additional := expandStaticTypeAliases(*typeExpr.AdditionalProperties, types, analysis, resolving)
+		typeExpr.AdditionalProperties = &additional
+	}
+	for index := range typeExpr.Fields {
+		typeExpr.Fields[index].Type = expandStaticTypeAliases(typeExpr.Fields[index].Type, types, analysis, resolving)
+	}
+	for index := range typeExpr.Parameters {
+		typeExpr.Parameters[index].Type = expandStaticTypeAliases(typeExpr.Parameters[index].Type, types, analysis, resolving)
+	}
+	if typeExpr.ReturnType != nil {
+		returnType := expandStaticTypeAliases(*typeExpr.ReturnType, types, analysis, resolving)
 		typeExpr.ReturnType = &returnType
 	}
 

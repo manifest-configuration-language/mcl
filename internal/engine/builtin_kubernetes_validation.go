@@ -87,7 +87,7 @@ func builtinKubernetesValidationDiagnostic(value RuntimeValue, kind, apiVersion 
 		metadata := primary.Metadata()
 		related = withoutSourceLocation(related, metadata.SourcePath, metadata.Span)
 
-		return SourceDiagnosticError{Path: metadata.SourcePath, Code: "MCL-K8S", Message: message, Span: metadata.Span, Related: related, Cause: errors.Join(validationErrors...)}
+		return SourceDiagnosticError{Path: metadata.SourcePath, Code: "MCL-K8S", Message: message, Span: metadata.Span, Related: related, OmitSourceSnippet: metadata.OmitSourceSnippet, Cause: errors.Join(validationErrors...)}
 	}
 
 	return fmt.Errorf("%s: %w", message, errors.Join(validationErrors...))

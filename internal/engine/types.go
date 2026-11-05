@@ -272,10 +272,18 @@ func checkRuntimeType(value RuntimeValue, typeExpr ResolvedType, types map[strin
 	if err := checkRuntimeTypeValue(value, typeExpr, types, resolving, analyses...); err != nil {
 		metadata := value.Metadata()
 		if diagnostic, ok := SourceDiagnosticFromError(err); ok && diagnostic.Path == "" && diagnostic.Span.End <= diagnostic.Span.Start && len(diagnostic.Related) != 0 {
-			return err
+			diagnostic.OmitSourceSnippet = diagnostic.OmitSourceSnippet || metadata.OmitSourceSnippet
+
+			return diagnostic
+		}
+		diagnosticErr := sourceDiagnostic(metadata.SourcePath, metadata.Span, typeDiagnostic(err))
+		if diagnostic, ok := SourceDiagnosticFromError(diagnosticErr); ok {
+			diagnostic.OmitSourceSnippet = diagnostic.OmitSourceSnippet || metadata.OmitSourceSnippet
+
+			return diagnostic
 		}
 
-		return sourceDiagnostic(metadata.SourcePath, metadata.Span, typeDiagnostic(err))
+		return diagnosticErr
 	}
 
 	return nil
@@ -425,6 +433,7 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 
 				return err
 			}
+			instantiated = inheritStaticTypeScope(instantiated, definition.ScopeID)
 			err = checkRuntimeType(original, instantiated, types, resolving, analysis)
 			delete(resolving, typeExpr.Name)
 			if err != nil {
@@ -610,7 +619,7 @@ func runtimeMapKeyDiagnostic(containingMap RuntimeValue, entry RuntimeEntry, err
 	related := appendSourceLocations(nil, locations[:len(locations)-1], "", SourceSpan{}, "")
 	metadata := containingMap.Metadata()
 	related = appendSourceLocations(related, metadata.SourceLocations, metadata.SourcePath, metadata.Span, "Containing map")
-	diagnostic := SourceDiagnosticError{Path: primary.Path, Code: code, Message: err.Error(), Span: primary.Span, Related: related, Cause: err}
+	diagnostic := SourceDiagnosticError{Path: primary.Path, Code: code, Message: err.Error(), Span: primary.Span, Related: related, OmitSourceSnippet: metadata.OmitSourceSnippet || entry.Value.Metadata().OmitSourceSnippet, Cause: err}
 	if unknownField.suggestion != "" {
 		diagnostic.Message = fmt.Sprintf("unknown field %q; did you mean %q?", unknownField.name, unknownField.suggestion)
 	}
@@ -698,9 +707,11 @@ func schemaValidationRuntimeDiagnostic(value RuntimeValue, err error) error {
 	validation = schemaValidationCause(validation)
 	current := runtimeNodeContents(value)
 	var related []SourceDiagnosticLocation
+	omitSourceSnippet := false
 	for _, part := range validation.InstanceLocation {
 		current = runtimeNodeContents(current)
 		metadata := current.Metadata()
+		omitSourceSnippet = omitSourceSnippet || metadata.OmitSourceSnippet
 		switch current.Kind() {
 		case Map:
 			related = appendSourceLocations(related, metadata.SourceLocations, metadata.SourcePath, metadata.Span, "Containing map")
@@ -735,19 +746,20 @@ func schemaValidationRuntimeDiagnostic(value RuntimeValue, err error) error {
 						code = "E201"
 					}
 
-					return SourceDiagnosticError{Path: primary.Path, Code: code, Message: err.Error(), Span: primary.Span, Related: withoutSourceLocation(related, primary.Path, primary.Span), Cause: err}
+					return SourceDiagnosticError{Path: primary.Path, Code: code, Message: err.Error(), Span: primary.Span, Related: withoutSourceLocation(related, primary.Path, primary.Span), OmitSourceSnippet: omitSourceSnippet || metadata.OmitSourceSnippet || entry.Value.Metadata().OmitSourceSnippet, Cause: err}
 				}
 			}
 		}
 	}
 	metadata := current.Metadata()
+	omitSourceSnippet = omitSourceSnippet || metadata.OmitSourceSnippet
 	if metadata.SourcePath != "" && metadata.Span.End > metadata.Span.Start {
 		related = appendSourceLocations(related, metadata.SourceLocations, metadata.SourcePath, metadata.Span, "Invalid value")
 
-		return SourceDiagnosticError{Path: metadata.SourcePath, Code: codeMCLType, Message: err.Error(), Span: metadata.Span, Related: withoutSourceLocation(related, metadata.SourcePath, metadata.Span), Cause: err}
+		return SourceDiagnosticError{Path: metadata.SourcePath, Code: codeMCLType, Message: err.Error(), Span: metadata.Span, Related: withoutSourceLocation(related, metadata.SourcePath, metadata.Span), OmitSourceSnippet: omitSourceSnippet, Cause: err}
 	}
 	if len(related) > 0 {
-		return SourceDiagnosticError{Path: related[0].Path, Code: codeMCLType, Message: err.Error(), Span: related[0].Span, Related: related[1:], Cause: err}
+		return SourceDiagnosticError{Path: related[0].Path, Code: codeMCLType, Message: err.Error(), Span: related[0].Span, Related: related[1:], OmitSourceSnippet: omitSourceSnippet, Cause: err}
 	}
 
 	return err
@@ -769,6 +781,7 @@ func schemaValidationRuntimeMultipleDiagnostic(value RuntimeValue, validation *j
 	collect(validation)
 	var primary SourceDiagnosticLocation
 	var related []SourceDiagnosticLocation
+	omitSourceSnippet := false
 	for _, leaf := range leaves {
 		if schemaValidationTargetsUnknownProperty(leaf) {
 			return nil, false
@@ -809,6 +822,7 @@ func schemaValidationRuntimeMultipleDiagnostic(value RuntimeValue, validation *j
 			continue
 		}
 		metadata := current.Metadata()
+		omitSourceSnippet = omitSourceSnippet || metadata.OmitSourceSnippet
 		if metadata.SourcePath == "" || metadata.Span.End <= metadata.Span.Start {
 			continue
 		}
@@ -823,7 +837,7 @@ func schemaValidationRuntimeMultipleDiagnostic(value RuntimeValue, validation *j
 		return nil, false
 	}
 
-	return SourceDiagnosticError{Path: primary.Path, Code: codeMCLType, Message: err.Error(), Span: primary.Span, Related: withoutSourceLocation(related, primary.Path, primary.Span), Cause: err}, true
+	return SourceDiagnosticError{Path: primary.Path, Code: codeMCLType, Message: err.Error(), Span: primary.Span, Related: withoutSourceLocation(related, primary.Path, primary.Span), OmitSourceSnippet: omitSourceSnippet, Cause: err}, true
 }
 
 func runtimeMapEntry(value RuntimeValue, key string) (RuntimeEntry, bool) {

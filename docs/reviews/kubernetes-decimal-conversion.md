@@ -16,3 +16,8 @@ MCLのDecimal演算、通常のJSON出力、整数の範囲制限は変更しな
 
 純粋な数値変換の回帰テストで、Histogram bucket、通常の小数、末尾ゼロ、指数表記、精度欠落、オーバーフロー、アンダーフローを確認する。
 infraでは`actions-runners`のApplicationに含まれるHistogram bucketが、Manifestを補正せずに評価できることを確認する。
+
+## 公開バージョン
+
+[MCL v0.3.31](https://github.com/manifest-configuration-language/mcl/releases/tag/v0.3.31)で公開済みです。
+[Release workflow](https://github.com/manifest-configuration-language/mcl/actions/runs/42042596660)のCLI、WASM、attestation、GitHub Release、npm公開がすべて成功しました。

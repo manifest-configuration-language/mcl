@@ -147,6 +147,232 @@ emit normalized[0].spec.template.spec.containers[0].args
 	}
 }
 
+func TestTypedOverlaySupportsOptionalRecordFieldCoalescing(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"config.mcl": &fstest.MapFile{Data: []byte("export type Settings =\n  apiServer: String\n  ingressLoadBalancerIP?: String\n")},
+	}
+	const source = `import "./config.mcl" as config
+let defaults =
+  ingressController: {}
+fn values(settings: config.Settings) -> Map<String, Any> = defaults with:
+  ingressController:
+    loadBalancerIP: settings.ingressLoadBalancerIP ?? ""
+let settings: config.Settings =
+  apiServer: "api.example.test"
+emit values(settings)
+`
+	bundle, err := EvaluateProjectSourceContext(t.Context(), "/virtual-project", "main.mcl", source, files, nil)
+	if err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != Map {
+		t.Fatalf("bundle artifacts = %#v, want one Map", bundle.Artifacts)
+	}
+	var controller Value
+	var foundController bool
+	for _, entry := range bundle.Artifacts[0].Value.Map {
+		if entry.Key == "ingressController" {
+			controller, foundController = entry.Value, true
+		}
+	}
+	if !foundController {
+		t.Fatalf("result map = %#v, want ingressController", bundle.Artifacts[0].Value.Map)
+	}
+	var loadBalancerIP Value
+	var foundLoadBalancerIP bool
+	for _, entry := range controller.Map {
+		if entry.Key == "loadBalancerIP" {
+			loadBalancerIP, foundLoadBalancerIP = entry.Value, true
+		}
+	}
+	if !foundLoadBalancerIP || loadBalancerIP.Kind != String || loadBalancerIP.Text != "" {
+		t.Fatalf("loadBalancerIP = %#v, %t, want an empty String for the absent optional field", loadBalancerIP, foundLoadBalancerIP)
+	}
+}
+
+func TestHigherOrderListBuiltinsAcceptAnyWithRuntimeListCheck(t *testing.T) {
+	t.Parallel()
+	const source = `import "std:list" as lists
+fn namedMapper(resource: Map<String, Any>) -> Any = resource.name
+let resource: Map<String, Any> =
+  subjects:
+    - name: "alice"
+    - name: "bob"
+let names: List<Any> = lists.map(resource.subjects, namedMapper)
+emit names
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateASTContext() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != List || len(bundle.Artifacts[0].Value.List) != 2 || bundle.Artifacts[0].Value.List[0].Text != "alice" || bundle.Artifacts[0].Value.List[1].Text != "bob" {
+		t.Fatalf("map result = %#v, want ordered names [alice, bob]", bundle.Artifacts)
+	}
+
+	invalidSource := strings.Replace(source, "subjects:\n    - name: \"alice\"\n    - name: \"bob\"", "subjects: \"not a list\"", 1)
+	module, err = ParseAST(invalidSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = EvaluateASTContext(t.Context(), module)
+	if err == nil || !strings.Contains(err.Error(), "map expects a List") {
+		t.Fatalf("EvaluateASTContext() error = %v, want runtime List guard for Any", err)
+	}
+}
+
+func TestStringAdditionAcceptsAnyAndChecksAtRuntime(t *testing.T) {
+	t.Parallel()
+	const source = `let app: Map<String, Any> =
+  name: "kube-oidc-proxy"
+fn dnsNames(namespace: String) -> List<String> =
+  - app.name
+  - app.name + "." + namespace
+let names = dnsNames("system")
+emit names
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateASTContext() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || len(bundle.Artifacts[0].Value.List) != 2 || bundle.Artifacts[0].Value.List[1].Text != "kube-oidc-proxy.system" {
+		t.Fatalf("DNS names = %#v, want name concatenated with namespace", bundle.Artifacts)
+	}
+	invalidSource := strings.Replace(source, `name: "kube-oidc-proxy"`, `name: true`, 1)
+	module, err = ParseAST(invalidSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = EvaluateASTContext(t.Context(), module)
+	if err == nil || !strings.Contains(err.Error(), "operator +") {
+		t.Fatalf("EvaluateASTContext() error = %v, want runtime String operand check", err)
+	}
+}
+
+func TestTypedNodeExpressionSupportsMapAnyFunctionReturn(t *testing.T) {
+	t.Parallel()
+	const source = `let appName = "service"
+fn serviceAccount(namespace: String) -> Map<String, Any> = node:
+  apiVersion: "v1"
+  kind: "ServiceAccount"
+  metadata:
+    name: appName
+    namespace: namespace
+emit serviceAccount("system")
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EvaluateASTContext(t.Context(), module); err != nil {
+		t.Fatalf("EvaluateASTContext() error = %v", err)
+	}
+}
+
+func TestTypedListExpressionSupportsMapAnyFunctionReturn(t *testing.T) {
+	t.Parallel()
+	const source = `fn resources(namespace: String) -> List<Map<String, Any>> =
+  -
+    apiVersion: "v1"
+    kind: "ServiceAccount"
+    metadata:
+      name: "service"
+      namespace: namespace
+  -
+    apiVersion: "v1"
+    kind: "ConfigMap"
+    metadata:
+      name: "settings"
+      namespace: namespace
+emit resources("system")
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateASTContext() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != List || len(bundle.Artifacts[0].Value.List) != 2 {
+		t.Fatalf("bundle artifacts = %#v, want one List with two Maps", bundle.Artifacts)
+	}
+}
+
+func TestConditionalListUsesOptionalBooleanFallbackInMapAny(t *testing.T) {
+	t.Parallel()
+	const source = `type Settings =
+  hddIsDefault?: Bool
+fn classes(settings: Settings, enabled: Bool) -> List<Map<String, Any>> =
+  if enabled:
+    -
+      name: "hdd"
+      default: settings.hddIsDefault ?? false
+  else:
+    []
+let settings: Settings = {}
+emit classes(settings, false)
+emit classes(settings, true)
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateASTContext() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 2 || len(bundle.Artifacts[0].Value.List) != 0 || len(bundle.Artifacts[1].Value.List) != 1 {
+		t.Fatalf("conditional results = %#v, want empty and one-item Lists", bundle.Artifacts)
+	}
+}
+
+func TestNestedMapAnyOverlayAndListMap(t *testing.T) {
+	t.Parallel()
+	const source = `import "std:list" as lists
+fn withSubjectNamespace(subject: Map<String, Any>) -> Map<String, Any> = subject with:
+  namespace: "system"
+fn serviceAccountSubject(subject: Map<String, Any>) -> Map<String, Any> =
+  if subject.kind == "ServiceAccount":
+    withSubjectNamespace(subject)
+  else:
+    subject
+fn withSubjectNamespaces(resource: Map<String, Any>) -> Map<String, Any> = resource with:
+  subjects: lists.map(resource.subjects, serviceAccountSubject)
+let binding: Map<String, Any> =
+  subjects:
+    - kind: "ServiceAccount"
+      name: "controller"
+    - kind: "User"
+      name: "controller@example.test"
+let result = withSubjectNamespaces(binding)
+emit result.subjects
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateASTContext() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 1 || len(bundle.Artifacts[0].Value.List) != 2 {
+		t.Fatalf("subjects = %#v, want two transformed values", bundle.Artifacts)
+	}
+	first, second := bundle.Artifacts[0].Value.List[0], bundle.Artifacts[0].Value.List[1]
+	if first.Map[2].Key != "namespace" || first.Map[2].Value.Text != "system" || second.Map[0].Key != "kind" {
+		t.Fatalf("mapped subjects = %#v, want namespace added to ServiceAccount only", bundle.Artifacts[0].Value.List)
+	}
+}
+
 func TestTypedReplaceAtPreservesKnownErrorsAndRuntimeGuardsAny(t *testing.T) {
 	t.Parallel()
 	for name, source := range map[string]string{

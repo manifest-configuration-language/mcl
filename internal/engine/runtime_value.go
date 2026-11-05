@@ -22,15 +22,16 @@ type RuntimeValue struct {
 }
 
 type runtimeValueData struct {
-	Kind            Kind
-	Span            SourceSpan
-	Bool            bool
-	Text            string
-	SourcePath      string
-	SourceLocations []SourceDiagnosticLocation
-	Typing          *ValueTyping
-	NodeID          *NodeIdentity
-	Lifecycle       *Lifecycle
+	Kind              Kind
+	Span              SourceSpan
+	Bool              bool
+	Text              string
+	SourcePath        string
+	OmitSourceSnippet bool
+	SourceLocations   []SourceDiagnosticLocation
+	Typing            *ValueTyping
+	NodeID            *NodeIdentity
+	Lifecycle         *Lifecycle
 }
 
 func (value runtimeValueData) snapshotValue() Value {
@@ -944,6 +945,17 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	if !ok {
 		return RuntimeValue{}, errors.New("function call arguments do not match its signature")
 	}
+	lambdaTypes := state.Types
+	var lambdaAnalysis *TypeAnalysisContext
+	if state.Module != nil {
+		lambdaAnalysis = state.Module.Analysis
+	}
+	if definition.Typing != nil && definition.Typing.Types != nil {
+		lambdaTypes = definition.Typing.Types
+	}
+	if definition.ModuleContext != nil {
+		lambdaAnalysis = definition.ModuleContext.Analysis
+	}
 	substitutions := make(map[string]ResolvedType)
 	if definition.Typing != nil {
 		for index, parameterType := range definition.Typing.ParameterTypes {
@@ -957,10 +969,26 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			substitutions[parameterType.Name] = argumentAnalysis.Type
 		}
 	}
-	var types map[string]ResolvedType
-	if state != nil {
-		types = state.Types
+	if definition.Typing != nil {
+		for index, parameterType := range definition.Typing.ParameterTypes {
+			if index >= len(ordered) || isLambdaTypeVariable(parameterType) {
+				continue
+			}
+			if isRuntimeCallable(ordered[index]) {
+				continue
+			}
+			parameterType = substituteTypeParameters(parameterType, substitutions)
+			argumentAnalysis, known := inferRuntimeValueStaticType(ordered[index])
+			matches, compatible := staticTypeAssignable(argumentAnalysis.Type, parameterType, lambdaTypes, lambdaAnalysis)
+			if known && compatible && matches {
+				continue
+			}
+			if err := checkRuntimeType(ordered[index], parameterType, lambdaTypes, make(map[string]bool), lambdaAnalysis); err != nil {
+				return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, fmt.Errorf("argument %q: %w", definition.Parameters[index], err))
+			}
+		}
 	}
+	types := lambdaTypes
 	body, err := specializeTypedExpression(definition.Body, substitutions, types)
 	if err != nil {
 		return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, err)
@@ -983,6 +1011,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	childState := *state
 	childState.Environment = environment
 	childState.SourcePath = lambda.Value.SourcePath
+	childState.Types = lambdaTypes
 	if definition.ModuleContext != nil {
 		childState.Module = definition.ModuleContext
 	}

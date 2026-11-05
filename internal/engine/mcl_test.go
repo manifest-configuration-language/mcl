@@ -1284,3 +1284,211 @@ emit result
 		t.Fatalf("EvaluateSource() error = %v, want duplicate merge key diagnostic", err)
 	}
 }
+
+func TestLocalAliasInAnnotatedListLiteral(t *testing.T) {
+	t.Parallel()
+	source := `type Service =
+  name: String
+  port: Int
+  command: List<String>
+
+let services: List<Service> =
+  - name: "api"
+    port: 8080
+    command:
+      - "serve"
+emit services
+`
+	if _, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want a local record alias in a list literal to resolve", err)
+	}
+}
+
+func TestImportedNestedTypeScopesInFunctionsAndNodeExpressions(t *testing.T) {
+	t.Parallel()
+	source := `import "std:list" as lists
+import "./config.mcl" as config
+
+fn ingressEnabled(input: config.Configuration) -> Bool =
+  if lists.contains(input.features, "ingress"):
+    input.settings.enabled ?? false
+  else:
+    false
+
+fn schedule(settings: config.Settings) -> Map<String, Any> = node:
+  schedule: settings.tileRefresh.schedule
+
+emit true
+`
+	root := t.TempDir()
+	configSource := `export type Feature = "ingress" | "metrics"
+export type TileRefreshSettings =
+  schedule: String
+export type Settings =
+  enabled?: Bool
+  tileRefresh: TileRefreshSettings
+export type Configuration =
+  features: List<Feature>
+  settings: Settings
+`
+
+	if err := os.WriteFile(filepath.Join(root, "config.mcl"), []byte(configSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want nested imported aliases in function bodies", err)
+	}
+}
+
+func TestImportedLambdaCallbackRetainsPrivateTypeScope(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	library := `import "std:list" as lists
+type Item =
+  name: String
+export let records: List<Item> =
+  - name: "private"
+fn resource(item: Item) -> Map<String, String> =
+  name: item.name
+export fn names() -> List<Map<String, String>> = lists.map(records, fn(config) => resource(config))
+`
+	if err := os.WriteFile(filepath.Join(root, "library.mcl"), []byte(library), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := `import "./library.mcl" as library
+type Item =
+  name: Int
+emit library.names()
+`
+	bundle, err := EvaluateSource(filepath.Join(root, "main.mcl"), source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want the callback to use its defining module's private Item", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != List || len(bundle.Artifacts[0].Value.List) != 1 {
+		t.Fatalf("EvaluateSource() artifacts = %#v, want one returned record", bundle.Artifacts)
+	}
+}
+
+func TestRepeatedImportedModuleRetainsNestedTypeScope(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := map[string]string{
+		"config.mcl": `export type Feature = "ingress" | "metrics"
+type TileRefreshSettings =
+  schedule: String
+export type Settings =
+  enabled?: Bool
+  tileRefresh: TileRefreshSettings
+export type Configuration =
+  features: List<Feature>
+  settings: Settings
+`,
+		"left.mcl": `import "std:list" as lists
+import "./config.mcl" as config
+export fn ingressEnabled(input: config.Configuration) -> Bool =
+  if lists.contains(input.features, "ingress"):
+    input.settings.enabled ?? false
+  else:
+    false
+`,
+		"right.mcl": `import "./config.mcl" as config
+export fn schedule(settings: config.Settings) -> Map<String, Any> = node:
+  schedule: settings.tileRefresh.schedule
+`,
+	}
+	for path, content := range files {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := `import "./left.mcl" as left
+import "./right.mcl" as right
+emit true
+`
+	if _, err := EvaluateSource(filepath.Join(root, "main.mcl"), source); err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want shared dependency scopes to survive the module cache", err)
+	}
+}
+
+func TestRepeatedImportDoesNotReplacePrivateTypeScopeWithExports(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := map[string]string{
+		"shared.mcl": `import "std:list" as lists
+type Item =
+  name: String
+let records: List<Item> =
+  - name: "private"
+fn resource(item: Item) -> Map<String, String> =
+  name: item.name
+export fn names() -> List<Map<String, String>> = lists.map(records, fn(config) => resource(config))
+`,
+		"left.mcl": `import "./shared.mcl" as shared
+export fn names() -> List<Map<String, String>> = shared.names()
+`,
+		"right.mcl": `import "./shared.mcl" as shared
+export let loaded = true
+`,
+	}
+	for path, content := range files {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := `import "./left.mcl" as left
+import "./right.mcl" as right
+emit left.names()
+`
+	bundle, err := EvaluateSource(filepath.Join(root, "main.mcl"), source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want the cached import to preserve its private alias scope", err)
+	}
+	if len(bundle.Artifacts) != 1 || bundle.Artifacts[0].Value.Kind != List || len(bundle.Artifacts[0].Value.List) != 1 {
+		t.Fatalf("EvaluateSource() artifacts = %#v, want one private-alias record", bundle.Artifacts)
+	}
+}
+
+func TestOptionalListOfMapsCoalescesWithEmptyListInMapBody(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.mcl"), []byte(`export type Database =
+  extensions?: List<Map<String, String>>
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := `import "./config.mcl" as config
+fn databaseResource(database: config.Database) -> Map<String, Any> =
+  extensions: database.extensions ?? []
+let empty: config.Database = {}
+let populated: config.Database =
+  extensions:
+    - name: "pgcrypto"
+      version: "1.0"
+emit databaseResource(empty)
+emit databaseResource(populated)
+`
+	bundle, err := EvaluateSource(filepath.Join(root, "main.mcl"), source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want an optional List<Map<String, String>> to coalesce with an empty list in a map body", err)
+	}
+	if len(bundle.Artifacts) != 2 {
+		t.Fatalf("EvaluateSource() artifacts = %#v, want empty-fallback and present-list Maps", bundle.Artifacts)
+	}
+	for index, expectedLength := range []int{0, 1} {
+		value := bundle.Artifacts[index].Value
+		if value.Kind != Map {
+			t.Fatalf("artifact %d kind = %s, want Map", index, kindName(value.Kind))
+		}
+		var extensions Value
+		found := false
+		for _, entry := range value.Map {
+			if entry.Key == "extensions" {
+				extensions = entry.Value
+				found = true
+			}
+		}
+		if !found || extensions.Kind != List || len(extensions.List) != expectedLength {
+			t.Fatalf("artifact %d extensions = %#v, want List with %d items", index, extensions, expectedLength)
+		}
+	}
+}

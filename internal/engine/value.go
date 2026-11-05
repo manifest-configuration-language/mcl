@@ -50,6 +50,7 @@ type LambdaTyping struct {
 	ParameterTypes []ResolvedType
 	ReturnType     *ResolvedType
 	TypeScope      map[string]TypeAnalysis
+	Types          map[string]ResolvedType
 	InferenceBody  *typedExpression
 }
 

@@ -177,7 +177,7 @@ func runtimeValueFromJSONAtDepth(raw jsontext.Value, depth int, source Parameter
 	if depth > maxCallDepth {
 		return RuntimeValue{}, fmt.Errorf("parameter value nesting exceeds %d levels", maxCallDepth)
 	}
-	metadata := runtimeValueData{SourcePath: source.SourcePath}
+	metadata := runtimeValueData{SourcePath: source.SourcePath, OmitSourceSnippet: hasSource}
 	if hasSource {
 		if location, exists := source.Locations[pointer]; exists {
 			metadata.Span = location.Span

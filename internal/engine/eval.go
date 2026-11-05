@@ -461,6 +461,8 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 				if err != nil {
 					return nil, nil, sourceDiagnostic(declaration.SourcePath, declaration.Annotation.Span, err)
 				}
+				resolved = inheritStaticTypeScope(resolved, TypeScopeID(declaration.SourcePath))
+				state.Module.Analysis.registerScope(resolved.ScopeID, state.Types)
 				annotation = &resolved
 			}
 			analysis, known, err := inferStaticExprAnalysisWithExpected(expression, annotation, state.StaticTypes, state.Types)
@@ -567,7 +569,10 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			if !supported {
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, functionBodySpan(declaration.Function), fmt.Errorf("expression type %T is not supported by the typed evaluator", declaration.Function.Expression))
 			}
-			lambdaTyping := &LambdaTyping{ParameterTypes: parameterTypes, ReturnType: signature.Type.ReturnType, TypeScope: maps.Clone(bindings)}
+			lambdaTyping := &LambdaTyping{
+				ParameterTypes: parameterTypes, ReturnType: signature.Type.ReturnType,
+				TypeScope: maps.Clone(bindings), Types: maps.Clone(state.Types),
+			}
 			lambda := RuntimeValue{
 				Value:  runtimeValueData{Kind: Lambda, Span: functionBodySpan(declaration.Function), SourcePath: declaration.SourcePath},
 				Lambda: &typedLambda{Parameters: parameterNames, ParameterSpans: parameterSpans, Locals: locals, Body: body, Scope: maps.Clone(state.Environment), ScopeSpan: functionBodySpan(declaration.Function), Typing: lambdaTyping, ModuleContext: state.Module},
@@ -1099,7 +1104,7 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 		if compatibility.isDefinitelyIncompatible() {
 			return TypeAnalysis{}, typeDiagnostic(fmt.Errorf("body returns %s, declared %s", staticTypeName(inferred), staticTypeName(*returnType)))
 		}
-		if compatibility == typeCompatibilityUnknown && (inferred.Name == typeAny || !staticTypeContainsAny(*returnType)) {
+		if compatibility == typeCompatibilityUnknown && (inferred.Name == typeAny || !staticTypeContainsAny(inferred) && !staticTypeContainsAny(*returnType)) {
 			return TypeAnalysis{}, typeDiagnostic(fmt.Errorf("body return type cannot be checked against %s", staticTypeName(*returnType)))
 		}
 		updated := preserveBundleProvenance(inferredAnalysis, *returnType, types)

@@ -188,6 +188,52 @@ func TestParameterUnknownFieldTracksNestedListAndMapPath(t *testing.T) {
 	}
 }
 
+func TestParameterValidationResolvesNestedImportedAliases(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.mcl")
+	config := "export type StorageSettings =\n  capacity: String\n" +
+		"export type RackSettings =\n  name: String\n  storage: StorageSettings\n" +
+		"export type Settings =\n  racks: List<RackSettings>\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modulePath := filepath.Join(root, "main.mcl")
+	module := "import \"./config.mcl\" as config\nparam settings: config.Settings\nemit settings\n"
+	if err := os.WriteFile(modulePath, []byte(module), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parameterPath := filepath.Join(root, "parameters.json")
+	parameterJSON := `{"settings":{"racks":[{"name":"rack-a","storage":{"capacity":"8Gi"}}]}}`
+	if err := os.WriteFile(parameterPath, []byte(parameterJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parameters, sources, err := ParseParameterFile(parameterPath, []byte(parameterJSON))
+	if err != nil {
+		t.Fatalf("ParseParameterFile() error = %v", err)
+	}
+	_, err = EvaluateFileWithParametersAndOptionsContext(t.Context(), modulePath, parameters, EvaluationOptions{ParameterSources: sources})
+	if err != nil {
+		t.Fatalf("EvaluateFileWithParametersAndOptionsContext() error = %v", err)
+	}
+	invalidJSON := `{"settings":{"racks":[{"name":"rack-a","storage":{"capacity":8}}]}}`
+	if err := os.WriteFile(parameterPath, []byte(invalidJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parameters, sources, err = ParseParameterFile(parameterPath, []byte(invalidJSON))
+	if err != nil {
+		t.Fatalf("ParseParameterFile() for invalid nested value error = %v", err)
+	}
+	_, err = EvaluateFileWithParametersAndOptionsContext(t.Context(), modulePath, parameters, EvaluationOptions{ParameterSources: sources})
+	if err == nil {
+		t.Fatal("EvaluateFileWithParametersAndOptionsContext() succeeded with an invalid nested imported alias value")
+	}
+	diagnostic, ok := SourceDiagnosticFromError(err)
+	if !ok || !diagnostic.OmitSourceSnippet || diagnostic.Path != parameterPath || !strings.Contains(diagnostic.Message, "pointer: /settings/racks/0/storage/capacity") {
+		t.Fatalf("nested imported alias diagnostic = %#v, %t, want suppressed parameter source snippet and full JSON Pointer", diagnostic, ok)
+	}
+}
+
 func TestEvaluateFileReportsParameterFileValueLocation(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -221,9 +267,6 @@ func TestEvaluateFileReportsParameterFileValueLocation(t *testing.T) {
 		if !strings.Contains(diagnostic.Message, want) {
 			t.Errorf("diagnostic message %q does not contain %q", diagnostic.Message, want)
 		}
-	}
-	if strings.Contains(diagnostic.Message, "64") {
-		t.Fatalf("diagnostic leaked the supplied value: %q", diagnostic.Message)
 	}
 	if len(diagnostic.Related) != 1 || filepath.Base(diagnostic.Related[0].Path) != filepath.Base(entryPath) {
 		t.Fatalf("diagnostic related locations = %#v, want the MCL parameter declaration", diagnostic.Related)

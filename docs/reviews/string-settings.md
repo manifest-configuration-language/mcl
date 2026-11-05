@@ -11,7 +11,7 @@ MCLには汎用のString trimとList joinがなかったため、文字列を分
 ```mcl
 import "std:string" as strings
 
-let normalizedIP = strings.trim(settings.ingressLoadBalancerIP)
+let normalizedIP = strings.trim(settings.ingressLoadBalancerIP ?? "")
 let routeArgument = strings.join(settings.routes, ",")
 ```
 
@@ -27,4 +27,5 @@ Unicode whitespaceのtrim、区切り文字と要素順を保つjoin、静的な
 
 ## 公開バージョン
 
-MCL Release workflow完了後に公開バージョンを記録します。
+[MCL v0.3.31](https://github.com/manifest-configuration-language/mcl/releases/tag/v0.3.31)で公開済みです。
+[Release workflow](https://github.com/manifest-configuration-language/mcl/actions/runs/42042596660)のCLI、WASM、attestation、GitHub Release、npm公開がすべて成功しました。
