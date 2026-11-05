@@ -45,6 +45,56 @@ type TypeField struct {
 	Optional bool
 }
 
+type runtimeTypeFailure struct {
+	Expected string
+	Actual   string
+	Path     []runtimeTypePathSegment
+	Message  string
+}
+
+type runtimeTypePathSegment struct {
+	Value  string
+	Index  bool
+	MapKey bool
+}
+
+func (failure *runtimeTypeFailure) Error() string {
+	return failure.Message
+}
+
+func addRuntimeTypePath(err error, part, context string, index, mapKey bool) error {
+	failure, ok := errors.AsType[*runtimeTypeFailure](err)
+	if ok {
+		failure.Path = append([]runtimeTypePathSegment{{Value: part, Index: index, MapKey: mapKey}}, failure.Path...)
+		failure.Message = fmt.Sprintf(context, part) + ": " + failure.Message
+
+		return err
+	}
+	segment := runtimeTypePathSegment{Value: part, Index: index, MapKey: mapKey}
+	if diagnostic, ok := SourceDiagnosticFromError(err); ok {
+		if unknown, ok := errors.AsType[unknownTypeField](diagnostic.Cause); ok {
+			unknown.path = append([]runtimeTypePathSegment{segment}, unknown.path...)
+			diagnostic.Cause = unknown
+			diagnostic.Message = fmt.Sprintf(context, part) + ": " + diagnostic.Message
+
+			return diagnostic
+		}
+	}
+	if unknown, ok := errors.AsType[unknownTypeField](err); ok {
+		unknown.path = append([]runtimeTypePathSegment{segment}, unknown.path...)
+
+		return fmt.Errorf("%s: %w", fmt.Sprintf(context, part), unknown)
+	}
+
+	return fmt.Errorf("%s: %w", fmt.Sprintf(context, part), err)
+}
+
+func runtimeTypeFailureOf(err error) (*runtimeTypeFailure, bool) {
+	failure, ok := errors.AsType[*runtimeTypeFailure](err)
+
+	return failure, ok
+}
+
 func typeDefinitionsAST(module ModuleAST) (map[string]ResolvedType, error) {
 	types, err := collectTypeDefinitionsAST(module)
 	if err != nil {
@@ -266,7 +316,14 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 			}
 		}
 
-		return fmt.Errorf("value does not match any union member: %s", strings.Join(failures, "; "))
+		actual := kindName(value.Kind())
+		message := "value does not match any union member: " + strings.Join(failures, "; ")
+		allowed := make([]string, 0, len(typeExpr.Options))
+		for _, option := range typeExpr.Options {
+			allowed = append(allowed, staticTypeName(option))
+		}
+
+		return &runtimeTypeFailure{Expected: strings.Join(allowed, " | "), Actual: actual, Message: message}
 	}
 	if typeExpr.Name != "" && (typeExpr.Name != typeMap || typeExpr.Fields == nil) {
 		switch typeExpr.Name {
@@ -287,7 +344,7 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 				return err
 			}
 			if typeExpr.StringLiteralKnown && value.TextValue() != typeExpr.StringLiteral {
-				return fmt.Errorf("expected string %q, got %q", typeExpr.StringLiteral, value.TextValue())
+				return &runtimeTypeFailure{Expected: fmt.Sprintf("string %q", typeExpr.StringLiteral), Actual: typeExpr.Name, Message: fmt.Sprintf("expected string %q, got %q", typeExpr.StringLiteral, value.TextValue())}
 			}
 
 			return nil
@@ -309,7 +366,7 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 			}
 			for index, item := range value.List {
 				if err := checkRuntimeType(item, *typeExpr.Element, types, resolving, analysis); err != nil {
-					return fmt.Errorf("item %d: %w", index, err)
+					return addRuntimeTypePath(err, strconv.Itoa(index), "item %s", true, false)
 				}
 			}
 
@@ -326,7 +383,7 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 			}
 			for _, entry := range value.Map {
 				if err := checkRuntimeType(entry.Value, *typeExpr.Element, types, resolving, analysis); err != nil {
-					return fmt.Errorf("field %q: %w", entry.Key, err)
+					return addRuntimeTypePath(err, entry.Key, "field %q", false, true)
 				}
 			}
 
@@ -390,10 +447,10 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 					continue
 				}
 
-				return fmt.Errorf("required field %q is missing", field.Name)
+				return &runtimeTypeFailure{Expected: staticTypeName(field.Type), Actual: "missing", Path: []runtimeTypePathSegment{{Value: field.Name}}, Message: fmt.Sprintf("required field %q is missing", field.Name)}
 			}
 			if err := checkRuntimeType(fieldValue, field.Type, types, resolving, analysis); err != nil {
-				return fmt.Errorf("field %q: %w", field.Name, err)
+				return addRuntimeTypePath(err, field.Name, "field %q", false, false)
 			}
 		}
 		for _, entry := range value.Map {
@@ -405,7 +462,7 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 			}
 			if typeExpr.AdditionalProperties != nil {
 				if err := checkRuntimeType(entry.Value, *typeExpr.AdditionalProperties, types, resolving, analysis); err != nil {
-					return runtimeMapKeyDiagnostic(value, entry, fmt.Errorf("additional property: %w", err))
+					return runtimeMapKeyDiagnostic(value, entry, addRuntimeTypePath(err, entry.Key, "additional property %q", false, true))
 				}
 			}
 		}
@@ -520,7 +577,9 @@ func runtimeStringField(value RuntimeValue, key string) (string, bool) {
 
 func requireRuntimeKind(value RuntimeValue, kind Kind, typeName string) error {
 	if value.Kind() != kind {
-		return fmt.Errorf("expected %s, got %s", typeName, kindName(value.Kind()))
+		actual := kindName(value.Kind())
+
+		return &runtimeTypeFailure{Expected: typeName, Actual: actual, Message: fmt.Sprintf("expected %s, got %s", typeName, actual)}
 	}
 
 	return nil
@@ -544,6 +603,8 @@ func runtimeMapKeyDiagnostic(containingMap RuntimeValue, entry RuntimeEntry, err
 	var unknownField unknownTypeField
 	if errors.As(err, &unknownField) {
 		code = "E201"
+		unknownField.path = []runtimeTypePathSegment{{Value: unknownField.name, MapKey: true}}
+		err = unknownField
 	}
 
 	related := appendSourceLocations(nil, locations[:len(locations)-1], "", SourceSpan{}, "")

@@ -10,6 +10,8 @@ ArgoCD CMPからMCLへクラスタ情報、アプリのFeature、Settingsを渡�
 
 CMPは値をシェルコマンドへ補間せず、パラメータをJSONファイルへ書いてMCLへファイルパスを渡せます。JSON値はMCLの既存の型検査を通るため、Cluster factsとアプリ設定を型付きで検査できます。デプロイ先の列挙やApplicationSetの検証はこのCLI入力機能の責務に含めません。
 
+`--parameter-file`内の型不一致は、修正するJSON値のファイル位置とパラメータ内のJSON Pointerを示します。複数ファイルを渡した場合は、不一致が発生した値を読み込んだファイルを表示します。MCLライブラリから位置情報なしで値を渡した場合は、相対JSONパスとMCLの`param`宣言位置を表示します。ArgoCDが複数の設定を一時JSONへまとめた場合、元の`app.json`の行・列は復元しません。
+
 ## 使用例
 
 ```sh

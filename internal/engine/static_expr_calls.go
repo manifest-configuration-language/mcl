@@ -504,6 +504,46 @@ func inferStaticContainsBuiltin(_ []Expr, argumentTypes []ResolvedType, known []
 	return ResolvedType{Name: typeBool}, true, nil
 }
 
+func inferStaticStringTrimBuiltin(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 1 || len(known) != 1 {
+		return ResolvedType{}, false, nil
+	}
+	if known[0] && argumentTypes[0].Name != typeAny {
+		matches, compatible := staticTypeAssignable(argumentTypes[0], ResolvedType{Name: typeString}, types)
+		if compatible && !matches {
+			return ResolvedType{}, false, fmt.Errorf("%s expects a String", fnStringTrim)
+		}
+	}
+
+	return ResolvedType{Name: typeString}, true, nil
+}
+
+func inferStaticStringJoinBuiltin(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 2 || len(known) != 2 {
+		return ResolvedType{}, false, nil
+	}
+	if known[0] && argumentTypes[0].Name != typeAny {
+		elementType, isList := staticListElement(argumentTypes[0], types)
+		if !isList {
+			return ResolvedType{}, false, fmt.Errorf("%s expects a List<String>", fnStringJoin)
+		}
+		if elementType.Name != typeAny {
+			matches, compatible := staticTypeAssignable(elementType, ResolvedType{Name: typeString}, types)
+			if compatible && !matches {
+				return ResolvedType{}, false, fmt.Errorf("%s values must be a List<String>", fnStringJoin)
+			}
+		}
+	}
+	if known[1] && argumentTypes[1].Name != typeAny {
+		matches, compatible := staticTypeAssignable(argumentTypes[1], ResolvedType{Name: typeString}, types)
+		if compatible && !matches {
+			return ResolvedType{}, false, fmt.Errorf("%s separator must be a String", fnStringJoin)
+		}
+	}
+
+	return ResolvedType{Name: typeString}, true, nil
+}
+
 func staticContainsListElements(typeExpr ResolvedType, types map[string]ResolvedType) []ResolvedType {
 	resolved, known := resolveStaticAlias(typeExpr, types, make(map[string]bool))
 	if !known {

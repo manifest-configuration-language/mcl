@@ -14,7 +14,7 @@ import (
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
-func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string, parameters map[string]jsontext.Value, allowNondeterministicOutput bool) error {
+func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, namespace, phase, operation, path string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
 	if apiVersion == "" || kind == "" || name == "" {
 		return errors.New("explain requires --api-version, --kind, and --name")
 	}
@@ -24,7 +24,6 @@ func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, names
 	}
 
 	var bundle mcl.Bundle
-	evaluationOptions := mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput}
 	if operation != "" {
 		bundle, err = mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, filePath, operation, parameters, evaluationOptions)
 	} else {

@@ -11,7 +11,7 @@ func TestHelmLookupResourceDescriptorsUseResourceCatalogAndCRDs(t *testing.T) {
 	t.Parallel()
 	artifacts := make([]Artifact, 0, 4)
 	artifacts = append(artifacts,
-		Artifact{Value: testHelmResource("v1", "ConfigMap", map[string]Value{"name": {Kind: String, Text: "settings"}})},
+		Artifact{Value: testHelmResource("v1", "ConfigMap", map[string]Value{"name": {Kind: String, Text: testSettingsName}})},
 		Artifact{Value: testHelmResource("v1", "Namespace", map[string]Value{"name": {Kind: String, Text: testNamespace}})},
 		Artifact{Value: testHelmResource("apiextensions.k8s.io/v1", "CustomResourceDefinition", map[string]Value{"name": {Kind: String, Text: "samples.example.test"}})},
 	)
@@ -63,7 +63,7 @@ func TestHelmLookupResourceDescriptorsRejectUnknownScopeWithoutNamespace(t *test
 func TestHelmLookupResourceDescriptorsRejectDuplicateIdentity(t *testing.T) {
 	t.Parallel()
 	resource := testHelmResource("v1", "ConfigMap", map[string]Value{
-		"name": {Kind: String, Text: "settings"}, namespaceFieldName: {Kind: String, Text: testNamespace},
+		"name": {Kind: String, Text: testSettingsName}, namespaceFieldName: {Kind: String, Text: testNamespace},
 	})
 
 	_, err := helmLookupResourceDescriptors([]Artifact{{Value: resource}, {Value: resource}})

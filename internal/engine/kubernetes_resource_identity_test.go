@@ -8,6 +8,7 @@ import (
 const (
 	metadataFieldName  = "metadata"
 	namespaceFieldName = "namespace"
+	testSettingsName   = "settings"
 	testNamespace      = "production"
 )
 
@@ -41,7 +42,7 @@ func TestNormalizeKubernetesResourceIdentityAfterValidation(t *testing.T) {
 		{Key: "apiVersion", Value: Value{Kind: String, Text: "v1"}},
 		{Key: "kind", Value: Value{Kind: String, Text: "ConfigMap"}},
 		{Key: metadataFieldName, Value: Value{Kind: Map, Map: []Entry{
-			{Key: "name", Value: Value{Kind: String, Text: "settings"}},
+			{Key: "name", Value: Value{Kind: String, Text: testSettingsName}},
 		}}},
 	}}
 

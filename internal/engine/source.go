@@ -39,14 +39,15 @@ const (
 
 // SourceDiagnosticError はソース上の位置を持つ評価診断です。
 type SourceDiagnosticError struct {
-	Path       string
-	Code       string
-	Message    string
-	TypeName   string
-	SchemaPath string
-	Span       SourceSpan
-	Related    []SourceDiagnosticLocation
-	Cause      error
+	Path              string
+	Code              string
+	Message           string
+	TypeName          string
+	SchemaPath        string
+	Span              SourceSpan
+	Related           []SourceDiagnosticLocation
+	OmitSourceSnippet bool
+	Cause             error
 }
 
 type typeDiagnosticError struct {

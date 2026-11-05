@@ -49,6 +49,62 @@ func TestTypedBuiltinCallUsesBuiltinIDOutsideSchemaPath(t *testing.T) {
 	}
 }
 
+func TestStringBuiltinsTrimUnicodeWhitespaceAndJoinInOrder(t *testing.T) {
+	t.Parallel()
+	const source = `import "std:string" as strings
+let trimmed: String = strings.trim("  service ")
+let joined: String = strings.join(["kurumi", "biscuit"], ",")
+emit trimmed
+emit joined
+`
+	module, err := ParseAST(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := EvaluateASTContext(t.Context(), module)
+	if err != nil {
+		t.Fatalf("EvaluateAST() error = %v", err)
+	}
+	if len(bundle.Artifacts) != 2 || bundle.Artifacts[0].Value.Kind != String || bundle.Artifacts[0].Value.Text != "service" || bundle.Artifacts[1].Value.Kind != String || bundle.Artifacts[1].Value.Text != "kurumi,biscuit" {
+		t.Fatalf("string builtin results = %#v, want trimmed String and ordered joined String", bundle.Artifacts)
+	}
+	if function, exists := LookupStandardLibraryFunction("std:string", "join"); !exists || len(function.Parameters) != 2 {
+		t.Fatalf("std:string.join metadata = %#v, %t", function, exists)
+	}
+}
+
+func TestStringBuiltinsRejectKnownAndDynamicTypeMismatches(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"known trim value": `import "std:string" as strings
+let result = strings.trim(42)
+emit result
+`,
+		"known list item": `import "std:string" as strings
+let result = strings.join(["valid", 42], ",")
+emit result
+`,
+		"dynamic list item": `import "std:string" as strings
+let values: List<Any> = ["valid", true]
+let result = strings.join(values, ",")
+emit result
+`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			module, err := ParseAST(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = EvaluateASTContext(t.Context(), module)
+			if err == nil {
+				t.Fatal("EvaluateAST() succeeded with invalid string function arguments")
+			}
+		})
+	}
+}
+
 func TestTypedMapAnyPathCanUseReplaceAtWithRuntimeChecks(t *testing.T) {
 	t.Parallel()
 

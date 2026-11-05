@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -53,8 +54,9 @@ func evaluateParameterDeclaration(declaration *LetDeclaration, state *Evaluation
 		return sourceDiagnostic(declaration.SourcePath, declaration.Annotation.Span, err)
 	}
 	var value RuntimeValue
+	parameterSource, hasParameterSource := state.ParameterSources[declaration.Name]
 	if raw, provided := state.Parameters[declaration.Name]; provided {
-		value, err = runtimeValueFromJSON(raw)
+		value, err = runtimeValueFromJSON(raw, declaration.Name, parameterSource, hasParameterSource)
 		if err != nil {
 			return sourceDiagnostic(declaration.SourcePath, declaration.NameSpan, fmt.Errorf("parameter %q: %w", declaration.Name, err))
 		}
@@ -77,14 +79,16 @@ func evaluateParameterDeclaration(declaration *LetDeclaration, state *Evaluation
 	} else {
 		return sourceDiagnostic(declaration.SourcePath, declaration.NameSpan, fmt.Errorf("parameter %q is required", declaration.Name))
 	}
-	value.Value.SourcePath = declaration.SourcePath
-	value.Value.Span = declaration.NameSpan
+	if _, supplied := state.Parameters[declaration.Name]; !supplied {
+		value.Value.SourcePath = declaration.SourcePath
+		value.Value.Span = declaration.NameSpan
+	}
 	var analysis *TypeAnalysisContext
 	if state.Module != nil {
 		analysis = state.Module.Analysis
 	}
 	if err := checkRuntimeType(value, expected, state.Types, make(map[string]bool), analysis); err != nil {
-		return sourceDiagnostic(declaration.SourcePath, declaration.NameSpan, fmt.Errorf("parameter %q does not match its declared type: %w", declaration.Name, err))
+		return parameterTypeDiagnostic(declaration, expected, value, parameterSource, hasParameterSource, err)
 	}
 	value.EnsureTyping().TypeProvenance = append(value.EnsureTyping().TypeProvenance, TypeProvenance{Type: expected, Types: maps.Clone(state.Types)})
 	state.Environment[declaration.Name] = value
@@ -93,7 +97,70 @@ func evaluateParameterDeclaration(declaration *LetDeclaration, state *Evaluation
 	return nil
 }
 
-func runtimeValueFromJSON(raw jsontext.Value) (RuntimeValue, error) {
+func parameterTypeDiagnostic(declaration *LetDeclaration, expected ResolvedType, value RuntimeValue, source ParameterSource, hasSource bool, cause error) error {
+	name := declaration.Name
+	relativePath := []runtimeTypePathSegment(nil)
+	expectedName := staticTypeName(expected)
+	actualName := kindName(value.Kind())
+	if failure, ok := runtimeTypeFailureOf(cause); ok {
+		relativePath = slices.Clone(failure.Path)
+		if failure.Expected != "" {
+			expectedName = failure.Expected
+		}
+		if failure.Actual != "" {
+			actualName = failure.Actual
+		}
+	} else if unknown, ok := errors.AsType[unknownTypeField](cause); ok {
+		relativePath = slices.Clone(unknown.path)
+		if len(relativePath) == 0 {
+			relativePath = []runtimeTypePathSegment{{Value: unknown.name}}
+		}
+		expectedName = "declared fields"
+		actualName = "unknown field"
+	}
+	pointer := parameterJSONPointer(name)
+	for _, part := range relativePath {
+		pointer = appendParameterJSONPointer(pointer, part.Value)
+	}
+	displayPath := parameterJSONDisplayPath(name, relativePath)
+	message := fmt.Sprintf("parameter %q does not match its declared type %s\npath: %s\npointer: %s\nexpected: %s\nactual: %s", name, staticTypeName(expected), displayPath, pointer, expectedName, actualName)
+	if hasSource && source.Label != "" {
+		message += "\nsource: " + source.Label
+	}
+
+	primaryPath := declaration.SourcePath
+	primarySpan := declaration.NameSpan
+	var related []SourceDiagnosticLocation
+	if diagnostic, ok := SourceDiagnosticFromError(cause); ok {
+		related = append(related, diagnostic.Related...)
+	}
+	if hasSource && source.SourcePath != "" {
+		locationPointer := pointer
+		if actualName == "missing" && len(relativePath) != 0 {
+			locationPointer = parameterJSONPointer(name)
+			for _, part := range relativePath[:len(relativePath)-1] {
+				locationPointer = appendParameterJSONPointer(locationPointer, part.Value)
+			}
+		}
+		if location, exists := source.Locations[locationPointer]; exists {
+			span := location.Span
+			if actualName == "unknown field" && location.KeySpan.End > location.KeySpan.Start {
+				span = location.KeySpan
+			}
+			if span.End > span.Start {
+				primaryPath = source.SourcePath
+				primarySpan = span
+			}
+		}
+	}
+	if primaryPath != declaration.SourcePath || primarySpan != declaration.NameSpan {
+		related = append(related, SourceDiagnosticLocation{Path: declaration.SourcePath, Span: declaration.NameSpan, Message: "Parameter declaration"})
+	}
+
+	return SourceDiagnosticError{Path: primaryPath, Code: codeMCLType, Message: message, Span: primarySpan, Related: related, OmitSourceSnippet: true, Cause: cause}
+}
+
+func runtimeValueFromJSON(raw jsontext.Value, name string, source ParameterSource, hasSource bool) (RuntimeValue, error) {
 	if len(raw) > maxRuntimeParameterBytes {
 		return RuntimeValue{}, fmt.Errorf("parameter value exceeds %d bytes", maxRuntimeParameterBytes)
 	}
@@ -101,48 +168,69 @@ func runtimeValueFromJSON(raw jsontext.Value) (RuntimeValue, error) {
 		return RuntimeValue{}, errors.New("parameter value is not valid JSON")
 	}
 
-	return runtimeValueFromJSONAtDepth(raw, 0)
+	return runtimeValueFromJSONAtDepth(raw, 0, source, hasSource, parameterJSONPointer(name))
 }
 
 const maxRuntimeParameterBytes = 64 << 20
 
-func runtimeValueFromJSONAtDepth(raw jsontext.Value, depth int) (RuntimeValue, error) {
+func runtimeValueFromJSONAtDepth(raw jsontext.Value, depth int, source ParameterSource, hasSource bool, pointer string) (RuntimeValue, error) {
 	if depth > maxCallDepth {
 		return RuntimeValue{}, fmt.Errorf("parameter value nesting exceeds %d levels", maxCallDepth)
 	}
+	metadata := runtimeValueData{SourcePath: source.SourcePath}
+	if hasSource {
+		if location, exists := source.Locations[pointer]; exists {
+			metadata.Span = location.Span
+		}
+	}
 	switch raw.Kind() {
 	case jsontext.KindNull:
-		return RuntimeValue{Value: runtimeValueData{Kind: Null}}, nil
+		metadata.Kind = Null
+
+		return RuntimeValue{Value: metadata}, nil
 	case jsontext.KindFalse:
-		return RuntimeValue{Value: runtimeValueData{Kind: Bool}}, nil
+		metadata.Kind = Bool
+
+		return RuntimeValue{Value: metadata}, nil
 	case jsontext.KindTrue:
-		return RuntimeValue{Value: runtimeValueData{Kind: Bool, Bool: true}}, nil
+		metadata.Kind = Bool
+		metadata.Bool = true
+
+		return RuntimeValue{Value: metadata}, nil
 	case jsontext.KindString:
 		var value string
 		if err := jsonv2.Unmarshal(raw, &value); err != nil {
 			return RuntimeValue{}, fmt.Errorf("decode parameter string: %w", err)
 		}
 
-		return RuntimeValue{Value: runtimeValueData{Kind: String, Text: value}}, nil
+		metadata.Kind = String
+		metadata.Text = value
+
+		return RuntimeValue{Value: metadata}, nil
 	case jsontext.KindNumber:
 		kind := Integer
 		if strings.ContainsAny(string(raw), ".eE") {
 			kind = Decimal
 		}
 
-		return RuntimeValue{Value: runtimeValueData{Kind: kind, Text: string(raw)}}, nil
+		metadata.Kind = kind
+		metadata.Text = string(raw)
+
+		return RuntimeValue{Value: metadata}, nil
 	case jsontext.KindBeginArray:
 		decoder := jsontext.NewDecoder(bytes.NewReader(raw))
 		if _, err := decoder.ReadToken(); err != nil {
 			return RuntimeValue{}, fmt.Errorf("read parameter array: %w", err)
 		}
-		result := RuntimeValue{Value: runtimeValueData{Kind: List}}
+		metadata.Kind = List
+		result := RuntimeValue{Value: metadata}
 		for decoder.PeekKind() != jsontext.KindEndArray {
 			item, err := decoder.ReadValue()
 			if err != nil {
 				return RuntimeValue{}, fmt.Errorf("read parameter array item: %w", err)
 			}
-			value, err := runtimeValueFromJSONAtDepth(item, depth+1)
+			index := len(result.List)
+			value, err := runtimeValueFromJSONAtDepth(item, depth+1, source, hasSource, appendParameterJSONPointer(pointer, strconv.Itoa(index)))
 			if err != nil {
 				return RuntimeValue{}, fmt.Errorf("array item %d: %w", len(result.List), err)
 			}
@@ -158,7 +246,8 @@ func runtimeValueFromJSONAtDepth(raw jsontext.Value, depth int) (RuntimeValue, e
 		if _, err := decoder.ReadToken(); err != nil {
 			return RuntimeValue{}, fmt.Errorf("read parameter object: %w", err)
 		}
-		result := RuntimeValue{Value: runtimeValueData{Kind: Map}}
+		metadata.Kind = Map
+		result := RuntimeValue{Value: metadata}
 		seen := make(map[string]struct{})
 		for decoder.PeekKind() != jsontext.KindEndObject {
 			key, err := decoder.ReadToken()
@@ -177,11 +266,19 @@ func runtimeValueFromJSONAtDepth(raw jsontext.Value, depth int) (RuntimeValue, e
 			if err != nil {
 				return RuntimeValue{}, fmt.Errorf("read parameter field %q: %w", name, err)
 			}
-			value, err := runtimeValueFromJSONAtDepth(item, depth+1)
+			childPointer := appendParameterJSONPointer(pointer, name)
+			location := source.Locations[childPointer]
+			value, err := runtimeValueFromJSONAtDepth(item, depth+1, source, hasSource, childPointer)
 			if err != nil {
 				return RuntimeValue{}, fmt.Errorf("parameter field %q: %w", name, err)
 			}
-			result.Map = append(result.Map, RuntimeEntry{Key: name, Value: value})
+			entry := RuntimeEntry{Key: name, Value: value}
+			if hasSource && location.KeySpan.End > location.KeySpan.Start {
+				entry.KeySpan = location.KeySpan
+				entry.KeySourcePath = source.SourcePath
+				entry.KeySourceLocations = []SourceDiagnosticLocation{{Path: source.SourcePath, Span: location.KeySpan, Message: "Parameter key"}}
+			}
+			result.Map = append(result.Map, entry)
 		}
 		if _, err := decoder.ReadToken(); err != nil {
 			return RuntimeValue{}, fmt.Errorf("read parameter object end: %w", err)

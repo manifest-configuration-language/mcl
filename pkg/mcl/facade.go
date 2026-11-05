@@ -39,6 +39,10 @@ type Bundle = engine.Bundle
 // EvaluationOptions controls execution behavior for an MCL evaluation.
 type EvaluationOptions = engine.EvaluationOptions
 
+type ParameterSource = engine.ParameterSource
+
+type ParameterLocation = engine.ParameterLocation
+
 type Artifact = engine.Artifact
 
 type Lifecycle = engine.Lifecycle

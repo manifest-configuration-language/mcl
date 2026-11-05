@@ -41,6 +41,7 @@ const (
 // EvaluationOptionsはMCL評価全体に適用する実行オプションを保持します。
 type EvaluationOptions struct {
 	AllowNondeterministicOutput bool
+	ParameterSources            map[string]ParameterSource
 }
 
 type moduleLoader struct {
@@ -57,6 +58,7 @@ type moduleLoader struct {
 	operation                   string
 	allowNondeterministicOutput bool
 	parameters                  map[string]jsontext.Value
+	parameterSources            map[string]ParameterSource
 	overlays                    map[string]string
 	loadedModules               map[string]struct{}
 	textImports                 map[string]string
@@ -1120,7 +1122,7 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		root: root, files: files, entry: canonical, entryText: string(source),
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters),
-		allowNondeterministicOutput: options.AllowNondeterministicOutput, loadedModules: make(map[string]struct{}), budget: &functionBudget{},
+		allowNondeterministicOutput: options.AllowNondeterministicOutput, parameterSources: cloneParameterSources(options.ParameterSources), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
 		analysis:   &TypeAnalysisContext{},
 		crdSchemas: crdSchemas,
 	}
@@ -1303,6 +1305,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		runtimeTypes:                make(map[string]map[string]ResolvedType),
 		dependencies:                dependencies,
 		allowNondeterministicOutput: options.AllowNondeterministicOutput,
+		parameterSources:            cloneParameterSources(options.ParameterSources),
 		overlays:                    canonicalOverlays,
 		loadedModules:               make(map[string]struct{}),
 		budget:                      &functionBudget{},
@@ -1397,6 +1400,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
 	if entry {
 		state.Parameters = maps.Clone(loader.parameters)
+		state.ParameterSources = loader.parameterSources
 	}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)

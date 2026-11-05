@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
 )
 
 func TestDiffParsesInterspersedFlagsWithBundleCRDs(t *testing.T) {
@@ -67,7 +69,7 @@ func TestParseParameterInputs(t *testing.T) {
 	if err := os.WriteFile(secondPath, []byte(`{"limits":{"cpu":"2"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	parameters, err := parseParameterInputs([]string{`replicas=3`}, []string{firstPath, secondPath})
+	parameters, sources, err := parseParameterInputs([]string{`replicas=3`}, []string{firstPath, secondPath})
 	if err != nil {
 		t.Fatalf("parseParameterInputs() error = %v", err)
 	}
@@ -81,16 +83,22 @@ func TestParseParameterInputs(t *testing.T) {
 			t.Errorf("parameter %q = %s, want %s", name, got, want)
 		}
 	}
+	if sources["cluster"].SourcePath != firstPath || sources["cluster"].Locations["/cluster/version"].Span.End <= sources["cluster"].Locations["/cluster/version"].Span.Start {
+		t.Fatalf("cluster source locations = %#v, want source path and nested value span", sources["cluster"])
+	}
+	if sources["replicas"].Label != "--parameter replicas" || sources["replicas"].SourcePath != "" {
+		t.Fatalf("replicas source = %#v, want inline parameter label without a file location", sources["replicas"])
+	}
 
 	duplicatePath := filepath.Join(root, "duplicate.json")
 	if err := os.WriteFile(duplicatePath, []byte(`{"cluster":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = parseParameterInputs(nil, []string{firstPath, duplicatePath})
+	_, _, err = parseParameterInputs(nil, []string{firstPath, duplicatePath})
 	if err == nil || !strings.Contains(err.Error(), `parameter "cluster" was provided more than once`) {
 		t.Fatalf("duplicate parameter error = %v", err)
 	}
-	_, err = parseParameterInputs([]string{`cluster={}`}, []string{firstPath})
+	_, _, err = parseParameterInputs([]string{`cluster={}`}, []string{firstPath})
 	if err == nil || !strings.Contains(err.Error(), `--parameter-file`) {
 		t.Fatalf("parameter and file duplicate error = %v", err)
 	}
@@ -111,7 +119,7 @@ func TestParseParameterInputsRequiresJSONObject(t *testing.T) {
 			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := parseParameterInputs(nil, []string{path})
+			_, _, err := parseParameterInputs(nil, []string{path})
 			if err == nil {
 				t.Fatal("parseParameterInputs() succeeded for non-object or invalid JSON")
 			}
@@ -128,12 +136,63 @@ func TestCheckUsesParameterFileAndEnforcesType(t *testing.T) {
 		t.Fatal(err)
 	}
 	parameterPath := filepath.Join(root, "parameters.json")
-	if err := os.WriteFile(parameterPath, []byte(`{"cluster":42}`), 0o600); err != nil {
+	parameterSource := "{\n  \"cluster\": 42\n}\n"
+	if err := os.WriteFile(parameterPath, []byte(parameterSource), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	err := run(t.Context(), []string{"check", sourcePath, "--parameter-file", parameterPath})
-	if err == nil || !strings.Contains(err.Error(), "expected String, got Int") {
+	if err == nil || !strings.Contains(err.Error(), "expected: String") || !strings.Contains(err.Error(), "actual: Int") || !strings.Contains(err.Error(), "pointer: /cluster") {
 		t.Fatalf("run(check --parameter-file) error = %v, want parameter type error", err)
+	}
+	diagnostic, ok := engine.SourceDiagnosticFromError(err)
+	if !ok {
+		t.Fatalf("SourceDiagnosticFromError(%v) = false", err)
+	}
+	valueStart := strings.Index(parameterSource, "42")
+	if diagnostic.Path != parameterPath || diagnostic.Span != (engine.SourceSpan{Start: valueStart, End: valueStart + 2}) {
+		t.Fatalf("parameter diagnostic location = (%q, %+v), want (%q, %d-%d)", diagnostic.Path, diagnostic.Span, parameterPath, valueStart, valueStart+2)
+	}
+	if !strings.Contains(diagnostic.Message, "source: "+parameterPath) || !strings.Contains(diagnostic.Message, "path: cluster") {
+		t.Fatalf("parameter diagnostic message = %q, want source and display path", diagnostic.Message)
+	}
+	if len(diagnostic.Related) == 0 || filepath.Base(diagnostic.Related[0].Path) != filepath.Base(sourcePath) {
+		t.Fatalf("parameter declaration related locations = %#v, want MCL declaration", diagnostic.Related)
+	}
+}
+
+func TestParameterDiagnosticPrintsLocationWithoutSourceSnippet(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "main.mcl")
+	source := "param cluster: String\nparam token: String\nlet resource =\n  apiVersion: \"v1\"\n  kind: \"ConfigMap\"\n  metadata:\n    name: cluster\nemit resource\n"
+	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parameterPath := filepath.Join(root, "parameters.json")
+	const secret = "PARAMETER_SECRET_SENTINEL"
+	parameterSource := `{"cluster":42,"token":"` + secret + `"}`
+	if err := os.WriteFile(parameterPath, []byte(parameterSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run(t.Context(), []string{"check", sourcePath, "--parameter-file", parameterPath})
+	if err == nil {
+		t.Fatal("run(check --parameter-file) succeeded with an invalid parameter type")
+	}
+	diagnostic, ok := engine.SourceDiagnosticFromError(err)
+	if !ok {
+		t.Fatalf("SourceDiagnosticFromError(%v) = false", err)
+	}
+	var output bytes.Buffer
+	writeSourceDiagnostic(&output, diagnostic, map[string]indexedSource{
+		parameterPath: {content: []byte(parameterSource), index: sourceindex.New(parameterSource)},
+		sourcePath:    {content: []byte(source), index: sourceindex.New(source)},
+	})
+	text := output.String()
+	if strings.Contains(text, secret) {
+		t.Fatalf("diagnostic output contains parameter source secret %q: %s", secret, text)
+	}
+	if !strings.Contains(text, parameterPath+":1:") || !strings.Contains(text, "pointer: /cluster") {
+		t.Fatalf("diagnostic output = %q, want parameter file line/column and JSON Pointer", text)
 	}
 }
 

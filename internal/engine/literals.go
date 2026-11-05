@@ -50,6 +50,8 @@ const (
 	fnMergeByKey      = "mergeByKey"
 	fnReplace         = "replace"
 	fnReplaceAt       = "replaceAt"
+	fnStringJoin      = "string.join"
+	fnStringTrim      = "string.trim"
 	fnUnion           = "union"
 )
 

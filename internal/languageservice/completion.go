@@ -58,7 +58,7 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 		{Label: "null", Kind: 14, Detail: "null値"},
 	}
 	for _, function := range engine.StandardLibraryFunctions() {
-		if function.Module != "std:core" && function.Module != "std:list" && function.Module != "std:map" {
+		if function.Module != "std:core" && function.Module != "std:list" && function.Module != "std:map" && function.Module != "std:string" {
 			continue
 		}
 		items = append(items, CompletionItem{

@@ -826,6 +826,7 @@ type EvaluationState struct {
 	Environment      map[string]RuntimeValue
 	StaticTypes      map[string]TypeAnalysis
 	Parameters       map[string]jsontext.Value
+	ParameterSources map[string]ParameterSource
 	Types            map[string]ResolvedType
 	Stack            map[string]bool
 	Budget           *functionBudget

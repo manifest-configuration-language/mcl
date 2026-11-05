@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shopspring/decimal"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
@@ -378,9 +379,15 @@ func runtimeValueAsKubernetesJSON(value RuntimeValue) (any, error) {
 		if err := validateRuntimeDecimal(parsed); err != nil {
 			return nil, err
 		}
-		converted, exact := parsed.Float64()
-		if !exact || math.IsInf(converted, 0) || math.IsNaN(converted) {
-			return nil, fmt.Errorf("decimal %q cannot be represented exactly as a Kubernetes number", value.TextValue())
+		converted, _ := parsed.Float64()
+		if math.IsInf(converted, 0) || math.IsNaN(converted) {
+			return nil, errors.New("decimal is outside Kubernetes' supported numeric range")
+		}
+		// Kubernetes validates numbers as float64. Compare their decimal JSON
+		// representation so ordinary fractions remain valid without silently
+		// rounding values that require more precision than JSON can preserve.
+		if !decimal.NewFromFloat(converted).Equal(parsed) {
+			return nil, errors.New("decimal cannot round-trip through a Kubernetes number without losing precision")
 		}
 
 		return converted, nil

@@ -7,6 +7,7 @@ import (
 type unknownTypeField struct {
 	name       string
 	suggestion string
+	path       []runtimeTypePathSegment
 }
 
 func (err unknownTypeField) Error() string {

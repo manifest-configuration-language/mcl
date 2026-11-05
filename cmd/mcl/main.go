@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -57,14 +58,11 @@ func sourceDiagnostics(err error) []mcl.SourceDiagnosticError {
 
 		return diagnostics
 	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return sourceDiagnostics(wrapped.Unwrap())
-	}
-	if diagnostic, ok := errors.AsType[mcl.SourceDiagnosticError](err); ok {
-		return []mcl.SourceDiagnosticError{diagnostic}
-	}
 	if diagnostic, ok := mcl.SourceDiagnosticFromError(err); ok {
 		return []mcl.SourceDiagnosticError{diagnostic}
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return sourceDiagnostics(wrapped.Unwrap())
 	}
 
 	return nil
@@ -86,6 +84,10 @@ type indexedSource struct {
 }
 
 func printSourceDiagnostic(diagnostic mcl.SourceDiagnosticError, sources map[string]indexedSource) {
+	writeSourceDiagnostic(os.Stderr, diagnostic, sources)
+}
+
+func writeSourceDiagnostic(writer io.Writer, diagnostic mcl.SourceDiagnosticError, sources map[string]indexedSource) {
 	path := diagnostic.Path
 	if path == "" {
 		path = unknownPath
@@ -95,10 +97,12 @@ func printSourceDiagnostic(diagnostic mcl.SourceDiagnosticError, sources map[str
 	if err == nil && diagnostic.Span.Start >= 0 {
 		line, column, lineText := sourceLineAtIndex(source.index, source.content, diagnostic.Span.Start)
 		location = fmt.Sprintf("%s:%d:%d", path, line, column)
-		fmt.Fprintf(os.Stderr, "  %s: %s: %s\n", location, diagnostic.Code, diagnostic.DisplayMessage())
-		printSourceLine(line, column, lineText)
+		fmt.Fprintf(writer, "  %s: %s: %s\n", location, diagnostic.Code, diagnostic.DisplayMessage())
+		if !diagnostic.OmitSourceSnippet {
+			printSourceLine(line, column, lineText)
+		}
 	} else {
-		fmt.Fprintf(os.Stderr, "  %s: %s: %s\n", location, diagnostic.Code, diagnostic.DisplayMessage())
+		fmt.Fprintf(writer, "  %s: %s: %s\n", location, diagnostic.Code, diagnostic.DisplayMessage())
 	}
 	for _, related := range diagnostic.Related {
 		relatedPath := related.Path
@@ -110,10 +114,12 @@ func printSourceDiagnostic(diagnostic mcl.SourceDiagnosticError, sources map[str
 		if err == nil && related.Span.Start >= 0 {
 			line, column, lineText := sourceLineAtIndex(relatedSource.index, relatedSource.content, related.Span.Start)
 			relatedLocation = fmt.Sprintf("%s:%d:%d", relatedPath, line, column)
-			fmt.Fprintf(os.Stderr, "  related: %s: %s\n", relatedLocation, related.Message)
-			printSourceLine(line, column, lineText)
+			fmt.Fprintf(writer, "  related: %s: %s\n", relatedLocation, related.Message)
+			if !diagnostic.OmitSourceSnippet {
+				printSourceLine(line, column, lineText)
+			}
 		} else {
-			fmt.Fprintf(os.Stderr, "  related: %s: %s\n", relatedLocation, related.Message)
+			fmt.Fprintf(writer, "  related: %s: %s\n", relatedLocation, related.Message)
 		}
 	}
 }
@@ -249,12 +255,12 @@ func newRenderCommand() *cobra.Command {
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
 			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
-			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
+			parameters, sources, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
 
-			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters, allowNondeterministicOutput)
+			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters, evaluationOptions(allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("phase", "", "lifecycle phase to render")
@@ -278,12 +284,12 @@ func newCheckCommand() *cobra.Command {
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
 			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
+			parameters, sources, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
 
-			return checkCommand(command.Context(), args[0], operation, parameters, allowNondeterministicOutput)
+			return checkCommand(command.Context(), args[0], operation, parameters, evaluationOptions(allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("operation", "", "operation to check")
@@ -310,12 +316,12 @@ func newExplainCommand() *cobra.Command {
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
 			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
+			parameters, sources, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
 
-			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path, parameters, allowNondeterministicOutput)
+			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path, parameters, evaluationOptions(allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("api-version", "", "Kubernetes API version (required)")
@@ -342,12 +348,12 @@ func newDiffCommand() *cobra.Command {
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
 			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
+			parameters, sources, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
 
-			return diffCommand(command.Context(), args[0], args[1], operation, parameters, allowNondeterministicOutput)
+			return diffCommand(command.Context(), args[0], args[1], operation, parameters, evaluationOptions(allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("operation", "", "operation to compare")
@@ -405,12 +411,12 @@ func newUpdateCommand() *cobra.Command {
 			parameterValues, _ := command.Flags().GetStringArray("parameter")
 			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
-			parameters, err := parseParameterInputs(parameterValues, parameterFiles)
+			parameters, sources, err := parseParameterInputs(parameterValues, parameterFiles)
 			if err != nil {
 				return err
 			}
 
-			return mcl.UpdateFileWithParametersAndOptionsContext(command.Context(), path, parameters, mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput})
+			return mcl.UpdateFileWithParametersAndOptionsContext(command.Context(), path, parameters, evaluationOptions(allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
@@ -501,27 +507,24 @@ func parseParameters(values []string) (map[string]jsontext.Value, error) {
 	return parameters, nil
 }
 
-func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, error) {
+func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, map[string]engine.ParameterSource, error) {
 	parameters, err := parseParameters(values)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	sources := make(map[string]string, len(parameters))
+	sources := make(map[string]engine.ParameterSource, len(parameters))
 	for _, value := range values {
 		name, _, _ := strings.Cut(value, "=")
-		sources[name] = "--parameter"
+		sources[name] = engine.ParameterSource{Label: "--parameter " + name}
 	}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read parameter file %q: %w", path, err)
+			return nil, nil, fmt.Errorf("read parameter file %q: %w", path, err)
 		}
-		var fileParameters map[string]jsontext.Value
-		if err := json.Unmarshal(data, &fileParameters); err != nil {
-			return nil, fmt.Errorf("parse parameter file %q: %w", path, err)
-		}
-		if fileParameters == nil || len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '{' {
-			return nil, fmt.Errorf("parse parameter file %q: expected a top-level JSON object", path)
+		fileParameters, fileSources, err := engine.ParseParameterFile(path, data)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse parameter file %q: %w", path, err)
 		}
 		names := make([]string, 0, len(fileParameters))
 		for name := range fileParameters {
@@ -531,17 +534,21 @@ func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, er
 		for _, name := range names {
 			value := fileParameters[name]
 			if _, exists := sources[name]; exists {
-				return nil, fmt.Errorf("parameter %q was provided more than once by %s and --parameter-file %q", name, sources[name], path)
+				return nil, nil, fmt.Errorf("parameter %q was provided more than once by %s and --parameter-file %q", name, sources[name].Label, path)
 			}
 			if name == "" || !value.IsValid() {
-				return nil, fmt.Errorf("parse parameter file %q: invalid parameter %q", path, name)
+				return nil, nil, fmt.Errorf("parse parameter file %q: invalid parameter %q", path, name)
 			}
 			parameters[name] = value.Clone()
-			sources[name] = fmt.Sprintf("--parameter-file %q", path)
+			sources[name] = fileSources[name]
 		}
 	}
 
-	return parameters, nil
+	return parameters, sources, nil
+}
+
+func evaluationOptions(allowNondeterministicOutput bool, sources map[string]engine.ParameterSource) mcl.EvaluationOptions {
+	return mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput, ParameterSources: sources}
 }
 
 func lintFiles(denyWarnings bool, paths []string) error {
@@ -593,8 +600,7 @@ func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, d
 	printSourceLine(line, column, lineText)
 }
 
-func diffCommand(ctx context.Context, beforePath, afterPath, operation string, parameters map[string]jsontext.Value, allowNondeterministicOutput bool) error {
-	evaluationOptions := mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput}
+func diffCommand(ctx context.Context, beforePath, afterPath, operation string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
 	evaluate := func(path string) (mcl.Bundle, error) {
 		if operation != "" {
 			return mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, evaluationOptions)
@@ -640,8 +646,7 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string, p
 	return nil
 }
 
-func checkCommand(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, allowNondeterministicOutput bool) error {
-	evaluationOptions := mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput}
+func checkCommand(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
 	var bundle mcl.Bundle
 	var err error
 	if operation != "" {
@@ -656,7 +661,7 @@ func checkCommand(ctx context.Context, path, operation string, parameters map[st
 	return mcl.ValidateBundleOutput(bundle)
 }
 
-func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]jsontext.Value, allowNondeterministicOutput bool) error {
+func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
 	if operation != "" && phase != "" {
 		return errors.New("--operation and --phase cannot be used together")
 	}
@@ -671,7 +676,6 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	}
 	var bundle mcl.Bundle
 	var err error
-	evaluationOptions := mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput}
 	if operation != "" {
 		bundle, err = mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, evaluationOptions)
 	} else {

@@ -62,7 +62,10 @@ func LookupStandardLibraryFunction(module, name string) (StandardLibraryFunction
 	return StandardLibraryFunction{}, false
 }
 
-const stdlibListModule = "std:list"
+const (
+	stdlibListModule   = "std:list"
+	stdlibStringModule = "std:string"
+)
 
 type builtinInference uint8
 
@@ -106,6 +109,8 @@ var builtinRegistry = []builtin{
 	{name: fnExactlyOne, module: stdlibListModule, exportName: fnExactlyOne, parameters: []string{paramValues, "predicate"}, documentation: "条件に一致する要素が1つであることを確認して返します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
 	{name: fnFold, module: stdlibListModule, exportName: fnFold, parameters: []string{paramValues, "initial", "combine"}, documentation: "初期値と関数を使ってリストの要素を1つの値にまとめます。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
 	{name: fnKeyOf, module: "std:map", exportName: fnKeyOf, parameters: []string{"mapping", paramKey}, documentation: "マップに指定したキーが存在することを確認し、そのキーを返します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticKeyOfBuiltin, pureEvaluation: evaluateKeyOfBuiltin},
+	{name: fnStringJoin, module: stdlibStringModule, exportName: "join", parameters: []string{paramValues, "separator"}, documentation: "StringのListを指定したseparatorで連結します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticStringJoinBuiltin, pureEvaluation: evaluateStringJoinBuiltin},
+	{name: fnStringTrim, module: stdlibStringModule, exportName: "trim", parameters: []string{paramValue}, documentation: "文字列の前後にあるUnicode whitespaceを削除します。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticStringTrimBuiltin, pureEvaluation: evaluateStringTrimBuiltin},
 	{name: fnKustomizeBuild, module: "std:kustomize", exportName: "build", parameters: []string{paramSource, "revision", "directory"}, documentation: "指定したKustomizeディレクトリをビルドします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, documentation: "指定したソースからManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnManifestLoadOne, module: "std:manifest", exportName: "loadOne", parameters: []string{paramSource}, documentation: "指定したソースから単一のManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
@@ -623,6 +628,42 @@ func evaluateContainsBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
 	}
 
 	return RuntimeValue{Value: runtimeValueData{Kind: Bool}}, nil
+}
+
+func evaluateStringTrimBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 1 {
+		return RuntimeValue{}, fmt.Errorf("%s expects 1 argument", fnStringTrim)
+	}
+	value := runtimeNodeContents(arguments[0])
+	if value.Kind() != String {
+		return RuntimeValue{}, fmt.Errorf("%s expects a String", fnStringTrim)
+	}
+
+	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: strings.TrimSpace(value.TextValue())}}, nil
+}
+
+func evaluateStringJoinBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 2 {
+		return RuntimeValue{}, fmt.Errorf("%s expects a List<String> and a String separator", fnStringJoin)
+	}
+	values, isList := runtimeListValue(arguments[0])
+	if !isList {
+		return RuntimeValue{}, fmt.Errorf("%s expects a List<String>", fnStringJoin)
+	}
+	separator := runtimeNodeContents(arguments[1])
+	if separator.Kind() != String {
+		return RuntimeValue{}, fmt.Errorf("%s separator must be a String", fnStringJoin)
+	}
+	parts := make([]string, len(values.List))
+	for index, item := range values.List {
+		item = runtimeNodeContents(item)
+		if item.Kind() != String {
+			return RuntimeValue{}, fmt.Errorf("%s item %d must be a String", fnStringJoin, index)
+		}
+		parts[index] = item.TextValue()
+	}
+
+	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: strings.Join(parts, separator.TextValue())}}, nil
 }
 
 func evaluateLenBuiltin(arguments []RuntimeValue) (RuntimeValue, error) {
