@@ -120,6 +120,7 @@ func TestParseParameterInputsRequiresJSONObject(t *testing.T) {
 }
 
 func TestCheckUsesParameterFileAndEnforcesType(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "main.mcl")
 	source := "param cluster: String\nlet resource =\n  apiVersion: \"v1\"\n  kind: \"ConfigMap\"\n  metadata:\n    name: cluster\nemit resource\n"
