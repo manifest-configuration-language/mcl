@@ -37,8 +37,8 @@ Manifestに使われないSchemaのStructural Schema、OpenAPI制約、CEL式は
 
 Catalog遅延処理前の104配置は平均67.6秒、中央値65.1秒でした。同一infra snapshotの開発中CLIで再評価したところ、`local-path-provisioner`は64.42秒から0.41秒、カスタムResourceを出力する`keda-http-addon`は65.85秒から1.76秒になりました。
 
-別のカスタムResourceを含む6配置も全て成功し、並列4 workerで0.56秒から10.42秒でした。配置ごとの時間にはHelm chartの展開量と並列実行によるCPU競合が含まれます。公開版CLIでの全配置評価と、同じ環境で直列に実行した比較をRelease後に最終結果として記録します。
+別のカスタムResourceを含む6配置も全て成功し、並列4 workerで0.56秒から10.42秒でした。配置ごとの時間にはHelm chartの展開量と並列実行によるCPU競合が含まれます。
 
 ## 状態
 
-GVK判定によるCatalog sourceの遅延読み込みと`yaml.Node`を使った軽量なCatalog登録を実装しています。MCLの最終テスト、Release、公開版CLIを使ったinfra全配置の評価後に、公開バージョンと結果を記録します。
+GVK判定によるCatalog sourceの遅延読み込みと`yaml.Node`を使った軽量なCatalog登録を実装しました。MCL v0.3.32をReleaseし、公開CLIでinfra内の135配置を評価して135件成功しました。評価は4 workerで約36秒でした。
