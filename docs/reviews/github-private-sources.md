@@ -6,4 +6,4 @@ MCL fetches canonical URLs in the form `https://github.com/OWNER/REPOSITORY/rele
 
 The token is not written to `mcl.lock`, the dependency cache, or error messages. CI and Argo CD CMP environments that need to fetch uncached private release assets must provide a token that can read the owning repository through the `GITHUB_TOKEN` environment variable.
 
-The dependency tests verify URL parsing, the GitHub API request headers, asset selection and download, authorization removal on redirects, and unauthenticated fallback. The feature is implemented in MCL 0.3.30; infra schema validation remains pending publication of that MCL version and an updated `k8s/mcl.lock`.
+The dependency tests verify URL parsing, the GitHub API request headers, asset selection and download, authorization removal on redirects, and unauthenticated fallback. The feature is published in MCL 0.3.30. Authenticated retrieval of the Tart release assets and schema validation with the locked provider artifacts have been verified in the infra checkout.

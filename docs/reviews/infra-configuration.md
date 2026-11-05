@@ -22,7 +22,7 @@ mcl render apps/cilium/main.mcl \
 
 ## MCL関数を使う場合の注意点
 
-ArgoCD Applicationの共通生成関数は、`Map<String, Any>`を返す関数へ値を渡す形で表現できます。MCL v0.3.29は、`helm.render`の第2引数に`options(cluster)`のような`Map<String, Any>`を返す関数呼び出しを渡すと、型検査時にMapとして扱わず失敗します。MCLソースではMap型を認識し、`helm.render`の戻り値を`List<Map<String, Any>>`として扱う修正を加えました。v0.3.30の公開後は次の形を使えます。
+ArgoCD Applicationの共通生成関数は、`Map<String, Any>`を返す関数へ値を渡す形で表現できます。MCL v0.3.29は、`helm.render`の第2引数に`options(cluster)`のような`Map<String, Any>`を返す関数呼び出しを渡すと、型検査時にMapとして扱わず失敗します。MCLソースではMap型を認識し、`helm.render`の戻り値を`List<Map<String, Any>>`として扱う修正を加えました。v0.3.30から次の形を使えます。
 
 ```mcl
 fn options(cluster: Cluster) -> Map<String, Any> =
@@ -34,7 +34,7 @@ fn chartResources(cluster: Cluster) -> List<Map<String, Any>> =
 
 関数や値の参照先は、MCL v0.3.29では呼び出し元より前に宣言してください。例えば`resource(cluster)`から`sources(cluster)`と`syncOptions`を参照する場合は、`sources`関数と`syncOptions`を`resource`関数より前へ置くと型検査できます。
 
-`Map<String, Any>`の値を参照すると、そのフィールドの静的型も`Any`になります。MCL v0.3.29では、その値を`lists.replaceAt`へ渡すとList型を確認できず、Mapを更新する関数全体を型付き評価器が拒否します。MCLソースでは、`Any`のままフィールド参照とList置換を型付きIRへ変換し、実行時に値がListか確認する対応を加えました。既知のString値をList引数へ渡した場合は、引き続き静的型検査で拒否します。v0.3.30の公開後は、`Map<String, Any>`を返すHelmやMCLヘルパーの結果を同じ関数で変換できます。
+`Map<String, Any>`の値を参照すると、そのフィールドの静的型も`Any`になります。MCL v0.3.29では、その値を`lists.replaceAt`へ渡すとList型を確認できず、Mapを更新する関数全体を型付き評価器が拒否します。MCLソースでは、`Any`のままフィールド参照とList置換を型付きIRへ変換し、実行時に値がListか確認する対応を加えました。既知のString値をList引数へ渡した場合は、引き続き静的型検査で拒否します。v0.3.30から、`Map<String, Any>`を返すHelmやMCLヘルパーの結果を同じ関数で変換できます。
 
 ## Cilium設定の修正
 
