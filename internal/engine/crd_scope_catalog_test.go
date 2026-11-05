@@ -125,3 +125,30 @@ func TestRegisterRuntimeCRDRejectsDescriptorConflictsInEitherOrder(t *testing.T)
 		}
 	}
 }
+
+func TestRegisterCatalogCRDRejectsDescriptorConflictsWithoutCompilation(t *testing.T) {
+	t.Parallel()
+	namespaced := projectCRD("example.test", "Widget", "widgets")
+	cluster := strings.Replace(namespaced, "scope: Namespaced", "scope: Cluster", 1)
+	for _, ordered := range [][]string{{namespaced, cluster}, {cluster, namespaced}} {
+		schemas := make(map[customResourceDefinitionKey]crdVersionSchema)
+		for index, document := range ordered {
+			documents, err := decodeRuntimeYAMLDocuments([]byte(document), "crd.yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = registerCatalogCustomResourceDefinition(schemas, documents.List[0])
+			if index == 0 && err != nil {
+				t.Fatalf("registerCatalogCustomResourceDefinition() for first CRD: %v", err)
+			}
+			if index == 1 && (err == nil || !strings.Contains(err.Error(), "conflicting schemas")) {
+				t.Fatalf("registerCatalogCustomResourceDefinition() error = %v, want descriptor conflict", err)
+			}
+		}
+		for _, schema := range schemas {
+			if schema.validator != nil || schema.structural != nil || schema.cel != nil {
+				t.Fatalf("Catalog schema was compiled during conflict detection: %#v", schema)
+			}
+		}
+	}
+}

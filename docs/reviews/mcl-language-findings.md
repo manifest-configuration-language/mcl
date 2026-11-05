@@ -6,4 +6,6 @@
 
 ## CRD Catalogの評価ごとの再コンパイル
 
-プロジェクト設定に`crd_schemas`を指定すると、各評価でCRDファイルを読み込み、Structural Schema、OpenAPI Validator、CEL Validatorを再構築します。複数のエントリーポイントを個別評価する利用方法では同じSchemaのコンパイルが繰り返されます。実際の性能影響は測定されていないため、Catalogを使う代表的な評価でコンパイル時間と割り当て量を計測し、必要な場合にのみコンテンツハッシュで再利用するべきです。
+成功した104配置の評価時間は平均67.6秒、中央値65.1秒でした。アプリごとにCLIを別プロセスとして起動するため、プロセス内コンテンツキャッシュでは同一処理を避けられません。
+
+この評価負荷を減らすため、組み込みGVKだけを出力する評価では外部Catalog sourceを読まず、Catalog登録時のRuntimeValue変換とValidator構築を遅延させます。GVK、scope、served、source location、元YAML nodeを保持し、実際に使うSchemaだけをRuntimeValueへ変換してコンパイルします。詳細、検証範囲、性能比較は[CRD Catalogの遅延読み込みとSchemaコンパイル](crd-catalog-lazy-compilation.md)に記録します。

@@ -50,6 +50,23 @@ type resolvedCRDSchemaFile struct {
 }
 
 func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, dependencies *dependency.Lock) (map[customResourceDefinitionKey]crdVersionSchema, error) {
+	groups, err := configuredCRDSchemaSources(files)
+	if err != nil {
+		return nil, err
+	}
+
+	return loadCRDSchemaCatalogSources(ctx, dependencies, groups)
+}
+
+func loadCRDSchemaCatalogForRuntimeBundle(ctx context.Context, dependencies *dependency.Lock, sources []groupedCRDSchemaSource, bundle *RuntimeBundle, update bool) (map[customResourceDefinitionKey]crdVersionSchema, error) {
+	if !update && !runtimeBundleRequiresCRDSchemaCatalog(bundle) {
+		return nil, nil
+	}
+
+	return loadCRDSchemaCatalogSources(ctx, dependencies, sources)
+}
+
+func configuredCRDSchemaSources(files *projectFilesystem) ([]groupedCRDSchemaSource, error) {
 	configPath := filepath.Join(files.root, projectConfigFileName)
 	configData, err := files.readLimitedFile(configPath)
 	if err != nil {
@@ -83,6 +100,10 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 		return nil, fmt.Errorf("%s: %w", projectConfigFileName, err)
 	}
 
+	return groups, nil
+}
+
+func loadCRDSchemaCatalogSources(ctx context.Context, dependencies *dependency.Lock, groups []groupedCRDSchemaSource) (map[customResourceDefinitionKey]crdVersionSchema, error) {
 	catalog := make(map[customResourceDefinitionKey]crdVersionSchema)
 	for _, group := range groups {
 		source := group.source
@@ -92,20 +113,20 @@ func loadCRDSchemaCatalog(ctx context.Context, files *projectFilesystem, depende
 		}
 		var crdDocumentCount int
 		for _, resolvedFile := range resolvedFiles {
-			documents, err := decodeRuntimeYAMLDocuments(resolvedFile.data, resolvedFile.name)
+			documents, err := decodeYAMLDocumentNodes(resolvedFile.data)
 			if err != nil {
 				return nil, fmt.Errorf("decode CRD schema %q: %w", resolvedFile.name, err)
 			}
-			if len(documents.List) == 0 {
+			if len(documents) == 0 {
 				return nil, fmt.Errorf("CRD schema %q contains no documents", resolvedFile.name)
 			}
-			for documentIndex, document := range documents.List {
-				kind, _ := runtimeStringField(document, "kind")
+			for documentIndex, document := range documents {
+				kind, _ := yamlNodeStringField(document, "kind")
 				if kind != kindCustomResourceDefinition {
 					continue
 				}
 				crdDocumentCount++
-				if err := registerRuntimeCustomResourceDefinition(ctx, catalog, document); err != nil {
+				if err := registerCatalogCustomResourceDefinitionYAML(catalog, document, resolvedFile.data, resolvedFile.name); err != nil {
 					return nil, fmt.Errorf("CRD schema %q document %d: %w", resolvedFile.name, documentIndex+1, err)
 				}
 			}

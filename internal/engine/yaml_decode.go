@@ -55,6 +55,95 @@ func decodeRuntimeYAMLDocuments(source []byte, sourcePath string, allocationBudg
 	}
 }
 
+func decodeYAMLDocumentNodes(source []byte) ([]*yaml.Node, error) {
+	if len(source) > maxYAMLBytes {
+		return nil, fmt.Errorf("YAML input exceeds the %d-byte limit", maxYAMLBytes)
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(source))
+	documents := make([]*yaml.Node, 0)
+	var nodeCount int
+	for {
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			if errors.Is(err, io.EOF) {
+				return documents, nil
+			}
+
+			return nil, fmt.Errorf("decode YAML: %w", err)
+		}
+		if len(document.Content) == 0 {
+			continue
+		}
+		root := document.Content[0]
+		if err := validateYAMLNode(root, 0, &nodeCount); err != nil {
+			return nil, err
+		}
+		if err := validateRuntimeYAMLNodeShape(root); err != nil {
+			return nil, err
+		}
+		documents = append(documents, root)
+	}
+}
+
+func validateRuntimeYAMLNodeShape(node *yaml.Node) error {
+	if err := validateYAMLNodeTag(node); err != nil {
+		return err
+	}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		switch node.Tag {
+		case yamlTagNull, yamlTagString:
+			return nil
+		case yamlTagBool:
+			if _, err := strconv.ParseBool(strings.ToLower(node.Value)); err != nil {
+				return fmt.Errorf("invalid YAML Bool %q: %w", node.Value, err)
+			}
+		case yamlTagInt:
+			if err := validateRuntimeYAMLIntegerText(node.Value); err != nil {
+				return fmt.Errorf("invalid YAML Integer %q: %w", node.Value, err)
+			}
+			if _, ok := new(big.Int).SetString(node.Value, 0); !ok {
+				return fmt.Errorf("invalid YAML Integer %q", node.Value)
+			}
+		case yamlTagFloat:
+			if _, err := normalizeYAMLDecimal(node.Value); err != nil {
+				return fmt.Errorf("invalid YAML Decimal %q: %w", node.Value, err)
+			}
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			if err := validateRuntimeYAMLNodeShape(child); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		if len(node.Content)%2 != 0 {
+			return errors.New("invalid YAML mapping")
+		}
+		seen := make(map[string]struct{}, len(node.Content)/2)
+		for index := 0; index < len(node.Content); index += 2 {
+			key := node.Content[index]
+			if err := validateYAMLNodeTag(key); err != nil {
+				return err
+			}
+			if key.Kind != yaml.ScalarNode || key.Tag != yamlTagString {
+				return errors.New("YAML mapping keys must be Strings")
+			}
+			if _, duplicate := seen[key.Value]; duplicate {
+				return fmt.Errorf("duplicate YAML key %q", key.Value)
+			}
+			seen[key.Value] = struct{}{}
+			if err := validateRuntimeYAMLNodeShape(node.Content[index+1]); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported YAML node kind %d", node.Kind)
+	}
+
+	return nil
+}
+
 func runtimeYAMLNodeValue(node *yaml.Node, source []byte, sourcePath string, allocationBudget *runtimeAllocationBudget) (RuntimeValue, error) {
 	if err := allocationBudget.consume(1); err != nil {
 		return RuntimeValue{}, err

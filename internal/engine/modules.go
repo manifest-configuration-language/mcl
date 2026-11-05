@@ -1113,7 +1113,7 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 	if err != nil {
 		return Bundle{}, err
 	}
-	crdSchemas, err := loadCRDSchemaCatalog(ctx, files, dependencies)
+	crdSchemaSources, err := configuredCRDSchemaSources(files)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -1123,12 +1123,19 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters),
 		allowNondeterministicOutput: options.AllowNondeterministicOutput, parameterSources: cloneParameterSources(options.ParameterSources), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
-		analysis:   &TypeAnalysisContext{},
-		crdSchemas: crdSchemas,
+		analysis: &TypeAnalysisContext{},
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(canonical, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	if err != nil {
 		return Bundle{}, err
+	}
+	crdSchemas, err := loadCRDSchemaCatalogForRuntimeBundle(ctx, dependencies, crdSchemaSources, runtimeBundle, update)
+	if err != nil {
+		return Bundle{}, err
+	}
+	loader.crdSchemas = crdSchemas
+	if state.Module != nil {
+		state.Module.CRDSchemas = crdSchemas
 	}
 	if err := resolveRuntimeBundle(runtimeBundle, state); err != nil { //nolint:contextcheck // EvaluationState経由で評価ContextをAdapterへ渡します。
 		return Bundle{}, err
@@ -1272,7 +1279,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 	} else if _, err := files.relativePath(absolute); err != nil {
 		return Bundle{}, nil, fmt.Errorf("resolve entry source %q: %w", absolute, err)
 	}
-	crdSchemas, err := loadCRDSchemaCatalog(ctx, files, dependencies)
+	crdSchemaSources, err := configuredCRDSchemaSources(files)
 	if err != nil {
 		return Bundle{}, nil, err
 	}
@@ -1311,12 +1318,19 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		budget:                      &functionBudget{},
 		allocations:                 &runtimeAllocationBudget{},
 		analysis:                    &TypeAnalysisContext{},
-		crdSchemas:                  crdSchemas,
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(entry, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	loadedModules := loader.loadedModulePaths()
 	if err != nil {
 		return Bundle{}, loadedModules, err
+	}
+	crdSchemas, err := loadCRDSchemaCatalogForRuntimeBundle(ctx, dependencies, crdSchemaSources, runtimeBundle, false)
+	if err != nil {
+		return Bundle{}, loadedModules, err
+	}
+	loader.crdSchemas = crdSchemas
+	if state.Module != nil {
+		state.Module.CRDSchemas = crdSchemas
 	}
 	if err := resolveRuntimeBundle(runtimeBundle, state); err != nil { //nolint:contextcheck // EvaluationState経由で評価ContextをAdapterへ渡します。
 		return Bundle{}, loadedModules, err

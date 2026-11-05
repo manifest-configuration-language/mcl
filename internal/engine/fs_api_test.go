@@ -52,6 +52,34 @@ func TestEvaluateProjectSourceReadsDependencyLockFromFilesystem(t *testing.T) {
 	}
 }
 
+func TestEvaluateProjectSourceLoadsCRDCatalogOnlyForUnrecognizedResources(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := lockedHTTPSCRDFiles(t, []byte("apiVersion: [\n"))
+	builtinResource := `let resource =
+  apiVersion: "v1"
+  kind: "ConfigMap"
+  metadata:
+    name: "sample"
+emit resource
+`
+	if _, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, builtinResource, files, nil); err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() for built-in resource error = %v, want unused remote CRD YAML to remain unread", err)
+	}
+
+	customResource := `let resource =
+  apiVersion: "example.test/v1"
+  kind: "Widget"
+  metadata:
+    name: "sample"
+emit resource
+`
+	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, customResource, files, nil)
+	if err == nil || !strings.Contains(err.Error(), "decode CRD schema") {
+		t.Fatalf("EvaluateProjectSourceContext() for custom resource error = %v, want malformed configured CRD YAML to be loaded", err)
+	}
+}
+
 func TestEvaluateProjectSourceValidatesAgainstConfiguredCRDSchema(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
@@ -241,7 +269,14 @@ spec:
           type: object
 `)
 	files := lockedHTTPSCRDFiles(t, crd)
-	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, "", files, nil)
+	resource := `let widget =
+  apiVersion: "example.test/v1"
+  kind: "Widget"
+  metadata:
+    name: "sample"
+emit widget
+`
+	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, resource, files, nil)
 	if err == nil || !strings.Contains(err.Error(), "metadata.name") {
 		t.Fatalf("EvaluateProjectSourceContext() error = %v, want a CRD metadata.name validation error", err)
 	}

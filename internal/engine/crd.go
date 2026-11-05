@@ -13,7 +13,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
 	"github.com/shopspring/decimal"
+	"gopkg.in/yaml.v3"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
@@ -29,20 +31,52 @@ import (
 )
 
 type crdVersionSchema struct {
-	validator   crdvalidation.SchemaValidator
-	structural  *structuralschema.Structural
-	typeExpr    *ResolvedType
-	cel         *crdcel.Validator
-	location    SourceDiagnosticLocation
-	served      bool
-	descriptor  KubernetesResourceDescriptor
-	fingerprint [sha256.Size]byte
+	validator         crdvalidation.SchemaValidator
+	structural        *structuralschema.Structural
+	typeExpr          *ResolvedType
+	cel               *crdcel.Validator
+	openAPISchema     RuntimeValue
+	openAPISchemaNode *yaml.Node
+	location          SourceDiagnosticLocation
+	served            bool
+	descriptor        KubernetesResourceDescriptor
+	fingerprint       [sha256.Size]byte
 }
 
 type customResourceDefinitionKey struct {
 	group   string
 	version string
 	kind    string
+}
+
+func runtimeBundleRequiresCRDSchemaCatalog(bundle *RuntimeBundle) bool {
+	if bundle == nil {
+		return false
+	}
+	for _, artifact := range bundle.Artifacts {
+		resource := runtimeNodeContents(artifact.Value)
+		kind, hasKind := runtimeStringField(resource, "kind")
+		if !hasKind {
+			continue
+		}
+		if kind == kindCustomResourceDefinition {
+			return true
+		}
+		apiVersion, hasAPIVersion := runtimeStringField(resource, "apiVersion")
+		group, version, grouped := strings.Cut(apiVersion, "/")
+		if !hasAPIVersion || !grouped || group == "" || version == "" || strings.Contains(version, "/") {
+			continue
+		}
+		key := kubernetesResourceKey{group: group, kind: kind}
+		if _, known := builtinKubernetesResourceDescriptors[key]; !known {
+			return true
+		}
+		if _, known := k8sschema.Builtin(apiVersion, kind); !known {
+			return true
+		}
+	}
+
+	return false
 }
 
 // KubernetesのCustomResourceDefinitionのKind名。
@@ -85,6 +119,12 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 		metadata := artifact.Value.Metadata()
 		if !registered.served {
 			return nil, sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("custom resource %s uses unserved version %q", kind, apiVersion))
+		}
+		if registered.validator == nil {
+			if err := compileCRDVersionSchema(&registered); err != nil {
+				return nil, sourceDiagnostic(registered.location.Path, registered.location.Span, fmt.Errorf("compile schema for %s %s/%s: %w", kind, group, version, err))
+			}
+			schemas[customResourceDefinitionKey{group: group, version: version, kind: kind}] = registered
 		}
 		if registered.typeExpr != nil {
 			annotateRuntimeSchemaProvenance(&artifact.Value, apiVersion+"/"+kind, "", registered.typeExpr)
@@ -140,6 +180,124 @@ func registerRuntimeCustomResourceDefinition(ctx context.Context, schemas map[cu
 	if err := validateRuntimeCustomResourceDefinition(ctx, value); err != nil {
 		return err
 	}
+
+	return registerCustomResourceDefinitionSchemas(schemas, value, true)
+}
+
+func registerCatalogCustomResourceDefinition(schemas map[customResourceDefinitionKey]crdVersionSchema, value RuntimeValue) error {
+	return registerCustomResourceDefinitionSchemas(schemas, value, false)
+}
+
+func registerCatalogCustomResourceDefinitionYAML(schemas map[customResourceDefinitionKey]crdVersionSchema, document *yaml.Node, source []byte, sourcePath string) error {
+	apiVersion, hasAPIVersion := yamlNodeStringField(document, "apiVersion")
+	if !hasAPIVersion || apiVersion != "apiextensions.k8s.io/v1" {
+		return fmt.Errorf("unsupported apiVersion %q", apiVersion)
+	}
+	spec, exists := yamlNodeMapValue(document, "spec")
+	if !exists {
+		return errors.New("spec is missing")
+	}
+	group, hasGroup := yamlNodeStringField(spec, "group")
+	scope, hasScope := yamlNodeStringField(spec, "scope")
+	names, hasNames := yamlNodeMapValue(spec, "names")
+	kind, hasKind := yamlNodeStringField(names, "kind")
+	plural, hasPlural := yamlNodeStringField(names, "plural")
+	if !hasGroup || !hasNames || !hasKind || !hasScope || !hasPlural {
+		return errors.New("spec.group, spec.scope, spec.names.kind, and spec.names.plural are required")
+	}
+	metadata, hasMetadata := yamlNodeMapValue(document, "metadata")
+	name, hasName := yamlNodeStringField(metadata, "name")
+	if !hasMetadata || !hasName || name == "" {
+		return errors.New("metadata.name is required")
+	}
+	if name != plural+"."+group {
+		return fmt.Errorf("metadata.name %q must match spec.names.plural and spec.group", name)
+	}
+	descriptor := KubernetesResourceDescriptor{APIGroup: group, Kind: kind, ResourceName: plural, Scope: KubernetesResourceScope(scope)}
+	if _, _, err := kubernetesResourceDescriptorFromPublic(descriptor); err != nil {
+		return err
+	}
+	versions, exists := yamlNodeMapValue(spec, "versions")
+	if !exists || versions.Kind != yaml.SequenceNode || len(versions.Content) == 0 {
+		return errors.New("spec.versions must be a non-empty List")
+	}
+	registeredVersions := make(map[string]struct{}, len(versions.Content))
+	for _, versionEntry := range versions.Content {
+		version, hasVersion := yamlNodeStringField(versionEntry, "name")
+		servedValue, hasServed := yamlNodeMapValue(versionEntry, "served")
+		served, isBool := yamlNodeBoolValue(servedValue)
+		if !hasVersion || !hasServed || !isBool {
+			return errors.New("each spec.versions entry requires name and Bool served fields")
+		}
+		if _, duplicate := registeredVersions[version]; duplicate {
+			return fmt.Errorf("spec.versions contains duplicate version %q", version)
+		}
+		registeredVersions[version] = struct{}{}
+		key := customResourceDefinitionKey{group: group, version: version, kind: kind}
+		registered := crdVersionSchema{served: served, descriptor: descriptor}
+		if served {
+			openAPISchema, location, err := customResourceOpenAPISchemaYAML(versionEntry, source, sourcePath)
+			if err != nil {
+				return fmt.Errorf("schema for %s %s/%s: %w", kind, group, version, err)
+			}
+			registered.openAPISchemaNode = openAPISchema
+			registered.location = location
+		}
+		if err := registerCRDVersionSchema(schemas, key, registered); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func yamlNodeMapValue(node *yaml.Node, field string) (*yaml.Node, bool) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil, false
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		key := node.Content[index]
+		if key.Kind == yaml.ScalarNode && key.Tag == yamlTagString && key.Value == field {
+			return node.Content[index+1], true
+		}
+	}
+
+	return nil, false
+}
+
+func yamlNodeStringField(node *yaml.Node, field string) (string, bool) {
+	value, exists := yamlNodeMapValue(node, field)
+	if !exists || value.Kind != yaml.ScalarNode || value.Tag != yamlTagString {
+		return "", false
+	}
+
+	return value.Value, true
+}
+
+func yamlNodeBoolValue(node *yaml.Node) (bool, bool) {
+	if node == nil || node.Kind != yaml.ScalarNode || node.Tag != yamlTagBool {
+		return false, false
+	}
+	value, err := strconv.ParseBool(strings.ToLower(node.Value))
+
+	return value, err == nil
+}
+
+func customResourceOpenAPISchemaYAML(version *yaml.Node, source []byte, sourcePath string) (*yaml.Node, SourceDiagnosticLocation, error) {
+	versionSchema, exists := yamlNodeMapValue(version, "schema")
+	if !exists {
+		return nil, SourceDiagnosticLocation{}, errors.New("schema is missing")
+	}
+	openAPISchema, exists := yamlNodeMapValue(versionSchema, "openAPIV3Schema")
+	if !exists || openAPISchema.Kind != yaml.MappingNode {
+		return nil, SourceDiagnosticLocation{}, errors.New("schema.openAPIV3Schema must be a Map")
+	}
+	location := SourceDiagnosticLocation{Path: sourcePath, Span: yamlNodeSourceSpan(source, openAPISchema), Message: "CRD OpenAPI schema"}
+
+	return openAPISchema, location, nil
+}
+
+func registerCustomResourceDefinitionSchemas(schemas map[customResourceDefinitionKey]crdVersionSchema, value RuntimeValue, compileSchemas bool) error {
 	apiVersion, hasAPIVersion := runtimeStringField(value, "apiVersion")
 	if !hasAPIVersion || apiVersion != "apiextensions.k8s.io/v1" {
 		return fmt.Errorf("unsupported apiVersion %q", apiVersion)
@@ -156,6 +314,14 @@ func registerRuntimeCustomResourceDefinition(ctx context.Context, schemas map[cu
 	if !hasGroup || !hasNames || !hasKind || !hasScope || !hasPlural {
 		return errors.New("spec.group, spec.scope, spec.names.kind, and spec.names.plural are required")
 	}
+	metadata, hasMetadata := runtimeMapValue(value, "metadata")
+	name, hasName := runtimeStringField(metadata, "name")
+	if !hasMetadata || !hasName || name == "" {
+		return errors.New("metadata.name is required")
+	}
+	if name != plural+"."+group {
+		return fmt.Errorf("metadata.name %q must match spec.names.plural and spec.group", name)
+	}
 	descriptor := KubernetesResourceDescriptor{APIGroup: group, Kind: kind, ResourceName: plural, Scope: KubernetesResourceScope(scope)}
 	if _, _, err := kubernetesResourceDescriptorFromPublic(descriptor); err != nil {
 		return err
@@ -164,12 +330,17 @@ func registerRuntimeCustomResourceDefinition(ctx context.Context, schemas map[cu
 	if !exists || (versions.Kind() != List && versions.Kind() != AdapterBundle) || len(versions.List) == 0 {
 		return errors.New("spec.versions must be a non-empty List")
 	}
+	registeredVersions := make(map[string]struct{}, len(versions.List))
 	for _, versionEntry := range versions.List {
 		version, hasVersion := runtimeStringField(versionEntry, "name")
 		served, hasServed := runtimeMapValue(versionEntry, "served")
 		if !hasVersion || !hasServed || served.Kind() != Bool {
 			return errors.New("each spec.versions entry requires name and Bool served fields")
 		}
+		if _, duplicate := registeredVersions[version]; duplicate {
+			return fmt.Errorf("spec.versions contains duplicate version %q", version)
+		}
+		registeredVersions[version] = struct{}{}
 		key := customResourceDefinitionKey{group: group, version: version, kind: kind}
 		registered := crdVersionSchema{served: served.BoolValue(), descriptor: descriptor}
 		if served.BoolValue() {
@@ -177,31 +348,77 @@ func registerRuntimeCustomResourceDefinition(ctx context.Context, schemas map[cu
 			if err != nil {
 				return fmt.Errorf("schema for %s %s/%s: %w", kind, group, version, err)
 			}
-			encodedSchema, err := jsonv2.Marshal(openAPISchema, jsonv2.Deterministic(true))
-			if err != nil {
-				return fmt.Errorf("encode schema for %s %s/%s: %w", kind, group, version, err)
-			}
-			registered.fingerprint = sha256.Sum256(encodedSchema)
-			validator, structural, celValidator, err := compileCRDValidatorJSON(openAPISchema)
-			if err != nil {
-				return fmt.Errorf("compile schema for %s %s/%s: %w", kind, group, version, err)
-			}
-			registered.validator = validator
-			registered.structural = structural
-			typeExpr := structuralSchemaType(structural, 0)
-			registered.typeExpr = &typeExpr
-			registered.cel = celValidator
+			registered.openAPISchema = openAPISchema
 			registered.location = location
-		}
-		if existing, duplicate := schemas[key]; duplicate {
-			if existing.served != registered.served || existing.descriptor != registered.descriptor || existing.fingerprint != registered.fingerprint {
-				return fmt.Errorf("conflicting schemas for %s %s/%s", kind, group, version)
+			if compileSchemas {
+				if err := compileCRDVersionSchema(&registered); err != nil {
+					return fmt.Errorf("compile schema for %s %s/%s: %w", kind, group, version, err)
+				}
 			}
-
-			continue
 		}
-		schemas[key] = registered
+		if err := registerCRDVersionSchema(schemas, key, registered); err != nil {
+			return err
+		}
 	}
+
+	return nil
+}
+
+func registerCRDVersionSchema(schemas map[customResourceDefinitionKey]crdVersionSchema, key customResourceDefinitionKey, registered crdVersionSchema) error {
+	existing, duplicate := schemas[key]
+	if !duplicate {
+		schemas[key] = registered
+
+		return nil
+	}
+	if err := ensureCRDVersionFingerprint(&existing); err != nil {
+		return fmt.Errorf("encode schema for %s %s/%s: %w", key.kind, key.group, key.version, err)
+	}
+	if err := ensureCRDVersionFingerprint(&registered); err != nil {
+		return fmt.Errorf("encode schema for %s %s/%s: %w", key.kind, key.group, key.version, err)
+	}
+	if existing.served != registered.served || existing.descriptor != registered.descriptor || existing.fingerprint != registered.fingerprint {
+		return fmt.Errorf("conflicting schemas for %s %s/%s", key.kind, key.group, key.version)
+	}
+	if existing.validator == nil && registered.validator != nil {
+		schemas[key] = registered
+	} else {
+		schemas[key] = existing
+	}
+
+	return nil
+}
+
+func compileCRDVersionSchema(schema *crdVersionSchema) error {
+	encodedSchema, err := encodeCRDOpenAPISchema(schema)
+	if err != nil {
+		return fmt.Errorf("encode openAPIV3Schema: %w", err)
+	}
+	schema.fingerprint = sha256.Sum256(encodedSchema)
+	validator, structural, celValidator, err := compileCRDValidatorJSONBytes(encodedSchema)
+	if err != nil {
+		return err
+	}
+	schema.validator = validator
+	schema.structural = structural
+	typeExpr := structuralSchemaType(structural, 0)
+	schema.typeExpr = &typeExpr
+	schema.cel = celValidator
+	schema.openAPISchema = RuntimeValue{}
+	schema.openAPISchemaNode = nil
+
+	return nil
+}
+
+func ensureCRDVersionFingerprint(schema *crdVersionSchema) error {
+	if !schema.served || schema.fingerprint != ([sha256.Size]byte{}) {
+		return nil
+	}
+	encodedSchema, err := encodeCRDOpenAPISchema(schema)
+	if err != nil {
+		return err
+	}
+	schema.fingerprint = sha256.Sum256(encodedSchema)
 
 	return nil
 }
@@ -242,23 +459,41 @@ func kubernetesResourceDescriptorsFromCRDSchemas(schemas map[customResourceDefin
 	return descriptors, nil
 }
 
-func customResourceOpenAPISchemaRuntime(version RuntimeValue) (any, SourceDiagnosticLocation, error) {
+func customResourceOpenAPISchemaRuntime(version RuntimeValue) (RuntimeValue, SourceDiagnosticLocation, error) {
 	versionSchema, exists := runtimeMapValue(version, "schema")
 	if !exists {
-		return nil, SourceDiagnosticLocation{}, errors.New("schema is missing")
+		return RuntimeValue{}, SourceDiagnosticLocation{}, errors.New("schema is missing")
 	}
 	openAPISchema, exists := runtimeMapValue(versionSchema, "openAPIV3Schema")
 	if !exists || runtimeNodeContents(openAPISchema).Kind() != Map {
-		return nil, SourceDiagnosticLocation{}, errors.New("schema.openAPIV3Schema must be a Map")
+		return RuntimeValue{}, SourceDiagnosticLocation{}, errors.New("schema.openAPIV3Schema must be a Map")
 	}
+	openAPISchema = runtimeNodeContents(openAPISchema)
 	metadata := openAPISchema.Metadata()
 	location := SourceDiagnosticLocation{Path: metadata.SourcePath, Span: metadata.Span, Message: "CRD OpenAPI schema"}
-	data, err := runtimeValueAsJSON(openAPISchema)
+
+	return openAPISchema, location, nil
+}
+
+func encodeCRDOpenAPISchema(schema *crdVersionSchema) ([]byte, error) {
+	value := schema.openAPISchema
+	if schema.openAPISchemaNode != nil {
+		var err error
+		value, err = runtimeYAMLNodeValue(schema.openAPISchemaNode, nil, "", nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	data, err := runtimeValueAsJSON(value)
 	if err != nil {
-		return nil, SourceDiagnosticLocation{}, err
+		return nil, err
+	}
+	encoded, err := jsonv2.Marshal(data, jsonv2.Deterministic(true))
+	if err != nil {
+		return nil, err
 	}
 
-	return data, location, nil
+	return encoded, nil
 }
 
 func customResourceRuntimeValidationDiagnostic(value RuntimeValue, validationErrors field.ErrorList, schemaLocation SourceDiagnosticLocation) error {
@@ -333,6 +568,11 @@ func compileCRDValidatorJSON(data any) (crdvalidation.SchemaValidator, *structur
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("encode openAPIV3Schema: %w", err)
 	}
+
+	return compileCRDValidatorJSONBytes(encoded)
+}
+
+func compileCRDValidatorJSONBytes(encoded []byte) (crdvalidation.SchemaValidator, *structuralschema.Structural, *crdcel.Validator, error) {
 	var versionedSchema apiextensionsv1.JSONSchemaProps
 	if err := jsonv2.Unmarshal(encoded, &versionedSchema); err != nil {
 		return nil, nil, nil, fmt.Errorf("decode openAPIV3Schema: %w", err)

@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -100,6 +101,34 @@ files = ["widget.yaml"]
 		if _, exists := catalog[key]; !exists {
 			t.Errorf("CRD schema catalog is missing %s/%s/%s", key.group, key.version, key.kind)
 		}
+		if schema := catalog[key]; schema.validator != nil || schema.structural != nil || schema.cel != nil || schema.openAPISchemaNode == nil {
+			t.Errorf("CRD schema %s/%s/%s was not retained as an uncompiled YAML node", key.group, key.version, key.kind)
+		}
+	}
+}
+
+func TestUpdateLoadsCRDSchemaCatalogForBuiltinOnlyBundle(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(string(filepath.Separator), "virtual-project")
+	files := newProjectFilesystem(root, lockedHTTPSCRDFiles(t, []byte("apiVersion: [\n")))
+	dependencies, err := dependency.OpenWithFS(t.Context(), root, false, dependencyToolchainIdentity(), files.files)
+	if err != nil {
+		t.Fatalf("open dependency lock: %v", err)
+	}
+	sources, err := configuredCRDSchemaSources(files)
+	if err != nil {
+		t.Fatalf("configuredCRDSchemaSources() error = %v", err)
+	}
+	resource, err := decodeRuntimeYAMLDocuments([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: sample\n"), "resource.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := &RuntimeBundle{Artifacts: []RuntimeArtifact{{Value: resource.List[0]}}}
+	if catalog, err := loadCRDSchemaCatalogForRuntimeBundle(t.Context(), dependencies, sources, bundle, false); err != nil || catalog != nil {
+		t.Fatalf("loadCRDSchemaCatalogForRuntimeBundle() without update = (%v, %v), want no catalog load", catalog, err)
+	}
+	if _, err := loadCRDSchemaCatalogForRuntimeBundle(t.Context(), dependencies, sources, bundle, true); err == nil || !strings.Contains(err.Error(), "decode CRD schema") {
+		t.Fatalf("loadCRDSchemaCatalogForRuntimeBundle() with update error = %v, want configured source load", err)
 	}
 }
 

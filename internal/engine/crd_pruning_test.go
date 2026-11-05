@@ -91,6 +91,76 @@ func TestRuntimeCustomResourceMultipleUnknownFieldDiagnosticsAreDeterministic(t 
 	}
 }
 
+func TestCRDCatalogCompilesSchemaOnlyForEmittedCustomResources(t *testing.T) {
+	t.Parallel()
+	crd := strings.Replace(projectCRD("example.test", "Sample", "samples"), "type: object", "type: 42", 1)
+	documents, err := decodeRuntimeYAMLDocuments([]byte(crd), "catalog-crd.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := customResourceDefinitionKey{group: "example.test", version: "v1", kind: "Sample"}
+	catalog := make(map[customResourceDefinitionKey]crdVersionSchema)
+	if err := registerCatalogCustomResourceDefinition(catalog, documents.List[0]); err != nil {
+		t.Fatalf("registerCatalogCustomResourceDefinition() error = %v", err)
+	}
+	if schema := catalog[key]; schema.validator != nil || schema.structural != nil || schema.cel != nil || schema.openAPISchema.Kind() != Map {
+		t.Fatalf("catalog schema = %#v, want raw OpenAPI schema without compiled validators", schema)
+	}
+	unrelated, err := decodeRuntimeYAMLDocuments([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: sample\n"), "unrelated.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateRuntimeBundleCustomResourcesWithCatalog(t.Context(), []RuntimeArtifact{{Value: unrelated.List[0]}}, catalog); err != nil {
+		t.Fatalf("validateRuntimeBundleCustomResourcesWithCatalog() with unrelated resource error = %v", err)
+	}
+	resource, err := decodeRuntimeYAMLDocuments([]byte("apiVersion: example.test/v1\nkind: Sample\nmetadata:\n  name: sample\n"), "resource.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = validateRuntimeBundleCustomResourcesWithCatalog(t.Context(), []RuntimeArtifact{{Value: resource.List[0]}}, catalog)
+	if err == nil || !strings.Contains(err.Error(), "compile schema for Sample example.test/v1") {
+		t.Fatalf("validateRuntimeBundleCustomResourcesWithCatalog() error = %v, want lazy schema compilation failure", err)
+	}
+	diagnostic, ok := SourceDiagnosticFromError(err)
+	if !ok || diagnostic.Path != "catalog-crd.yaml" {
+		t.Fatalf("compile error diagnostic = %#v, want the Catalog Schema source path", diagnostic)
+	}
+}
+
+func TestCRDCatalogRejectsUnservedCustomResourceVersion(t *testing.T) {
+	t.Parallel()
+	crd := strings.Replace(projectCRD("example.test", "Sample", "samples"), "served: true", "served: false", 1)
+	documents, err := decodeRuntimeYAMLDocuments([]byte(crd), "catalog-crd.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := make(map[customResourceDefinitionKey]crdVersionSchema)
+	if err := registerCatalogCustomResourceDefinition(catalog, documents.List[0]); err != nil {
+		t.Fatalf("registerCatalogCustomResourceDefinition() error = %v", err)
+	}
+	resource, err := decodeRuntimeYAMLDocuments([]byte("apiVersion: example.test/v1\nkind: Sample\nmetadata:\n  name: sample\n"), "resource.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = validateRuntimeBundleCustomResourcesWithCatalog(t.Context(), []RuntimeArtifact{{Value: resource.List[0]}}, catalog)
+	if err == nil || !strings.Contains(err.Error(), `uses unserved version "example.test/v1"`) {
+		t.Fatalf("validateRuntimeBundleCustomResourcesWithCatalog() error = %v, want unserved-version error", err)
+	}
+}
+
+func TestRuntimeCRDValidatesSchemaWithoutMatchingCustomResource(t *testing.T) {
+	t.Parallel()
+	crd := strings.Replace(projectCRD("example.test", "Sample", "samples"), "type: object", "type: 42", 1)
+	documents, err := decodeRuntimeYAMLDocuments([]byte(crd), "output-crd.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = validateRuntimeBundleCustomResourcesWithCatalog(t.Context(), []RuntimeArtifact{{Value: documents.List[0]}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "CustomResourceDefinition") {
+		t.Fatalf("validateRuntimeBundleCustomResourcesWithCatalog() error = %v, want full output CRD validation error", err)
+	}
+}
+
 func validateCRDTestResource(t *testing.T, schema, object string) error {
 	t.Helper()
 	crd := "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: samples.example.test\nspec:\n  group: example.test\n  scope: Namespaced\n  names:\n    plural: samples\n    singular: sample\n    kind: Sample\n    listKind: SampleList\n  versions:\n    - name: v1\n      served: true\n      storage: true\n      schema:\n        openAPIV3Schema:\n          type: object\n" + indentCRDTestYAML(schema, 10) + "status:\n  storedVersions: [v1]\n"
