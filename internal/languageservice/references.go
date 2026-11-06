@@ -56,6 +56,11 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 	if err != nil {
 		return ReferenceTarget{}, false
 	}
+	for _, reference := range index.NamedArguments {
+		if spanContains(reference.Span, offset) {
+			return ReferenceTarget{Path: path, Name: reference.Name, Declaration: reference.Declaration, Local: true}, true
+		}
+	}
 	name, selected, ok := identifierAt(source, offset)
 	if !ok {
 		return ReferenceTarget{}, false
@@ -192,6 +197,11 @@ func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget
 					}
 					resolved := index.LocalAt(target.Name, reference.Span.Start)
 					if resolved.Found && resolved.Binding.Declaration == target.Declaration {
+						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
+					}
+				}
+				for _, reference := range index.NamedArguments {
+					if reference.Declaration == target.Declaration {
 						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
 					}
 				}

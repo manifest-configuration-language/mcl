@@ -456,11 +456,11 @@ func (parser *expressionParser) parsePostfix(base Expr, stops map[string]bool, g
 				return nil, fmt.Errorf("invalid function name %q", base)
 			}
 			open, _ := parser.take()
-			arguments, names, closing, err := parser.parseCallArguments(open)
+			arguments, names, nameSpans, closing, err := parser.parseCallArguments(open)
 			if err != nil {
 				return nil, err
 			}
-			call := &CallExpr{ExprBase: ExprBase{Span: SourceSpan{Start: callee.ExprSpan().Start, End: parser.source.PhysicalOffset(closing.end)}}, Delimiters: ExprCallDelimiters{Open: parser.source.PhysicalSpan(open.start, open.end), Close: parser.source.PhysicalSpan(closing.start, closing.end)}, Callee: callee, Arguments: arguments, ArgumentNames: names}
+			call := &CallExpr{ExprBase: ExprBase{Span: SourceSpan{Start: callee.ExprSpan().Start, End: parser.source.PhysicalOffset(closing.end)}}, Delimiters: ExprCallDelimiters{Open: parser.source.PhysicalSpan(open.start, open.end), Close: parser.source.PhysicalSpan(closing.start, closing.end)}, Callee: callee, Arguments: arguments, ArgumentNames: names, ArgumentNameSpans: nameSpans}
 			if callee.Name == "ref" {
 				for _, name := range names {
 					if name != "" {
@@ -515,67 +515,71 @@ func (parser *expressionParser) parsePostfix(base Expr, stops map[string]bool, g
 	}
 }
 
-func (parser *expressionParser) parseCallArguments(open sourceLexeme) ([]Expr, []string, sourceLexeme, error) {
+func (parser *expressionParser) parseCallArguments(open sourceLexeme) ([]Expr, []string, []SourceSpan, sourceLexeme, error) {
 	var arguments []Expr
 	var names []string
+	var nameSpans []SourceSpan
 	seenNames := make(map[string]bool)
 	seenNamed := false
 	for {
 		token, ok := parser.peek(0)
 		if !ok {
-			return nil, nil, sourceLexeme{}, errors.New("unmatched opening parenthesis")
+			return nil, nil, nil, sourceLexeme{}, errors.New("unmatched opening parenthesis")
 		}
 		if parser.lexemeText(token) == ")" {
 			closing, _ := parser.take()
 
-			return arguments, names, closing, nil
+			return arguments, names, nameSpans, closing, nil
 		}
 		name := ""
+		nameSpan := SourceSpan{}
 		if token.kind == sourceLexemeIdentifier {
 			separator, hasSeparator := parser.peek(1)
 			if hasSeparator && parser.lexemeText(separator) == "=" && token.end <= separator.start {
 				name = parser.lexemeText(token)
 				if !identifier(name) {
-					return nil, nil, sourceLexeme{}, fmt.Errorf("invalid argument name %q", name)
+					return nil, nil, nil, sourceLexeme{}, fmt.Errorf("invalid argument name %q", name)
 				}
 				if seenNames[name] {
-					return nil, nil, sourceLexeme{}, fmt.Errorf("duplicate named argument %q", name)
+					return nil, nil, nil, sourceLexeme{}, fmt.Errorf("duplicate named argument %q", name)
 				}
+				nameSpan = parser.source.PhysicalSpan(token.start, token.end)
 				seenNames[name] = true
 				seenNamed = true
 				parser.take()
 				parser.take()
 			} else if seenNamed {
-				return nil, nil, sourceLexeme{}, errors.New("positional arguments must precede named arguments")
+				return nil, nil, nil, sourceLexeme{}, errors.New("positional arguments must precede named arguments")
 			}
 		} else if seenNamed {
-			return nil, nil, sourceLexeme{}, errors.New("positional arguments must precede named arguments")
+			return nil, nil, nil, sourceLexeme{}, errors.New("positional arguments must precede named arguments")
 		}
 		argument, err := parser.parse(1, map[string]bool{",": true, ")": true})
 		if err != nil {
-			return nil, nil, sourceLexeme{}, err
+			return nil, nil, nil, sourceLexeme{}, err
 		}
 		arguments = append(arguments, argument)
 		names = append(names, name)
+		nameSpans = append(nameSpans, nameSpan)
 		next, ok := parser.take()
 		if !ok {
-			return nil, nil, sourceLexeme{}, errors.New("unmatched opening parenthesis")
+			return nil, nil, nil, sourceLexeme{}, errors.New("unmatched opening parenthesis")
 		}
 		switch parser.lexemeText(next) {
 		case ")":
 			if len(arguments) > 0 && strings.Contains(parser.source.Text(open.end, next.start), "\n") {
-				return nil, nil, sourceLexeme{}, errors.New("multiline function calls require a trailing comma after every argument")
+				return nil, nil, nil, sourceLexeme{}, errors.New("multiline function calls require a trailing comma after every argument")
 			}
 
-			return arguments, names, next, nil
+			return arguments, names, nameSpans, next, nil
 		case ",":
 			if closing, ok := parser.peek(0); ok && parser.lexemeText(closing) == ")" {
 				closing, _ := parser.take()
 
-				return arguments, names, closing, nil
+				return arguments, names, nameSpans, closing, nil
 			}
 		default:
-			return nil, nil, sourceLexeme{}, fmt.Errorf("expected ',' or ')' after argument in call at %d", parser.source.PhysicalOffset(open.start))
+			return nil, nil, nil, sourceLexeme{}, fmt.Errorf("expected ',' or ')' after argument in call at %d", parser.source.PhysicalOffset(open.start))
 		}
 	}
 }

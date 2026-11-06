@@ -158,6 +158,11 @@ func navigationTarget(params NavigationParams, projectFiles fs.FS) (navigationRe
 	if err != nil {
 		return navigationResult{}, false
 	}
+	for _, reference := range index.NamedArguments {
+		if spanContains(reference.Span, offset) {
+			return navigationResult{path: params.Entrypoint, source: params.Source, Span: reference.Declaration}, true
+		}
+	}
 	if target, found := importedNavigationTarget(params, projectFiles, index, offset); found {
 		return target, true
 	}

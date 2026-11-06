@@ -87,6 +87,60 @@ type QualifiedReference struct {
 	Span   syntax.SourceSpan
 }
 
+// NamedArgumentReference binds a named call argument to a local function parameter.
+type NamedArgumentReference struct {
+	Name        string
+	Span        syntax.SourceSpan
+	Declaration syntax.SourceSpan
+}
+
+func NamedArgumentReferences(index *SemanticIndex) []NamedArgumentReference {
+	functions := make(map[string]*syntax.FunctionDeclaration)
+	ambiguous := make(map[string]bool)
+	for _, node := range index.Module.Nodes {
+		function, ok := node.(*syntax.FunctionDeclaration)
+		if !ok || function.Function == nil {
+			continue
+		}
+		if _, exists := functions[function.Name]; exists {
+			ambiguous[function.Name] = true
+
+			continue
+		}
+		functions[function.Name] = function
+	}
+
+	var references []NamedArgumentReference
+	VisitModuleExpressions(index.Module, func(expression syntax.Expr) {
+		call, ok := expression.(*syntax.CallExpr)
+		if !ok {
+			return
+		}
+		callee, ok := call.Callee.(*syntax.ReferenceExpr)
+		if !ok || index.LocalAt(callee.Name, callee.ExprSpan().Start).Found || ambiguous[callee.Name] {
+			return
+		}
+		function := functions[callee.Name]
+		if function == nil {
+			return
+		}
+		for argumentIndex, name := range call.ArgumentNames {
+			if name == "" || argumentIndex >= len(call.ArgumentNameSpans) {
+				continue
+			}
+			for _, parameter := range function.Function.Parameters {
+				if parameter.Name == name {
+					references = append(references, NamedArgumentReference{Name: name, Span: call.ArgumentNameSpans[argumentIndex], Declaration: parameter.Span})
+
+					break
+				}
+			}
+		}
+	})
+
+	return references
+}
+
 func QualifiedSourceReferences(module syntax.ModuleAST) []QualifiedReference {
 	var result []QualifiedReference
 	VisitModuleExpressions(module, func(expression syntax.Expr) {

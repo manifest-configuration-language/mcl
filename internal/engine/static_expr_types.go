@@ -30,15 +30,38 @@ func inferStaticExprAnalysis(expression Expr, bindings map[string]TypeAnalysis, 
 		analysis.Facts.Elements = []TypeAnalysisFacts{}
 	case *ListExpr:
 		analysis.Facts.BundleKnown = true
-		analysis.Facts.Elements = make([]TypeAnalysisFacts, len(node.Items))
+		positionalFactsKnown := true
+		elements := make([]TypeAnalysisFacts, 0, len(node.Items))
 		for index, item := range node.Items {
 			itemAnalysis, itemKnown, itemErr := inferStaticExprAnalysis(item, bindings, types)
 			if itemErr != nil {
 				return TypeAnalysis{}, false, fmt.Errorf("item %d: %w", index, itemErr)
 			}
-			if itemKnown {
-				analysis.Facts.Elements[index] = cloneTypeAnalysisFacts(itemAnalysis.Facts)
+			if index < len(node.Spreads) && node.Spreads[index] {
+				if !itemKnown || !itemAnalysis.Facts.BundleKnown || itemAnalysis.Facts.Elements == nil {
+					positionalFactsKnown = false
+
+					continue
+				}
+				if positionalFactsKnown {
+					for _, element := range itemAnalysis.Facts.Elements {
+						elements = append(elements, cloneTypeAnalysisFacts(element))
+					}
+				}
+
+				continue
 			}
+			if !positionalFactsKnown {
+				continue
+			}
+			var facts TypeAnalysisFacts
+			if itemKnown {
+				facts = cloneTypeAnalysisFacts(itemAnalysis.Facts)
+			}
+			elements = append(elements, facts)
+		}
+		if positionalFactsKnown {
+			analysis.Facts.Elements = elements
 		}
 	case *EmptyMapExpr:
 		analysis.Facts.Fields = map[string]TypeAnalysisFacts{}

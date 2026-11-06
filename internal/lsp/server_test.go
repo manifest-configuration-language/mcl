@@ -506,6 +506,90 @@ func TestRenameTypeDefinitionAndReferences(t *testing.T) {
 	}
 }
 
+func TestProtocolRenameFromNamedArgumentUpdatesParameterReferences(t *testing.T) {
+	t.Parallel()
+	session := newTestLSPConnection()
+	defer session.close(t)
+	session.send(t, initializeRequest)
+	session.receive(t)
+
+	const uri = "file:///main.mcl"
+	const source = "fn render(name: String) -> String = name\nlet value = render(name = \"api\")\n"
+	session.send(t, `{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///main.mcl","version":1,"text":"fn render(name: String) -> String = name\nlet value = render(name = \"api\")\n"}}}`)
+	session.receive(t)
+	line := source[strings.Index(source, "\n")+1:]
+	position := strings.Index(line, "name =") + 1
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"textDocument/rename","params":{"textDocument":{"uri":%q},"position":{"line":1,"character":%d},"newName":"containerName"}}`, uri, position))
+	response := session.receive(t)
+	var result struct {
+		Result struct {
+			Changes map[string][]struct {
+				NewText string `json:"newText"`
+				Range   struct {
+					Start location `json:"start"`
+				} `json:"range"`
+			} `json:"changes"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		t.Fatalf("could not decode rename response %q: %v", response, err)
+	}
+	edits := result.Result.Changes[uri]
+	if len(edits) != 3 {
+		t.Fatalf("rename returned %d edits, want declaration, body reference, and named argument: %s", len(edits), response)
+	}
+	wantStarts := map[location]bool{
+		{Line: 0, Character: strings.Index(source, "name:")}:                                  true,
+		{Line: 0, Character: strings.LastIndex(source[:strings.Index(source, "\n")], "name")}: true,
+		{Line: 1, Character: strings.Index(line, "name =")}:                                   true,
+	}
+	for _, edit := range edits {
+		if edit.NewText != "containerName" {
+			t.Errorf("rename edit text = %q, want containerName", edit.NewText)
+		}
+		if !wantStarts[edit.Range.Start] {
+			t.Errorf("rename edit starts at %#v, want declaration, body reference, or named argument", edit.Range.Start)
+		}
+		delete(wantStarts, edit.Range.Start)
+	}
+	if len(wantStarts) != 0 {
+		t.Errorf("rename omitted expected edit positions: %#v", wantStarts)
+	}
+	session.shutdown(t)
+}
+
+func TestProtocolDefinitionFromNamedArgumentTargetsParameter(t *testing.T) {
+	t.Parallel()
+	session := newTestLSPConnection()
+	defer session.close(t)
+	session.send(t, initializeRequest)
+	session.receive(t)
+
+	const uri = "file:///main.mcl"
+	const source = "fn render(name: String) -> String = name\nlet value = render(name = \"api\")\n"
+	session.send(t, `{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///main.mcl","version":1,"text":"fn render(name: String) -> String = name\nlet value = render(name = \"api\")\n"}}}`)
+	session.receive(t)
+	callName := strings.Index(source[strings.Index(source, "\n")+1:], "name =")
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":%q},"position":{"line":1,"character":%d}}}`, uri, callName+1))
+	response := session.receive(t)
+	var result struct {
+		Result struct {
+			URI   string `json:"uri"`
+			Range struct {
+				Start location `json:"start"`
+			} `json:"range"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		t.Fatalf("could not decode definition response %q: %v", response, err)
+	}
+	wantCharacter := strings.Index(source, "name:")
+	if result.Result.URI != uri || result.Result.Range.Start != (location{Line: 0, Character: wantCharacter}) {
+		t.Fatalf("definition response = %#v, want parameter declaration at %d: %s", result.Result, wantCharacter, response)
+	}
+	session.shutdown(t)
+}
+
 func TestRenameExportedTypeRejectsExistingTypeName(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

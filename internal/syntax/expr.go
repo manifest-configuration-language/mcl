@@ -99,10 +99,11 @@ type PathExpr struct {
 // CallExprはfunction call expressionを表します。
 type CallExpr struct {
 	ExprBase
-	Delimiters    ExprCallDelimiters
-	Callee        Expr
-	Arguments     []Expr
-	ArgumentNames []string
+	Delimiters        ExprCallDelimiters
+	Callee            Expr
+	Arguments         []Expr
+	ArgumentNames     []string
+	ArgumentNameSpans []SourceSpan
 }
 
 // BinaryExprはbinary expressionを表します。

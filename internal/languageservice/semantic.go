@@ -17,12 +17,13 @@ func AnalyzeSource(source string) (*SemanticIndex, error) {
 
 // SemanticIndexは1つのASTに含まれる宣言、参照、local scopeを共有する。
 type SemanticIndex struct {
-	Module        syntax.ModuleAST
-	Declarations  map[string][]int
-	References    []SourceReference
-	Locals        []ScopedLocalBinding
-	Qualified     []QualifiedReference
-	QualifiedType []QualifiedReference
+	Module         syntax.ModuleAST
+	Declarations   map[string][]int
+	References     []SourceReference
+	NamedArguments []NamedArgumentReference
+	Locals         []ScopedLocalBinding
+	Qualified      []QualifiedReference
+	QualifiedType  []QualifiedReference
 }
 
 func AnalyzeModule(module syntax.ModuleAST) *SemanticIndex {
@@ -34,6 +35,7 @@ func AnalyzeModule(module syntax.ModuleAST) *SemanticIndex {
 		Qualified:     QualifiedSourceReferences(module),
 		QualifiedType: QualifiedTypeReferences(module),
 	}
+	index.NamedArguments = NamedArgumentReferences(index)
 	for declarationIndex, node := range module.Nodes {
 		name, _, span, ok := ASTDeclarationInfo(node)
 		if !ok || span.End <= span.Start {

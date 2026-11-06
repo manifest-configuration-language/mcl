@@ -6,9 +6,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
+	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
 
 // CompletionItem is a completion candidate returned by the reusable completion API.
@@ -91,6 +93,9 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 			}
 		}
 	}
+	if namedArguments := namedArgumentCompletions(source, position, start); len(namedArguments) != 0 {
+		items = append(namedArguments, items...)
+	}
 	if offset, err := offsetAtUTF16(source, position); err == nil {
 		var bindings []LocalBinding
 		if parseErr != nil {
@@ -121,6 +126,117 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 	}
 
 	return filtered
+}
+
+func namedArgumentCompletions(source string, position Position, prefixStart int) []CompletionItem {
+	lines := strings.Split(source, "\n")
+	if position.Line < 0 || position.Line >= len(lines) {
+		return nil
+	}
+	runes := []rune(lines[position.Line])
+	startCharacter := len(utf16.Encode(runes[:prefixStart]))
+	startOffset, err := offsetAtUTF16(source, Position{Line: position.Line, Character: startCharacter})
+	if err != nil {
+		return nil
+	}
+	cursor := RuneIndexAtUTF16(runes, position.Character)
+	tokenEnd := cursor
+	for tokenEnd < len(runes) && IsIdentifierRune(runes[tokenEnd]) {
+		tokenEnd++
+	}
+	endCharacter := len(utf16.Encode(runes[:tokenEnd]))
+	endOffset, err := offsetAtUTF16(source, Position{Line: position.Line, Character: endCharacter})
+	if err != nil || startOffset > endOffset {
+		return nil
+	}
+	following := strings.TrimLeft(source[endOffset:], " \t\r\n")
+	nameContext := strings.HasPrefix(following, "=")
+	if !nameContext {
+		before := strings.TrimRight(source[:startOffset], " \t\r\n")
+		after := strings.TrimLeft(source[endOffset:], " \t\r\n")
+		nameContext = len(before) > 0 && (before[len(before)-1] == '(' || before[len(before)-1] == ',') && len(after) > 0 && (after[0] == ')' || after[0] == ',')
+	}
+	if !nameContext {
+		return nil
+	}
+	const placeholder = "__mcl_named_argument_completion__"
+	placeholderArgument := placeholder
+	if !strings.HasPrefix(following, "=") {
+		placeholderArgument += " = null"
+	}
+	candidate := source[:startOffset] + placeholderArgument + source[endOffset:]
+	index, err := AnalyzeSource(candidate)
+	if err != nil {
+		return nil
+	}
+	cursorOffset := startOffset + len(placeholder)
+	var selected *syntax.CallExpr
+	VisitModuleExpressions(index.Module, func(expression syntax.Expr) {
+		call, ok := expression.(*syntax.CallExpr)
+		if !ok || !spanContains(call.ExprSpan(), cursorOffset) {
+			return
+		}
+		if selected == nil || call.ExprSpan().End-call.ExprSpan().Start < selected.ExprSpan().End-selected.ExprSpan().Start {
+			selected = call
+		}
+	})
+	if selected == nil {
+		return nil
+	}
+	callee, ok := selected.Callee.(*syntax.ReferenceExpr)
+	if !ok || index.LocalAt(callee.Name, callee.ExprSpan().Start).Found {
+		return nil
+	}
+	var function *syntax.FunctionDeclaration
+	for _, node := range index.Module.Nodes {
+		declaration, ok := node.(*syntax.FunctionDeclaration)
+		if !ok || declaration.Function == nil || declaration.Name != callee.Name {
+			continue
+		}
+		if function != nil {
+			return nil
+		}
+		function = declaration
+	}
+	if function == nil {
+		return nil
+	}
+	currentArgument := -1
+	for argumentIndex, argument := range selected.Arguments {
+		if argumentIndex < len(selected.ArgumentNameSpans) && spanContains(selected.ArgumentNameSpans[argumentIndex], cursorOffset) || spanContains(argument.ExprSpan(), cursorOffset) {
+			currentArgument = argumentIndex
+
+			break
+		}
+	}
+	used := make(map[string]bool)
+	positionals := 0
+	for argumentIndex, name := range selected.ArgumentNames {
+		if argumentIndex == currentArgument {
+			if name == "" {
+				positionals++
+			}
+
+			continue
+		}
+		if name == "" {
+			positionals++
+		} else {
+			used[name] = true
+		}
+	}
+	for parameterIndex := 0; parameterIndex < positionals && parameterIndex < len(function.Function.Parameters); parameterIndex++ {
+		used[function.Function.Parameters[parameterIndex].Name] = true
+	}
+	var items []CompletionItem
+	for _, parameter := range function.Function.Parameters {
+		if used[parameter.Name] {
+			continue
+		}
+		items = append(items, CompletionItem{Label: parameter.Name, Kind: 5, InsertText: parameter.Name + " = ", Detail: "名前付き引数"})
+	}
+
+	return items
 }
 
 func schemaFieldCompletions(ctx context.Context, position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {

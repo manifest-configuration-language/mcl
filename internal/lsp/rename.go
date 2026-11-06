@@ -74,6 +74,11 @@ func (s *server) definition(params definitionParams) *definitionLocation {
 	if offset, err := offsetAtUTF16(state.Text, params.Position); err == nil {
 		if index, err := analyzeSource(state.Text); err == nil {
 			module := index.Module
+			for _, reference := range index.NamedArguments {
+				if reference.Span.Start <= offset && offset <= reference.Span.End {
+					return sourceDefinitionLocation(params.TextDocument.URI, state.Text, reference.Declaration)
+				}
+			}
 			if result, handled := s.importedDefinition(params.TextDocument.URI, module, offset, index); handled {
 				return result
 			}
@@ -821,7 +826,17 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	if edit, handled := s.renameImportedExport(ctx, params, name, offset, module, index); handled {
 		return edit
 	}
-	if match := index.LocalAt(name, offset); match.Found {
+	localReference := index.LocalAt(name, offset).Found
+	if !localReference {
+		for _, reference := range index.NamedArguments {
+			if reference.Name == name && reference.Span.Start <= offset && offset <= reference.Span.End {
+				localReference = true
+
+				break
+			}
+		}
+	}
+	if localReference {
 		result := languageservice.RenameForSource(
 			params.TextDocument.URI,
 			state.Text,

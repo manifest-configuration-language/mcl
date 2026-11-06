@@ -38,8 +38,34 @@ func RenameForSource(path, source string, position Position, newName string) *Re
 	}
 
 	var spans []syntax.SourceSpan
-	if local := index.LocalAt(name, offset); local.Found {
+	local := index.LocalAt(name, offset)
+	if !local.Found {
+		for _, reference := range index.NamedArguments {
+			if reference.Name != name || !spanContains(reference.Span, offset) {
+				continue
+			}
+			for _, binding := range index.Locals {
+				if binding.Name == name && binding.Declaration == reference.Declaration {
+					local = LocalBindingMatch{Binding: binding, Found: true}
+
+					break
+				}
+			}
+
+			break
+		}
+	}
+	if local.Found {
 		spans = localRenameSpans(source, name, newName, local.Binding, index.Locals, index.References)
+		if spans == nil {
+			return nil
+		}
+		for _, reference := range index.NamedArguments {
+			if reference.Name == name && reference.Declaration == local.Binding.Declaration {
+				spans = append(spans, reference.Span)
+			}
+		}
+		spans = uniqueValidSpans(source, name, spans)
 		if spans == nil {
 			return nil
 		}
