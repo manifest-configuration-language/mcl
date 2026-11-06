@@ -21,6 +21,38 @@ func typePrimitiveListExpression(expression Expr, inferred ResolvedType, context
 	}
 	typed := typedExpression{kind: typedExpressionList, span: node.Span, items: make([]typedExpression, 0, len(node.Items))}
 	for _, item := range node.Items {
+		index := len(typed.items)
+		if index < len(node.Spreads) && node.Spreads[index] {
+			listType := ResolvedType{Name: typeList, Element: &elementType}
+			itemType, known, err := context.inferType(item)
+			if err != nil {
+				return typedExpression{}, false
+			}
+			if known && itemType.Name != typeAny {
+				itemElement, isList := staticListElement(itemType, context.types)
+				if !isList {
+					return typedExpression{}, false
+				}
+				if staticTypeCompatibility(itemElement, elementType, context.types).isDefinitelyIncompatible() {
+					typedItem, ok := typeExpression(item, itemType, context)
+					if !ok {
+						return typedExpression{}, false
+					}
+					typedItem.spread = true
+					typed.items = append(typed.items, typedItem)
+
+					continue
+				}
+			}
+			typedItem, ok := typeExpressionWithInferredExpected(item, listType, context)
+			if !ok {
+				return typedExpression{}, false
+			}
+			typedItem.spread = true
+			typed.items = append(typed.items, typedItem)
+
+			continue
+		}
 		itemType, known, err := context.inferType(item)
 		if err != nil {
 			return typedExpression{}, false
@@ -136,7 +168,7 @@ func typeExpressionWithInferredExpected(expression Expr, expected ResolvedType, 
 	if err != nil {
 		return typedExpression{}, false
 	}
-	if actualKnown && !typedExpressionAssignable(expression, actual, expected, context) {
+	if actualKnown && actual.Name != typeAny && !typedExpressionAssignable(expression, actual, expected, context) {
 		return typedExpression{}, false
 	}
 

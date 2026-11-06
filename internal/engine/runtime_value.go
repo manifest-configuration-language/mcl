@@ -83,6 +83,7 @@ func (value *runtimeValueData) ensureTyping() *ValueTyping {
 type typedLambda struct {
 	Parameters     []string
 	ParameterSpans []SourceSpan
+	Defaults       []*typedExpression
 	Locals         []typedLocalBinding
 	Body           typedExpression
 	Scope          map[string]RuntimeValue
@@ -939,12 +940,17 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	definition := lambda.Lambda
 	parameters := make([]FunctionTypeParameter, len(definition.Parameters))
 	for index, name := range definition.Parameters {
-		parameters[index] = FunctionTypeParameter{Name: name}
+		parameters[index] = FunctionTypeParameter{Name: name, Optional: index < len(definition.Defaults) && definition.Defaults[index] != nil}
 	}
-	ordered, ok := functionCallRuntimeArguments(parameters, args, names)
+	ordered, assigned, ok := functionCallRuntimeArguments(parameters, args, names)
 	if !ok {
 		return RuntimeValue{}, errors.New("function call arguments do not match its signature")
 	}
+	leave, err := state.Budget.enterCall()
+	if err != nil {
+		return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, err)
+	}
+	defer leave()
 	lambdaTypes := state.Types
 	var lambdaAnalysis *TypeAnalysisContext
 	if state.Module != nil {
@@ -959,7 +965,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	substitutions := make(map[string]ResolvedType)
 	if definition.Typing != nil {
 		for index, parameterType := range definition.Typing.ParameterTypes {
-			if !isLambdaTypeVariable(parameterType) || index >= len(ordered) {
+			if !assigned[index] || !isLambdaTypeVariable(parameterType) || index >= len(ordered) {
 				continue
 			}
 			argumentAnalysis, known := inferRuntimeValueStaticType(ordered[index])
@@ -968,6 +974,35 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			}
 			substitutions[parameterType.Name] = argumentAnalysis.Type
 		}
+	}
+	environment := maps.Clone(definition.Scope)
+	if environment == nil {
+		environment = make(map[string]RuntimeValue)
+	}
+	for index, parameter := range definition.Parameters {
+		if assigned[index] {
+			environment[parameter] = ordered[index]
+
+			continue
+		}
+
+		if index >= len(definition.Defaults) || definition.Defaults[index] == nil {
+			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, fmt.Errorf("missing required argument %q", parameter))
+		}
+		defaultExpression, err := specializeTypedExpression(*definition.Defaults[index], substitutions, lambdaTypes)
+		if err != nil {
+			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, defaultExpression.span, err)
+		}
+		defaultValue, err := evaluateTypedExpressionRuntime(defaultExpression, &EvaluationState{
+			Environment: environment, StaticTypes: definition.Typing.TypeScope, Types: lambdaTypes,
+			Stack: state.Stack, Budget: state.Budget, Allocations: state.Allocations,
+			SourcePath: lambda.Value.SourcePath, Module: definition.ModuleContext,
+		})
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+		ordered[index] = defaultValue
+		environment[parameter] = defaultValue
 	}
 	if definition.Typing != nil {
 		for index, parameterType := range definition.Typing.ParameterTypes {
@@ -999,12 +1034,6 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, fmt.Errorf("lambda returns %s, expected %s", staticTypeName(body.resolvedType), staticTypeName(returnType)))
 		}
 	}
-	leave, err := state.Budget.enterCall()
-	if err != nil {
-		return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, err)
-	}
-	defer leave()
-	environment := maps.Clone(definition.Scope)
 	for index, parameter := range definition.Parameters {
 		environment[parameter] = ordered[index]
 	}
@@ -1040,9 +1069,9 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	return evaluateTypedExpressionRuntime(body, &childState)
 }
 
-func functionCallRuntimeArguments(parameters []FunctionTypeParameter, args []RuntimeValue, names []string) ([]RuntimeValue, bool) {
-	if len(parameters) != len(args) || len(names) != 0 && len(names) != len(args) {
-		return nil, false
+func functionCallRuntimeArguments(parameters []FunctionTypeParameter, args []RuntimeValue, names []string) ([]RuntimeValue, []bool, bool) {
+	if len(args) > len(parameters) || len(names) != 0 && len(names) != len(args) {
+		return nil, nil, false
 	}
 	ordered := make([]RuntimeValue, len(parameters))
 	assigned := make([]bool, len(parameters))
@@ -1052,7 +1081,7 @@ func functionCallRuntimeArguments(parameters []FunctionTypeParameter, args []Run
 		if named && names[index] != "" {
 			parameterIndex = slices.IndexFunc(parameters, func(parameter FunctionTypeParameter) bool { return parameter.Name == names[index] })
 			if parameterIndex < 0 {
-				return nil, false
+				return nil, nil, false
 			}
 		} else if named {
 			for parameterIndex < len(assigned) && assigned[parameterIndex] {
@@ -1060,16 +1089,18 @@ func functionCallRuntimeArguments(parameters []FunctionTypeParameter, args []Run
 			}
 		}
 		if parameterIndex >= len(ordered) || assigned[parameterIndex] {
-			return nil, false
+			return nil, nil, false
 		}
 		assigned[parameterIndex] = true
 		ordered[parameterIndex] = argument
 	}
-	if slices.Contains(assigned, false) {
-		return nil, false
+	for index, parameter := range parameters {
+		if !assigned[index] && !parameter.Optional {
+			return nil, nil, false
+		}
 	}
 
-	return ordered, true
+	return ordered, assigned, true
 }
 
 func evaluateTypedExpressionRuntime(expression typedExpression, state *EvaluationState) (RuntimeValue, error) {
@@ -1217,7 +1248,7 @@ func inferRuntimeValueStaticType(value RuntimeValue) (TypeAnalysis, bool) {
 			if index < len(value.Lambda.Typing.ParameterTypes) {
 				parameterType = value.Lambda.Typing.ParameterTypes[index]
 			}
-			parameters[index] = FunctionTypeParameter{Name: name, Type: parameterType}
+			parameters[index] = FunctionTypeParameter{Name: name, Type: parameterType, Optional: index < len(value.Lambda.Defaults) && value.Lambda.Defaults[index] != nil}
 		}
 		function := ResolvedType{Name: typeFunction, Parameters: parameters, ReturnType: value.Lambda.Typing.ReturnType}
 		facts := TypeAnalysisFacts{}

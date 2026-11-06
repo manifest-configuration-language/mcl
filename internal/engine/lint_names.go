@@ -61,8 +61,9 @@ func lintUndefinedNames(module ModuleAST) []Diagnostic {
 			}
 			locals := make(map[string]bool, len(declaration.Function.Parameters)+len(declaration.Function.Locals))
 			for _, parameter := range declaration.Function.Parameters {
-				locals[parameter.Name] = true
 				checkType(parameter.Type, declaration.Line)
+				checkExpression(parameter.Default, locals, declaration.Line)
+				locals[parameter.Name] = true
 			}
 			for _, local := range declaration.Function.Locals {
 				checkExpression(local.Expression, locals, local.Line)

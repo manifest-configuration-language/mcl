@@ -16,11 +16,89 @@ func FormatSource(source string) (string, error) {
 	cst := parseFormatterCST(source, tokens)
 	cst.addSyntaxLabels(module)
 	formatted := cst.format()
+	formattedModule, err := ParseAST(formatted)
+	if err != nil {
+		return "", fmt.Errorf("formatter produced invalid MCL: %w", err)
+	}
+	formatted = formatListMapStarts(formatted, formattedModule)
 	if _, err := ParseAST(formatted); err != nil {
 		return "", fmt.Errorf("formatter produced invalid MCL: %w", err)
 	}
 
 	return formatted, nil
+}
+
+func formatListMapStarts(source string, module ModuleAST) string {
+	lines := formatterSourceLines(source)
+	var replacements []SourceSpan
+	for _, declaration := range module.Nodes {
+		var expressions []Expr
+		switch declaration := declaration.(type) {
+		case *LetDeclaration:
+			expressions = append(expressions, declaration.Expression)
+		case *EmitStatement:
+			expressions = append(expressions, declaration.Expression)
+		case *ValidateStatement:
+			expressions = append(expressions, declaration.Expression, declaration.RuleExpr, declaration.QueryWhere)
+		case *FunctionDeclaration:
+			if declaration.Function != nil {
+				expressions = append(expressions, declaration.Function.Expression)
+				for _, parameter := range declaration.Function.Parameters {
+					expressions = append(expressions, parameter.Default)
+				}
+				for _, local := range declaration.Function.Locals {
+					expressions = append(expressions, local.Expression)
+				}
+			}
+		case *RuleDeclaration:
+			if declaration.Rule != nil {
+				for _, requirement := range declaration.Rule.Requirements {
+					expressions = append(expressions, requirement.Expression)
+				}
+			}
+		}
+		for _, expression := range expressions {
+			WalkExpr(expression, func(expression Expr) {
+				list, ok := expression.(*ListExpr)
+				if !ok {
+					return
+				}
+				for _, item := range list.Items {
+					if _, ok := item.(*MapExpr); !ok {
+						continue
+					}
+					span := item.ExprSpan()
+					lineIndex := sort.Search(len(lines), func(index int) bool { return lines[index].bodySpan.End > span.Start })
+					if lineIndex == 0 || lineIndex >= len(lines) {
+						continue
+					}
+					marker := source[lines[lineIndex-1].bodySpan.Start:lines[lineIndex-1].bodySpan.End]
+					itemLine := source[lines[lineIndex].bodySpan.Start:lines[lineIndex].bodySpan.End]
+					markerIndent := len(marker) - len(strings.TrimLeft(marker, " "))
+					itemIndent := len(itemLine) - len(strings.TrimLeft(itemLine, " "))
+					if strings.TrimSpace(marker) == "-" && itemIndent == markerIndent+2 {
+						replacements = append(replacements, SourceSpan{Start: lines[lineIndex-1].bodySpan.Start, End: lines[lineIndex].lineEnding.End})
+					}
+				}
+			})
+		}
+	}
+	slices.SortFunc(replacements, func(left, right SourceSpan) int { return cmp.Compare(right.Start, left.Start) })
+	for _, replacement := range replacements {
+		segment := source[replacement.Start:replacement.End]
+		segmentLines := formatterSourceLines(segment)
+		if len(segmentLines) < 2 {
+			continue
+		}
+		marker := segment[segmentLines[0].bodySpan.Start:segmentLines[0].bodySpan.End]
+		item := segment[segmentLines[1].bodySpan.Start:segmentLines[1].bodySpan.End]
+		indent := len(marker) - len(strings.TrimLeft(marker, " "))
+		ending := segment[segmentLines[1].lineEnding.Start:segmentLines[1].lineEnding.End]
+		updated := strings.Repeat(" ", indent) + "- " + strings.TrimSpace(item) + ending
+		source = source[:replacement.Start] + updated + source[replacement.End:]
+	}
+
+	return source
 }
 
 type formatterNodeKind uint8
@@ -308,6 +386,9 @@ func (cst *formatterCST) addSyntaxLabels(module ModuleAST) {
 		case *FunctionDeclaration:
 			cst.addStatementSyntaxLabel(node.Span, "fn")
 			if node.Function != nil {
+				for _, parameter := range node.Function.Parameters {
+					cst.addExpressionLabels(parameter.Default, 0)
+				}
 				for _, local := range node.Function.Locals {
 					cst.addStatementSyntaxLabel(local.Span, "let")
 					cst.addExpressionLabels(local.Expression, 0)

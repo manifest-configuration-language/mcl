@@ -1,0 +1,12 @@
+fn service(name: String, ports: List<Int> = [8080]) -> Map<String, Any> = node:
+  metadata:
+    name: name
+  spec:
+    ports: ports
+
+let ports = [8080, 9090]
+let resources = [
+  service(name = "api", ports = ports),
+  ...ports,
+]
+emit resources

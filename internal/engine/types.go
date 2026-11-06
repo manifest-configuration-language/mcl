@@ -34,8 +34,9 @@ type ResolvedType struct {
 }
 
 type FunctionTypeParameter struct {
-	Name string
-	Type ResolvedType
+	Name     string
+	Type     ResolvedType
+	Optional bool
 }
 
 type TypeField struct {

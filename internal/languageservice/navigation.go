@@ -302,7 +302,14 @@ func DeclarationHover(node syntax.ASTNode, source string) string {
 		}
 		parameters := make([]string, 0, len(declaration.Function.Parameters))
 		for _, parameter := range declaration.Function.Parameters {
-			parameters = append(parameters, parameter.Name+": "+browserTypeExprText(source, parameter.Type))
+			text := parameter.Name + ": " + browserTypeExprText(source, parameter.Type)
+			if parameter.Default != nil {
+				span := parameter.Default.ExprSpan()
+				if span.Start >= 0 && span.End <= len(source) && span.Start < span.End {
+					text += " = " + strings.TrimSpace(source[span.Start:span.End])
+				}
+			}
+			parameters = append(parameters, text)
 		}
 		contents := prefix + declaration.Name + "(" + strings.Join(parameters, ", ") + ")"
 		if declaration.Function.ReturnType != nil {

@@ -28,7 +28,7 @@ FunctionLocalDeclaration { kw<"let"> Identifier TypeAnnotation? "=" (FunctionBod
 FunctionBodyExpression { NodeExpression | OverlayExpression | RemovalExpression | Expression }
 TypeParameterList { "<" Identifier ("," Identifier)* ","? ">" }
 ParameterList { Parameter ("," Parameter)* ","? }
-Parameter { Identifier TypeAnnotation? }
+Parameter { Identifier TypeAnnotation? ("=" Expression)? }
 RuleDeclaration { Export? kw<"rule"> Identifier "(" TypedParameter ")" ":" lineEnd RuleBlock }
 TypedParameter { Identifier ":" TypeExpression }
 RuleBlock { indent RequireStatement+ (dedent | eof) }
@@ -89,7 +89,9 @@ NodeExpression { kw<"node"> ":" lineEnd Block }
 IfExpression { kw<"if"> Expression ":" lineEnd Block (kw<"else"> ":" lineEnd Block)? }
 ForExpression { kw<"for"> Identifier kw<"in"> Expression ":" lineEnd Block }
 LambdaExpression { kw<"fn"> "(" ParameterList? ")" "=>" Expression }
-ListExpression { "[" (Expression ("," Expression)* ","?)? "]" }
+ListExpression { "[" (ListElement ("," ListElement)* ","?)? "]" }
+ListElement { ListSpread | Expression }
+ListSpread { Spread Expression }
 InlineMap { "{" (InlineMapEntry ("," InlineMapEntry)* ","?)? "}" }
 InlineMapEntry { MapEntryKey ":" Expression }
 CallArguments { "(" (CallArgument ("," CallArgument)* ","? | lineEnd indent CallArgument ("," lineEnd? CallArgument)* ","? lineEnd dedent)? ")" }
@@ -113,6 +115,7 @@ BinaryOperator { Operator | Minus | kw<"and"> | kw<"or"> | kw<"in"> }
   MultiString { "\"\"\"" (!["] | "\"" !["] | "\"\"" !["])* "\"\"\"" }
   Comment { "#" ![\n\r]* }
   Operator { "==" | "!=" | "<=" | ">=" | "??" | "=>" | "->" | "+" | "*" | "/" | "%" | "|" | "<" | ">" }
+  Spread { "..." }
   Minus { "-" }
   newline { "\r"? "\n" | "\r" }
   eof { @eof }

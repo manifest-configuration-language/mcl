@@ -105,6 +105,7 @@ var builtinRegistry = []builtin{
 	{name: fnReplaceAt, module: stdlibListModule, exportName: fnReplaceAt, parameters: []string{paramValues, paramIndex, paramValue}, documentation: "リストの指定位置にある要素を置き換えます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticReplaceAtBuiltin, pureEvaluation: evaluateReplaceAtBuiltin},
 	{name: fnMergeByKey, module: stdlibListModule, exportName: fnMergeByKey, parameters: []string{"existing", "overrides", paramKey}, documentation: "指定したキーを使ってマップのリストをマージします。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticMergeByKeyBuiltin, pureEvaluation: evaluateMergeByKeyBuiltin},
 	{name: fnMap, module: stdlibListModule, exportName: fnMap, parameters: []string{paramValues, "transform"}, documentation: "リストの各要素に関数を適用します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
+	{name: fnFlatMap, module: stdlibListModule, exportName: fnFlatMap, parameters: []string{paramValues, "transform"}, documentation: "リストの各要素へListを返す関数を適用し、結果を1段平坦化します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
 	{name: fnFilter, module: stdlibListModule, exportName: fnFilter, parameters: []string{paramValues, "predicate"}, documentation: "条件に一致する要素だけをリストに残します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
 	{name: fnExactlyOne, module: stdlibListModule, exportName: fnExactlyOne, parameters: []string{paramValues, "predicate"}, documentation: "条件に一致する要素が1つであることを確認して返します。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder, deferred: builtinDeferredEvaluationPredicate},
 	{name: fnFold, module: stdlibListModule, exportName: fnFold, parameters: []string{paramValues, "initial", "combine"}, documentation: "初期値と関数を使ってリストの要素を1つの値にまとめます。", inference: builtinInferenceHigherOrder, evaluation: builtinEvaluationHigherOrder},
@@ -338,9 +339,14 @@ func callRuntimeHigherOrder(name string, arguments []RuntimeValue, state *Evalua
 	if !isList {
 		return RuntimeValue{}, fmt.Errorf("%s expects a List as its first argument", name)
 	}
-	if name == fnMap || name == fnFilter || name == fnExactlyOne {
+	if name == fnMap || name == fnFlatMap || name == fnFilter || name == fnExactlyOne {
 		if len(arguments) != 2 || !isRuntimeCallable(arguments[1]) {
-			return RuntimeValue{}, fmt.Errorf("%s expects a List and a predicate", name)
+			argumentKind := "predicate"
+			if name == fnMap || name == fnFlatMap {
+				argumentKind = "transform"
+			}
+
+			return RuntimeValue{}, fmt.Errorf("%s expects a List and a %s", name, argumentKind)
 		}
 		if name == fnExactlyOne {
 			var match RuntimeValue
@@ -384,6 +390,21 @@ func callRuntimeHigherOrder(name string, arguments []RuntimeValue, state *Evalua
 			}
 			if name == fnMap {
 				result.List = append(result.List, transformed)
+
+				continue
+			}
+			if name == fnFlatMap {
+				if transformed.IsDeferred() {
+					return RuntimeValue{}, fmt.Errorf("%s transform for item %d returned a deferred value, expected a List", name, index)
+				}
+				group, isGroupList := runtimeListValue(transformed)
+				if !isGroupList {
+					return RuntimeValue{}, fmt.Errorf("%s transform for item %d returned %s, expected a List", name, index, kindName(transformed.Kind()))
+				}
+				if err := runtimeAllocationBudgetOf(state).consume(len(group.List)); err != nil {
+					return RuntimeValue{}, err
+				}
+				result.List = append(result.List, group.List...)
 
 				continue
 			}

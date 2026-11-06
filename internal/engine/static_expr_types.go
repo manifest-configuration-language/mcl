@@ -195,6 +195,16 @@ func inferStaticExprTypeWithExpected(expression Expr, expected ResolvedType, bin
 		var elementType ResolvedType
 		for index, item := range node.Items {
 			itemType, itemKnown, itemErr := inferStaticExprTypeWithExpected(item, expectedElement, bindings, types)
+			if index < len(node.Spreads) && node.Spreads[index] {
+				itemType, itemKnown, itemErr = inferStaticExprTypeWithExpected(item, ResolvedType{Name: typeList, Element: &expectedElement}, bindings, types)
+				if itemErr == nil && itemKnown {
+					if itemType.Name == typeAny {
+						itemType = ResolvedType{Name: typeAny}
+					} else {
+						itemType, itemKnown = staticListElement(itemType, types)
+					}
+				}
+			}
 			if itemErr != nil {
 				return ResolvedType{}, false, fmt.Errorf("item %d: %w", index, itemErr)
 			}
@@ -422,7 +432,7 @@ func inferStaticExprCallFacts(call *CallExpr, bindings map[string]TypeAnalysis, 
 			facts.Bundle = argumentAnalyses[0].Facts.Bundle || argumentAnalyses[1].Facts.Bundle
 			facts.BundleKnown = argumentAnalyses[0].Facts.BundleKnown && argumentAnalyses[1].Facts.BundleKnown
 		}
-	case fnReplaceAt, fnMap, fnFilter, fnExactlyOne:
+	case fnReplaceAt, fnMap, fnFlatMap, fnFilter, fnExactlyOne:
 		if len(argumentAnalyses) > 0 && argumentKnown[0] {
 			facts.Bundle = argumentAnalyses[0].Facts.Bundle
 			facts.BundleKnown = argumentAnalyses[0].Facts.BundleKnown
@@ -523,6 +533,17 @@ func inferStaticExprTypeImpl(expression Expr, bindings map[string]TypeAnalysis, 
 				unknownElement = true
 
 				continue
+			}
+			if index < len(node.Spreads) && node.Spreads[index] {
+				var isList bool
+				if itemType.Name == typeAny {
+					itemType, isList = ResolvedType{Name: typeAny}, true
+				} else {
+					itemType, isList = staticListElement(itemType, types)
+				}
+				if !isList {
+					return ResolvedType{}, false, fmt.Errorf("item %d spread value must be a List", index)
+				}
 			}
 			if !knownElement {
 				element = itemType

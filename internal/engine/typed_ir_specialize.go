@@ -74,7 +74,19 @@ func specializeTypedExpression(expression typedExpression, substitutions map[str
 	if expression.kind == typedExpressionList {
 		var elementType ResolvedType
 		for _, item := range expression.items {
-			elementType = joinStaticTypes(elementType, item.resolvedType)
+			itemType := item.resolvedType
+			if item.spread {
+				if itemType.Name == typeAny {
+					itemType = ResolvedType{Name: typeAny}
+				} else {
+					itemElement, isList := staticListElement(itemType, types)
+					if !isList {
+						return typedExpression{}, errors.New("list spread requires a List value")
+					}
+					itemType = itemElement
+				}
+			}
+			elementType = joinStaticTypes(elementType, itemType)
 		}
 		if len(expression.items) == 0 {
 			elementType = ResolvedType{Name: typeAny}

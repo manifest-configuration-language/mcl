@@ -54,7 +54,7 @@ function escapeRegex(value) {
 }
 
 // Assignment uses the literal "=" token instead of the Lezer Operator token.
-const operators = uniqueSorted([...tokenValues("Operator"), ...tokenValues("Minus"), "="])
+const operators = uniqueSorted([...tokenValues("Operator"), ...tokenValues("Minus"), ...tokenValues("Spread"), "="])
   .sort((left, right) => right.length - left.length || left.localeCompare(right));
 const operatorPattern = `(?:${operators.map(escapeRegex).join("|")})`;
 

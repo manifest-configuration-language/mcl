@@ -366,6 +366,17 @@ func inferStaticHigherOrder(function string, analysis TypeAnalysis, inputs []Res
 	if function == fnFold {
 		return joinStaticTypes(initial, *returnType), true, nil
 	}
+	if function == fnFlatMap {
+		if returnType.Name == typeAny {
+			return ResolvedType{Name: typeList, Element: new(ResolvedType{Name: typeAny})}, true, nil
+		}
+		element, isList := staticListElement(*returnType, types)
+		if !isList {
+			return ResolvedType{}, false, fmt.Errorf("%s transform must return a List, got %s", function, staticTypeName(*returnType))
+		}
+
+		return ResolvedType{Name: typeList, Element: &element}, true, nil
+	}
 
 	return ResolvedType{Name: typeList, Element: returnType}, true, nil
 }
@@ -646,7 +657,7 @@ func equalStaticTypes(left, right ResolvedType) bool {
 		return false
 	}
 	for index, parameter := range left.Parameters {
-		if parameter.Name != right.Parameters[index].Name || !equalStaticTypes(parameter.Type, right.Parameters[index].Type) {
+		if parameter.Name != right.Parameters[index].Name || parameter.Optional != right.Parameters[index].Optional || !equalStaticTypes(parameter.Type, right.Parameters[index].Type) {
 			return false
 		}
 	}
@@ -936,6 +947,9 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 				return false, inferred.ReturnType != nil
 			}
 			for index := range inferred.Parameters {
+				if expected.Parameters[index].Optional && !inferred.Parameters[index].Optional {
+					return false, true
+				}
 				matches, known := staticTypeAssignable(expected.Parameters[index].Type, inferred.Parameters[index].Type, types, analyses...)
 				if !known || !matches {
 					return matches, known

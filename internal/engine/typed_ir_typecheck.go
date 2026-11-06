@@ -367,10 +367,18 @@ func typeGenericLambdaBody(expression Expr, context typedEvaluationContext) (typ
 	case *ListExpr:
 		items := make([]typedExpression, 0, len(node.Items))
 		var elem ResolvedType
-		for _, item := range node.Items {
+		for index, item := range node.Items {
 			typedItem, itemType, ok := typeGenericLambdaBody(item, context)
 			if !ok {
 				return typedExpression{}, ResolvedType{}, false
+			}
+			if index < len(node.Spreads) && node.Spreads[index] {
+				element, isList := staticListElement(itemType, context.types)
+				if !isList {
+					return typedExpression{}, ResolvedType{}, false
+				}
+				typedItem.spread = true
+				itemType = element
 			}
 			items = append(items, typedItem)
 			elem = joinStaticTypes(elem, itemType)

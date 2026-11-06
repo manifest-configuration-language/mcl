@@ -1124,6 +1124,61 @@ func (p *Parser) splitTypeDeclarationParameterSpans(span SourceSpan) ([]SourceSp
 	return append(spans, parameterSpan), true
 }
 
+func (p *Parser) splitFunctionParameterSourceSpans(span SourceSpan) ([]SourceSpan, error) {
+	lexemes := p.sourceTokenLexemesInSpan(span)
+	var spans []SourceSpan
+	start := span.Start
+	parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
+	hasDefault := false
+	for _, token := range lexemes {
+		if token.lexeme.kind != sourceLexemeSymbol {
+			continue
+		}
+		switch p.sourceTokenLexemeText(token) {
+		case "=":
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
+				hasDefault = true
+			}
+		case "(":
+			parenDepth++
+		case ")":
+			parenDepth--
+		case "[":
+			bracketDepth++
+		case "]":
+			bracketDepth--
+		case "{":
+			braceDepth++
+		case "}":
+			braceDepth--
+		case "<":
+			if !hasDefault {
+				angleDepth++
+			}
+		case ">":
+			if !hasDefault && angleDepth > 0 {
+				angleDepth--
+			}
+		case ",":
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
+				spans = append(spans, p.trimSourceSpan(SourceSpan{Start: start, End: token.span.Start}))
+				start = token.span.End
+				hasDefault = false
+			}
+		}
+	}
+	if start < span.End {
+		spans = append(spans, p.trimSourceSpan(SourceSpan{Start: start, End: span.End}))
+	}
+	for _, parameterSpan := range spans {
+		if parameterSpan.Start == parameterSpan.End {
+			return nil, errors.New("empty function parameter")
+		}
+	}
+
+	return spans, nil
+}
+
 func (p *Parser) functionDefinition(lineToken sourceToken, declaration topLevelHeader) (string, *FunctionDefinition, error) {
 	lexemes := p.sourceTokenLexemesInSpan(SourceSpan{Start: declaration.keyword.span.End, End: lineToken.span.End})
 	if p.sourceTokenLexemeText(declaration.keyword) != "fn" {
@@ -1167,9 +1222,13 @@ func (p *Parser) functionDefinition(lineToken sourceToken, declaration topLevelH
 		case "}":
 			braceDepth--
 		case "<":
-			angleDepth++
+			if parenDepth == 0 {
+				angleDepth++
+			}
 		case ">":
-			angleDepth--
+			if parenDepth == 0 && angleDepth > 0 {
+				angleDepth--
+			}
 		}
 	}
 	blockBody := equalIndex < 0 && colonIndex >= 0
@@ -1188,7 +1247,7 @@ func (p *Parser) functionDefinition(lineToken sourceToken, declaration topLevelH
 	}
 	closeToken := lexemes[closeIndex]
 	parametersSpan := p.trimSourceSpan(SourceSpan{Start: openToken.span.End, End: closeToken.span.Start})
-	parameterSpans, rangesErr := p.splitTypeArgumentSourceSpans(parametersSpan)
+	parameterSpans, rangesErr := p.splitFunctionParameterSourceSpans(parametersSpan)
 	if rangesErr != nil {
 		return "", nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, rangesErr)
 	}
@@ -1208,6 +1267,41 @@ func (p *Parser) functionDefinition(lineToken sourceToken, declaration topLevelH
 	definition := &FunctionDefinition{ReturnType: returnType}
 	seen := make(map[string]bool)
 	for _, parameterSpan := range parameterSpans {
+		defaultSpan := SourceSpan{}
+		hasDefault := false
+		parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
+		for _, token := range p.sourceTokenLexemesInSpan(parameterSpan) {
+			if token.lexeme.kind != sourceLexemeSymbol {
+				continue
+			}
+			switch p.sourceTokenLexemeText(token) {
+			case "=":
+				if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
+					hasDefault = true
+					defaultSpan = p.trimSourceSpan(SourceSpan{Start: token.span.End, End: parameterSpan.End})
+					parameterSpan.End = token.span.Start
+
+					goto defaultFound
+				}
+			case "(":
+				parenDepth++
+			case ")":
+				parenDepth--
+			case "[":
+				bracketDepth++
+			case "]":
+				bracketDepth--
+			case "{":
+				braceDepth++
+			case "}":
+				braceDepth--
+			case "<":
+				angleDepth++
+			case ">":
+				angleDepth--
+			}
+		}
+	defaultFound:
 		parameterName, typeSpan, nameSpan, valid := p.typedParameterSourceSpans(parameterSpan)
 		if !valid || !identifier(parameterName) {
 			return "", nil, fmt.Errorf("line %d: expected a typed function parameter", lineToken.lineNumber)
@@ -1220,7 +1314,21 @@ func (p *Parser) functionDefinition(lineToken sourceToken, declaration topLevelH
 		if err != nil {
 			return "", nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
 		}
-		definition.Parameters = append(definition.Parameters, RuleParameter{Name: parameterName, Type: parameterType, Span: nameSpan})
+		var defaultExpr Expr
+		if defaultSpan.Start != defaultSpan.End {
+			continued, err := p.continuedExpressionSourceSpan(lineToken, defaultSpan, 0)
+			if err != nil {
+				return "", nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+			}
+			parsed, err := p.valueExpressionWithContinued(continued, 0, lineToken.lineNumber)
+			if err != nil {
+				return "", nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+			}
+			defaultExpr = parsed.Expression
+		} else if hasDefault {
+			return "", nil, fmt.Errorf("line %d: parameter %q default cannot be empty", lineToken.lineNumber, parameterName)
+		}
+		definition.Parameters = append(definition.Parameters, RuleParameter{Name: parameterName, Type: parameterType, Span: nameSpan, Default: defaultExpr})
 	}
 	if blockBody {
 		firstToken, hasBody, bodyErr := p.peekParserToken()
@@ -1987,7 +2095,7 @@ func (p *Parser) continuedExpressionFromSource(lineNumber int, firstSpan, scanne
 		}
 		part := partBoundary.line
 		partIndent := part.indent
-		if partIndent < parentIndent || partIndent == parentIndent && !p.onlyClosingParentheses(part) {
+		if partIndent < parentIndent || partIndent == parentIndent && !p.onlyClosingDelimiters(part) {
 			return continuedSource{}, fmt.Errorf("line %d: unterminated function call", lineNumber)
 		}
 		if err := p.consumeContinuationLine(partBoundary); err != nil {
@@ -2115,7 +2223,7 @@ func sourceLiteralLexemeClosed(text string) bool {
 	return escapes%2 == 0
 }
 
-func (p *Parser) onlyClosingParentheses(lineToken sourceToken) bool {
+func (p *Parser) onlyClosingDelimiters(lineToken sourceToken) bool {
 	if lineToken.span.Start < 0 || lineToken.span.End <= lineToken.span.Start || lineToken.span.End > len(p.source) {
 		return false
 	}
@@ -2126,7 +2234,12 @@ func (p *Parser) onlyClosingParentheses(lineToken sourceToken) bool {
 		if !ok {
 			return true
 		}
-		if token.span.Start < position || token.span.End <= token.span.Start || token.span.End > lineToken.span.End || token.lexeme.kind != sourceLexemeSymbol || p.sourceTokenLexemeText(token) != ")" {
+		if token.span.Start < position || token.span.End <= token.span.Start || token.span.End > lineToken.span.End || token.lexeme.kind != sourceLexemeSymbol {
+			return false
+		}
+		switch p.sourceTokenLexemeText(token) {
+		case ")", "]", "}":
+		default:
 			return false
 		}
 		position = token.span.End
@@ -2148,9 +2261,9 @@ func (scanner *continuedExpressionDepth) scanTokens(parser *Parser, bounds Sourc
 			continue
 		}
 		switch parser.sourceTokenLexemeText(token) {
-		case "(":
+		case "(", "[", "{":
 			scanner.depth++
-		case ")":
+		case ")", "]", "}":
 			scanner.depth--
 			if scanner.depth < 0 {
 				return 0, errors.New("unmatched closing parenthesis")

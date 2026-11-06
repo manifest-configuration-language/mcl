@@ -14,6 +14,7 @@ export const parser = generatedParser.configure({
       Number: tags.number,
       Comment: tags.comment,
       Operator: tags.operator,
+      Spread: tags.operator,
     }),
     indentNodeProp.add({
       LetBlockDeclaration: continuedIndent(),

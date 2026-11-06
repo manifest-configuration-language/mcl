@@ -177,6 +177,7 @@ func LintAST(module ModuleAST) []Diagnostic {
 				}
 				for _, parameter := range node.Function.Parameters {
 					dependencies[node.Name] = append(dependencies[node.Name], typeReferenceNames(semanticTypeFromSyntax(parameter.Type))...)
+					dependencies[node.Name] = append(dependencies[node.Name], expressionReferences(parameter.Default)...)
 				}
 				if node.Function.ReturnType != nil {
 					dependencies[node.Name] = append(dependencies[node.Name], typeReferenceNames(semanticTypeFromSyntax(*node.Function.ReturnType))...)
@@ -426,10 +427,15 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 	if err := validateParameterDeclarations(module, state, entry); err != nil {
 		return nil, nil, err
 	}
+	placeholders, err := predeclareTopLevelFunctions(module, state)
+	if err != nil {
+		return nil, nil, err
+	}
+	functionContext := newFunctionCompilationContext(module, placeholders, state)
 
 	bundle := &RuntimeBundle{}
 	var exports []RuntimeEntry
-	for _, node := range module.Nodes {
+	for nodeIndex, node := range module.Nodes {
 		if isNilASTNode(node) {
 			return nil, nil, fmt.Errorf("line %d: nil AST node", astNodeLine(node))
 		}
@@ -442,11 +448,17 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			continue
 		case *LetDeclaration:
 			if declaration.Parameter {
+				if err := functionContext.compileReferencedFunctions(declaration.Expression, nodeIndex, state); err != nil {
+					return nil, nil, err
+				}
 				if err := evaluateParameterDeclaration(declaration, state); err != nil {
 					return nil, nil, err
 				}
 
 				continue
+			}
+			if err := functionContext.compileReferencedFunctions(declaration.Expression, nodeIndex, state); err != nil {
+				return nil, nil, err
 			}
 			if _, exists := state.Environment[declaration.Name]; exists {
 				return nil, nil, fmt.Errorf("%q is already defined", declaration.Name)
@@ -474,6 +486,10 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 				return nil, nil, err
 			}
 			if !supported {
+				if list, ok := expression.(*ListExpr); ok && annotation != nil && hasListSpread(list) {
+					return nil, nil, sourceDiagnostic(declaration.SourcePath, expression.ExprSpan(), fmt.Errorf("list spread elements do not match %s", resolvedTypeDisplay(*annotation)))
+				}
+
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, expression.ExprSpan(), fmt.Errorf("expression type %T is not supported by the typed evaluator", expression))
 			}
 			value, err := evaluateRuntimeExpression(typed, state)
@@ -495,91 +511,7 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 				exports = append(exports, RuntimeEntry{Key: declaration.Name, Value: value})
 			}
 		case *FunctionDeclaration:
-			if declaration.Function == nil {
-				return nil, nil, fmt.Errorf("line %d: missing function definition", line)
-			}
-			signature, err := functionDefinitionSignature(declaration.Name, declaration.Function, state.StaticTypes, state.Types, state)
-			if err != nil {
-				return nil, nil, sourceDiagnostic(declaration.SourcePath, functionBodySpan(declaration.Function), err)
-			}
-			signature.typeContext = state.Module.Analysis
-			if signature.Type.ReturnType == nil {
-				return nil, nil, sourceDiagnostic(declaration.SourcePath, functionBodySpan(declaration.Function), errors.New("function return type is unknown"))
-			}
-			bindings := maps.Clone(state.StaticTypes)
-			if bindings == nil {
-				bindings = make(map[string]TypeAnalysis)
-			}
-			bindings[declaration.Name] = signature
-			parameterTypes := make([]ResolvedType, len(declaration.Function.Parameters))
-			parameterNames := make([]string, len(declaration.Function.Parameters))
-			parameterSpans := make([]SourceSpan, len(declaration.Function.Parameters))
-			for index, parameter := range declaration.Function.Parameters {
-				parameterNames[index] = parameter.Name
-				parameterSpans[index] = parameter.Span
-				parameterType, err := resolveTypeFromSyntax(parameter.Type, state)
-				if err != nil {
-					return nil, nil, sourceDiagnostic(declaration.SourcePath, parameter.Span, err)
-				}
-				parameterTypes[index] = parameterType
-				bindings[parameter.Name] = TypeAnalysis{Type: parameterType}
-			}
-			locals := make([]typedLocalBinding, 0, len(declaration.Function.Locals))
-			for _, local := range declaration.Function.Locals {
-				var annotation *ResolvedType
-				if local.Annotation != nil {
-					resolved, err := resolveTypeFromSyntax(*local.Annotation, state)
-					if err != nil {
-						return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Annotation.Span, err)
-					}
-					typeScope := TypeScopeID(declaration.SourcePath)
-					resolved = inheritStaticTypeScope(resolved, typeScope)
-					state.Module.Analysis.registerScope(typeScope, state.Types)
-					annotation = &resolved
-				}
-				analysis, known, err := inferStaticExprAnalysisWithExpected(local.Expression, annotation, bindings, state.Types)
-				if err != nil {
-					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), err)
-				}
-				if !known {
-					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("cannot infer local variable %q", local.Name))
-				}
-				typed, supported, err := typedExpressionFromKnownAnalysisWithStaticTypes(local.Expression, state, analysis, true, bindings)
-				if err != nil {
-					return nil, nil, err
-				}
-				if !supported {
-					return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("expression type %T is not supported by the typed evaluator", local.Expression))
-				}
-				if annotation != nil {
-					if staticTypeCompatibility(analysis.Type, *annotation, state.Types).isDefinitelyIncompatible() {
-						return nil, nil, sourceDiagnostic(declaration.SourcePath, local.Expression.ExprSpan(), fmt.Errorf("local %q does not match its declared type", local.Name))
-					}
-					analysis = preserveBundleProvenance(analysis, *annotation, state.Types)
-				}
-				bindings[local.Name] = analysis
-				locals = append(locals, typedLocalBinding{Name: local.Name, Expression: typed, Annotation: annotation, Span: local.Span})
-			}
-			bodyType := *signature.Type.ReturnType
-			bodyType.Span = SourceSpan{}
-			body, supported := typeExpression(declaration.Function.Expression, bodyType, typedEvaluationContext{
-				runtimeEnv: state.Environment, staticTypes: bindings, types: state.Types, stack: state.Stack,
-				budget: state.Budget, sourcePath: declaration.SourcePath, module: state.Module,
-			})
-			if !supported {
-				return nil, nil, sourceDiagnostic(declaration.SourcePath, functionBodySpan(declaration.Function), fmt.Errorf("expression type %T is not supported by the typed evaluator", declaration.Function.Expression))
-			}
-			lambdaTyping := &LambdaTyping{
-				ParameterTypes: parameterTypes, ReturnType: signature.Type.ReturnType,
-				TypeScope: maps.Clone(bindings), Types: maps.Clone(state.Types),
-			}
-			lambda := RuntimeValue{
-				Value:  runtimeValueData{Kind: Lambda, Span: functionBodySpan(declaration.Function), SourcePath: declaration.SourcePath},
-				Lambda: &typedLambda{Parameters: parameterNames, ParameterSpans: parameterSpans, Locals: locals, Body: body, Scope: maps.Clone(state.Environment), ScopeSpan: functionBodySpan(declaration.Function), Typing: lambdaTyping, ModuleContext: state.Module},
-			}
-			lambda.Lambda.Scope[declaration.Name] = lambda
-			state.Environment[declaration.Name] = lambda
-			state.StaticTypes[declaration.Name] = signature
+			lambda := state.Environment[declaration.Name]
 			if declaration.Exported {
 				exports = append(exports, RuntimeEntry{Key: declaration.Name, Value: lambda})
 			}
@@ -638,6 +570,9 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			if declaration.Expression == nil {
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, declaration.Span, errors.New("emit expression is missing"))
 			}
+			if err := functionContext.compileReferencedFunctions(declaration.Expression, nodeIndex, state); err != nil {
+				return nil, nil, err
+			}
 			typed, supported, err := typedExpressionFromExpr(declaration.Expression, state)
 			if err != nil {
 				return nil, nil, err
@@ -664,6 +599,11 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 		case *ValidateStatement:
 			if !entry {
 				return nil, nil, sourceDiagnostic(declaration.SourcePath, declaration.Span, errors.New("imported modules cannot validate values"))
+			}
+			for _, expression := range []Expr{declaration.RuleExpr, declaration.Expression, declaration.QueryWhere} {
+				if err := functionContext.compileReferencedFunctions(expression, nodeIndex, state); err != nil {
+					return nil, nil, err
+				}
 			}
 			ruleExpression, supported, err := typedExpressionFromExpr(declaration.RuleExpr, state)
 			if err != nil {
@@ -744,8 +684,38 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 			return nil, nil, fmt.Errorf("line %d: unknown statement %q", line, astNodeKind(node))
 		}
 	}
+	for _, node := range module.Nodes {
+		declaration, ok := node.(*FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		if err := functionContext.prepareFunction(declaration.Name, len(module.Nodes), state); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return exports, bundle, nil
+}
+
+func hasListSpread(expression *ListExpr) bool {
+	for _, spread := range expression.Spreads {
+		if spread {
+			return true
+		}
+	}
+
+	return false
+}
+
+func resolvedTypeDisplay(typeExpr ResolvedType) string {
+	if typeExpr.Name == typeList && typeExpr.Element != nil {
+		return fmt.Sprintf("List<%s>", resolvedTypeDisplay(*typeExpr.Element))
+	}
+	if typeExpr.Name != "" {
+		return typeExpr.Name
+	}
+
+	return "record"
 }
 
 func appendRuntimeBundleValue(bundle *RuntimeBundle, value RuntimeValue) error {
@@ -1041,7 +1011,7 @@ func functionDefinitionSignature(name string, definition *FunctionDefinition, st
 		}
 		bindings[parameter.Name] = TypeAnalysis{Type: parameterType}
 		parameterNames = append(parameterNames, parameter.Name)
-		signature.Type.Parameters = append(signature.Type.Parameters, FunctionTypeParameter{Name: parameter.Name, Type: parameterType})
+		signature.Type.Parameters = append(signature.Type.Parameters, FunctionTypeParameter{Name: parameter.Name, Type: parameterType, Optional: parameter.Default != nil})
 	}
 	if returnType != nil {
 		if err := validateTypeExpr(*returnType, types, make(map[string]bool)); err != nil {
@@ -1133,7 +1103,7 @@ func staticBundleReturnParameter(expression Expr, parameterNames []string, bindi
 			return 0, false
 		}
 		arguments, ok := staticExprFunctionCallArguments(calleeType.Parameters, node.Arguments, node.ArgumentNames)
-		if !ok || calleeAnalysis.Facts.ReturnBundleParameter < 0 || calleeAnalysis.Facts.ReturnBundleParameter >= len(arguments) {
+		if !ok || calleeAnalysis.Facts.ReturnBundleParameter < 0 || calleeAnalysis.Facts.ReturnBundleParameter >= len(arguments) || arguments[calleeAnalysis.Facts.ReturnBundleParameter] == nil {
 			return 0, false
 		}
 

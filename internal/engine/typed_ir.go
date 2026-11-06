@@ -74,6 +74,7 @@ type typedExpression struct {
 	text            string
 	genericVariable string
 	items           []typedExpression
+	spread          bool
 	entries         []typedMapEntry
 	operand         *typedExpression
 	operator        typedOperator

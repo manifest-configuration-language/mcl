@@ -16,6 +16,8 @@ miseはGitHub Releaseの添付ファイルからOSとアーキテクチャに合
 
 CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`などのコマンドを提供します。使い方は`mcl help`で確認できます。
 
+関数とResource Listの組み立て方、名前付き引数とデフォルト引数、Listの展開については[関数とList](docs/function-list-composition.md)を参照してください。
+
 ## Helm出力の再現性
 
 `render`、`check`、`diff`、`explain`、`update`はHelm Chartが乱数関数を呼び出した場合に、同じ入力で2回レンダリングしたManifestをバイト単位で比較します。出力が異なる場合はテンプレート名を示して失敗し、出力が一致すれば最初の結果を使います。乱数関数を呼び出してもManifest出力が変わらないChartは通常どおり利用できます。

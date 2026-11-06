@@ -206,24 +206,38 @@ func (parser *expressionParser) parseInlineList(open sourceLexeme) (Expr, error)
 	}
 
 	items := make([]Expr, 0, 2)
+	spreads := make([]bool, 0, 2)
 	for {
+		spread := false
+		if marker, ok := parser.peek(0); ok && parser.lexemeText(marker) == "." {
+			if second, hasSecond := parser.peek(1); hasSecond && parser.lexemeText(second) == "." {
+				third, hasThird := parser.peek(2)
+				if hasThird && parser.lexemeText(third) == "." {
+					parser.take()
+					parser.take()
+					parser.take()
+					spread = true
+				}
+			}
+		}
 		item, err := parser.parse(1, map[string]bool{",": true, "]": true})
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
+		spreads = append(spreads, spread)
 		next, ok := parser.take()
 		if !ok {
 			return nil, errors.New("unmatched opening bracket")
 		}
 		switch parser.lexemeText(next) {
 		case "]":
-			return &ListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, next.end)}, Items: items}, nil
+			return &ListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, next.end)}, Items: items, Spreads: spreads}, nil
 		case ",":
 			if closing, ok := parser.peek(0); ok && parser.lexemeText(closing) == "]" {
 				parser.take()
 
-				return &ListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, closing.end)}, Items: items}, nil
+				return &ListExpr{ExprBase: ExprBase{Span: parser.source.PhysicalSpan(open.start, closing.end)}, Items: items, Spreads: spreads}, nil
 			}
 		default:
 			return nil, errors.New("expected ',' or ']' after list item")

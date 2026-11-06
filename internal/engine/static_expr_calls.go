@@ -113,6 +113,9 @@ func inferStaticFunctionCall(calleeAnalysis TypeAnalysis, callArguments []Expr, 
 	argumentTypes := make([]ResolvedType, len(arguments))
 	argumentKnown := make([]bool, len(arguments))
 	for index, argument := range arguments {
+		if argument == nil {
+			continue
+		}
 		argumentType, known, err := inferStaticExprCallArgument(argument, calleeType.Parameters[index].Type, bindings, types, calleeAnalysis.typeContext)
 		if err != nil {
 			return ResolvedType{}, false, fmt.Errorf("argument %d: %w", index+1, err)
@@ -685,6 +688,17 @@ func inferStaticHigherOrderBuiltin(item builtin, arguments []Expr, argumentTypes
 	if !resultKnown {
 		return ResolvedType{}, false, nil
 	}
+	if function == fnFlatMap {
+		if resultType.Name == typeAny {
+			return ResolvedType{Name: typeList, Element: new(ResolvedType{Name: typeAny})}, true, nil
+		}
+		resultElement, resultIsList := staticListElement(resultType, types)
+		if !resultIsList {
+			return ResolvedType{}, false, fmt.Errorf("%s transform must return a List, got %s", function, staticTypeName(resultType))
+		}
+
+		return ResolvedType{Name: typeList, Element: &resultElement}, true, nil
+	}
 
 	return ResolvedType{Name: typeList, Element: &resultType}, true, nil
 }
@@ -872,7 +886,7 @@ func staticExprFunctionCallArguments(parameters []FunctionTypeParameter, argumen
 // functionArgumentParameterIndices maps each supplied argument to its parameter
 // while validating positional and named argument assignment.
 func functionArgumentParameterIndices(parameters []FunctionTypeParameter, argumentCount int, names []string) ([]int, bool) {
-	if argumentCount != len(parameters) || len(names) != argumentCount {
+	if argumentCount > len(parameters) || len(names) != argumentCount {
 		return nil, false
 	}
 	indices := make([]int, argumentCount)
@@ -905,7 +919,13 @@ func functionArgumentParameterIndices(parameters []FunctionTypeParameter, argume
 		indices[index], assigned[parameter] = parameter, true
 	}
 
-	return indices, !slices.Contains(assigned, false)
+	for index, parameter := range parameters {
+		if !assigned[index] && !parameter.Optional {
+			return nil, false
+		}
+	}
+
+	return indices, true
 }
 
 func staticExprCallArguments(function string, arguments []Expr, names []string) ([]Expr, bool) {

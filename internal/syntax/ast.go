@@ -91,9 +91,10 @@ type FunctionDefinition struct {
 }
 
 type RuleParameter struct {
-	Name string
-	Type TypeExpr
-	Span SourceSpan
+	Name    string
+	Type    TypeExpr
+	Span    SourceSpan
+	Default Expr
 }
 
 type RuleRequirement struct {

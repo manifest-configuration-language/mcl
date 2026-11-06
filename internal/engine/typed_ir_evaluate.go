@@ -154,7 +154,17 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				return RuntimeValue{}, err
 			}
 			value.Value.OmitSourceSnippet = value.Value.OmitSourceSnippet || resolved.Metadata().OmitSourceSnippet
-			value.List = append(value.List, resolved)
+			if item.spread {
+				if resolved.Kind() != List {
+					return RuntimeValue{}, sourceDiagnostic(context.sourcePath, item.span, errors.New("list spread requires a List value"))
+				}
+				if err := context.allocations.consume(len(resolved.List)); err != nil {
+					return RuntimeValue{}, sourceDiagnostic(context.sourcePath, item.span, err)
+				}
+				value.List = append(value.List, resolved.List...)
+			} else {
+				value.List = append(value.List, resolved)
+			}
 		}
 	case typedExpressionMap:
 		value.Value.Kind = Map
@@ -360,7 +370,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			SourcePath: context.sourcePath, Module: context.module,
 		}
 		if callee.Rule != nil {
-			ordered, ok := functionCallRuntimeArguments(callee.Rule.Parameters(), arguments, expression.argNames)
+			ordered, _, ok := functionCallRuntimeArguments(callee.Rule.Parameters(), arguments, expression.argNames)
 			if !ok || len(ordered) != 1 {
 				return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("rule call expects exactly one argument"))
 			}

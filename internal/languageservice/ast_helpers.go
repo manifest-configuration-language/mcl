@@ -198,6 +198,9 @@ func VisitModuleExpressions(module syntax.ModuleAST, visit func(syntax.Expr)) {
 			visitRoot(node.Expression)
 		case *syntax.FunctionDeclaration:
 			if node.Function != nil {
+				for _, parameter := range node.Function.Parameters {
+					visitRoot(parameter.Default)
+				}
 				for _, local := range node.Function.Locals {
 					visitRoot(local.Expression)
 				}
@@ -312,8 +315,15 @@ func ScopedLocalBindings(module syntax.ModuleAST) []ScopedLocalBinding {
 		case *syntax.FunctionDeclaration:
 			if node.Function != nil {
 				bodySpan := node.Function.BodySpan()
-				for _, parameter := range node.Function.Parameters {
+				for parameterIndex, parameter := range node.Function.Parameters {
 					add(parameter.Name, parameter.Span, bodySpan)
+					if parameter.Default == nil {
+						continue
+					}
+					defaultScope := parameter.Default.ExprSpan()
+					for _, earlierParameter := range node.Function.Parameters[:parameterIndex] {
+						add(earlierParameter.Name, earlierParameter.Span, defaultScope)
+					}
 				}
 				for _, local := range node.Function.Locals {
 					localScope := syntax.SourceSpan{Start: local.Span.End, End: bodySpan.End}

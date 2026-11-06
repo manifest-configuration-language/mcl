@@ -36,6 +36,7 @@ const (
 	fnJSONEncode      = "json.encode"
 	fnExactlyOne      = "exactlyOne"
 	fnFilter          = "filter"
+	fnFlatMap         = "flatMap"
 	fnFlatten         = "flatten"
 	fnFold            = "fold"
 	fnHashFNV1a64     = "hash.fnv1a64"

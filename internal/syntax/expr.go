@@ -68,6 +68,8 @@ type EmptyMapExpr struct{ ExprBase }
 type ListExpr struct {
 	ExprBase
 	Items []Expr
+	// Spreads marks items whose List elements are appended to the containing List.
+	Spreads []bool
 }
 
 // MapExprはMap expressionを表します。
