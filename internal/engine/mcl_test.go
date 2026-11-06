@@ -523,6 +523,36 @@ emit container
 	}
 }
 
+func TestWithExpressionInConditionalBranch(t *testing.T) {
+	t.Parallel()
+	source := `let defaults: Map<String, Any> =
+  metrics:
+    enabled: true
+let values: Map<String, Any> =
+  if true:
+    defaults with:
+      metrics:
+        serviceMonitor:
+          enabled: true
+  else:
+    defaults
+emit values
+`
+	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want a map overlay in an if branch to evaluate", err)
+	}
+	output, err := Render(bundle)
+	if err != nil {
+		t.Fatalf("Render() error = %v, want a conditional map overlay to render", err)
+	}
+	for _, expected := range []string{"metrics:", "enabled: true", "serviceMonitor:"} {
+		if !strings.Contains(string(output), expected) {
+			t.Errorf("rendered output does not contain %q:\n%s", expected, output)
+		}
+	}
+}
+
 func TestCloneAssignsDistinctNodeIdentity(t *testing.T) {
 	t.Parallel()
 	source := `let original = node:

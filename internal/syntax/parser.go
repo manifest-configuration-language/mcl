@@ -2284,7 +2284,13 @@ func (p *Parser) branchValueWithExpression(indent, line int) (parsedValue, error
 		return p.blockWithExpression(indent)
 	}
 	if p.hasPairSourceSpan(currentToken.span) {
-		return p.blockWithExpression(indent)
+		source, err := p.expressionSourceForSpan(currentToken.span)
+		if err != nil {
+			return parsedValue{}, err
+		}
+		if !expressionSourceHasHeaderSuffix(source, "with") && !expressionSourceHasHeaderSuffix(source, "without") {
+			return p.blockWithExpression(indent)
+		}
 	}
 	if err := p.consumeLine(currentToken); err != nil {
 		return parsedValue{}, err
