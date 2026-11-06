@@ -702,6 +702,8 @@ func (cst *formatterCST) addSpanLabel(span SourceSpan, category formatterSyntaxC
 				layoutEligible = len(prefixLexemes) == 0
 			case formatterListItemSyntax:
 				layoutEligible = len(prefixLexemes) == 1 && prefixLexemes[0].Lexeme.Kind == LexemeSymbol && cst.source[prefixLexemes[0].Span.Start:prefixLexemes[0].Span.End] == "-"
+				linePrefix := cst.source[lineNode.bodySpan.Start:span.Start]
+				layoutEligible = layoutEligible || len(prefixLexemes) == 0 && strings.HasPrefix(strings.TrimSpace(cst.nodeText(lineNode)), "-") && strings.TrimSpace(linePrefix) == ""
 			case formatterExpressionSyntax, formatterStatementSyntax:
 				// レイアウトブロックを開始できるのはマップとリストの項目だけ。
 			}
@@ -770,7 +772,15 @@ func (node *formatterNode) syntaxLayoutDepth() (int, bool) {
 		found = true
 	}
 	if mapItemStarts && listItemStarts {
-		return 0, false
+		depth, found = 0, false
+		for _, label := range node.syntax {
+			if label.startsHere && label.category == formatterListItemSyntax && label.layoutEligible {
+				depth = max(depth, label.layoutDepth)
+				found = true
+			}
+		}
+
+		return depth, found
 	}
 
 	return depth, found

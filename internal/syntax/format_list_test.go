@@ -49,3 +49,48 @@ func TestFormatSourcePreservesMapLikeMultilineString(t *testing.T) {
 		t.Fatalf("formatter did not compact the Map list item:\n%s", formatted)
 	}
 }
+
+func TestFormatSourceKeepsNestedListMapIndentation(t *testing.T) {
+	t.Parallel()
+
+	const source = `let selector =
+  nodeSelectorTerms:
+    - matchExpressions:
+        - key: "storage.walnuts.dev/slow"
+          operator: "DoesNotExist"
+`
+	formatted, err := FormatSource(source)
+	if err != nil {
+		t.Fatalf("FormatSource() error = %v", err)
+	}
+	second, err := FormatSource(formatted)
+	if err != nil {
+		t.Fatalf("FormatSource(formatted) error = %v", err)
+	}
+	if second != formatted {
+		t.Fatalf("FormatSource() is not idempotent:\nfirst: %q\nsecond: %q", formatted, second)
+	}
+}
+
+func TestFormatSourceKeepsScalarFirstListMapFieldsAligned(t *testing.T) {
+	t.Parallel()
+
+	const source = `let clients =
+  - name: "mac-hatena"
+    identityName: "mac_hatena"
+    actions: ["s3:*"]
+    resources: ["*"]
+    secretName: "credentials"
+`
+	formatted, err := FormatSource(source)
+	if err != nil {
+		t.Fatalf("FormatSource() error = %v", err)
+	}
+	second, err := FormatSource(formatted)
+	if err != nil {
+		t.Fatalf("FormatSource(formatted) error = %v", err)
+	}
+	if second != formatted {
+		t.Fatalf("FormatSource() is not idempotent:\nfirst: %q\nsecond: %q", formatted, second)
+	}
+}
