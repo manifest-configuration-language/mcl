@@ -47,6 +47,46 @@ func TestFormatSourcePreservesNestedListConditionalBranches(t *testing.T) {
 	}
 }
 
+func TestFormatSourcePreservesConditionalBranchOverlays(t *testing.T) {
+	t.Parallel()
+
+	source := `let defaults: Map<String, Any> =
+  metrics:
+    enabled: true
+let values: Map<String, Any> =
+  if true:
+    defaults with:
+      metrics:
+        serviceMonitor:
+          enabled: true
+  else:
+    defaults
+emit values
+`
+	formatted, err := FormatSource(source)
+	if err != nil {
+		t.Fatalf("FormatSource() error = %v, want an if branch overlay to remain valid", err)
+	}
+	if !strings.Contains(formatted, "  if true:\n    defaults with:\n      metrics:\n        serviceMonitor:\n") {
+		t.Fatalf("formatted source changed the overlay block indentation:\n%s", formatted)
+	}
+	module, err := ParseAST(formatted)
+	if err != nil {
+		t.Fatalf("formatted source does not parse: %v", err)
+	}
+	declaration, ok := module.Nodes[1].(*LetDeclaration)
+	if !ok || declaration.Expression == nil {
+		t.Fatalf("formatted declaration = %#v, want a conditional let expression", module.Nodes[1])
+	}
+	conditional, ok := declaration.Expression.(*ConditionalExpr)
+	if !ok {
+		t.Fatalf("formatted expression = %#v, want a conditional", declaration.Expression)
+	}
+	if _, ok := conditional.Then.(*OverlayExpr); !ok {
+		t.Fatalf("then branch = %#v, want a map overlay", conditional.Then)
+	}
+}
+
 func TestParseASTHandlesMultipleExportedNodeFunctions(t *testing.T) {
 	t.Parallel()
 

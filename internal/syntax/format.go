@@ -660,8 +660,8 @@ func (cst *formatterCST) addExpressionLabels(expression Expr, layoutDepth int) {
 		cst.addExpressionLabels(node.Child, layoutDepth)
 	case *ConditionalExpr:
 		cst.addExpressionLabels(node.Condition, layoutDepth)
-		cst.addExpressionLabels(node.Then, layoutDepth+1)
-		cst.addExpressionLabels(node.Else, layoutDepth+1)
+		cst.addConditionalBranchExpressionLabels(node.Then, layoutDepth+1)
+		cst.addConditionalBranchExpressionLabels(node.Else, layoutDepth+1)
 	case *ForExpr:
 		cst.addExpressionLabels(node.Iterable, layoutDepth)
 		cst.addExpressionLabels(node.Body, layoutDepth)
@@ -676,6 +676,13 @@ func (cst *formatterCST) addExpressionLabels(expression Expr, layoutDepth int) {
 		}
 		cst.addExpressionLabels(node.Base, layoutDepth)
 	}
+}
+
+func (cst *formatterCST) addConditionalBranchExpressionLabels(expression Expr, layoutDepth int) {
+	if _, isOverlay := expression.(*OverlayExpr); isOverlay {
+		layoutDepth++
+	}
+	cst.addExpressionLabels(expression, layoutDepth)
 }
 
 func (cst *formatterCST) addSpanLabel(span SourceSpan, category formatterSyntaxCategory, kind string, callDelimiters ExprCallDelimiters, layoutDepth int) {
