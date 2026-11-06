@@ -200,7 +200,7 @@ func (s *server) Definition(ctx context.Context, params *protocol.DefinitionPara
 	request.TextDocument.URI = string(params.TextDocument.URI)
 	request.Position.Line = int(params.Position.Line)
 	request.Position.Character = int(params.Position.Character)
-	location := state.definition(request)
+	location := state.definition(ctx, request)
 	if document, exists := state.documents[request.TextDocument.URI]; exists && document.SyncLost {
 		location = nil
 	}

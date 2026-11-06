@@ -590,6 +590,86 @@ func TestProtocolDefinitionFromNamedArgumentTargetsParameter(t *testing.T) {
 	session.shutdown(t)
 }
 
+func TestProtocolNamedArgumentFeaturesResolveImportedFunctionParameters(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const helperSource = "export fn service(name: String, namespace: String) -> String = name\nlet local = service(name = \"local\", namespace = \"local\")\n"
+	const mainSource = "import \"./helpers.mcl\" as helpers\nlet result = helpers.service(name = \"api\", )\nemit result\n"
+	for path, source := range map[string]string{
+		"mcl.toml":    "",
+		"helpers.mcl": helperSource,
+		"main.mcl":    mainSource,
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mainURI := filePathToURI(filepath.Join(root, "main.mcl"))
+	helperPath, ok := canonicalSourcePath(filepath.Join(root, "helpers.mcl"))
+	if !ok {
+		t.Fatal("could not canonicalize helpers.mcl path")
+	}
+	helperURI := filePathToURI(helperPath)
+	folderURI := filePathToURI(root)
+	session := newTestLSPConnection()
+	defer session.close(t)
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[{"uri":%q,"name":"project"}]}}`, folderURI))
+	session.receive(t)
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":%q,"version":1,"text":%q}}}`, mainURI, mainSource))
+	session.receive(t)
+
+	line := mainSource[strings.Index(mainSource, "\n")+1:]
+	completionPosition := strings.Index(line, ", )") + 2
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":%q},"position":{"line":1,"character":%d}}}`, mainURI, completionPosition))
+	completion := session.receive(t)
+	if !strings.Contains(completion, `"label":"namespace"`) || !strings.Contains(completion, `"insertText":"namespace = "`) {
+		t.Fatalf("completion omitted the imported function parameter: %s", completion)
+	}
+
+	namePosition := strings.Index(line, "name =") + 1
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"textDocument/definition","params":{"textDocument":{"uri":%q},"position":{"line":1,"character":%d}}}`, mainURI, namePosition))
+	definition := session.receive(t)
+	if !strings.Contains(definition, fmt.Sprintf(`"uri":%q`, helperURI)) || !strings.Contains(definition, fmt.Sprintf(`"character":%d`, strings.Index(helperSource, "name:"))) {
+		t.Fatalf("definition did not target the imported parameter: %s", definition)
+	}
+
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":4,"method":"textDocument/references","params":{"textDocument":{"uri":%q},"position":{"line":1,"character":%d},"context":{"includeDeclaration":true}}}`, mainURI, namePosition))
+	references := session.receive(t)
+	var referenceResult struct {
+		Result []protocol.Location `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(references), &referenceResult); err != nil {
+		t.Fatalf("could not decode references response %q: %v", references, err)
+	}
+	if len(referenceResult.Result) != 4 {
+		t.Fatalf("references returned %d locations, want declaration, body, local call, and importer call: %s", len(referenceResult.Result), references)
+	}
+
+	session.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":5,"method":"textDocument/rename","params":{"textDocument":{"uri":%q},"position":{"line":1,"character":%d},"newName":"serviceName"}}`, mainURI, namePosition))
+	rename := session.receive(t)
+	var renameResult struct {
+		Result struct {
+			Changes map[string][]struct {
+				NewText string `json:"newText"`
+			} `json:"changes"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(rename), &renameResult); err != nil {
+		t.Fatalf("could not decode rename response %q: %v", rename, err)
+	}
+	if len(renameResult.Result.Changes[helperURI]) != 3 || len(renameResult.Result.Changes[mainURI]) != 1 {
+		t.Fatalf("rename edits by document = %#v, want three helper edits and one importer edit", renameResult.Result.Changes)
+	}
+	for _, edits := range renameResult.Result.Changes {
+		for _, edit := range edits {
+			if edit.NewText != "serviceName" {
+				t.Errorf("rename edit text = %q, want serviceName", edit.NewText)
+			}
+		}
+	}
+	session.shutdown(t)
+}
+
 func TestRenameExportedTypeRejectsExistingTypeName(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

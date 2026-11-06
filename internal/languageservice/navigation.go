@@ -163,6 +163,30 @@ func navigationTarget(params NavigationParams, projectFiles fs.FS) (navigationRe
 			return navigationResult{path: params.Entrypoint, source: params.Source, Span: reference.Declaration}, true
 		}
 	}
+	for _, reference := range NamedArgumentReferencesForProject(params.Entrypoint, params.Source, projectFiles) {
+		if spanContains(reference.Span, offset) {
+			targetBytes, err := fs.ReadFile(projectFiles, reference.DeclarationPath)
+			if err != nil {
+				return navigationResult{}, false
+			}
+			targetSource := string(targetBytes)
+			targetModule, err := syntax.ParseAST(targetSource)
+			if err != nil {
+				return navigationResult{}, false
+			}
+			for _, node := range targetModule.Nodes {
+				if function, ok := node.(*syntax.FunctionDeclaration); ok && function.Exported && function.Function != nil {
+					for _, parameter := range function.Function.Parameters {
+						if parameter.Span == reference.Declaration {
+							return navigationResult{path: reference.DeclarationPath, source: targetSource, Span: reference.Declaration, node: function}, true
+						}
+					}
+				}
+			}
+
+			return navigationResult{path: reference.DeclarationPath, source: targetSource, Span: reference.Declaration}, true
+		}
+	}
 	if target, found := importedNavigationTarget(params, projectFiles, index, offset); found {
 		return target, true
 	}

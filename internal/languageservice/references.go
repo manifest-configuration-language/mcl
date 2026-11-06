@@ -14,13 +14,14 @@ import (
 
 // ReferenceTarget identifies a declaration resolved from an editor position.
 type ReferenceTarget struct {
-	Path        string
-	Name        string
-	TypeName    bool
-	Declaration syntax.SourceSpan
-	Local       bool
-	Exported    bool
-	ImportAlias bool
+	Path              string
+	Name              string
+	TypeName          bool
+	Declaration       syntax.SourceSpan
+	Local             bool
+	FunctionParameter bool
+	Exported          bool
+	ImportAlias       bool
 }
 
 // Reference is a source location that resolves to a declaration.
@@ -58,7 +59,12 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 	}
 	for _, reference := range index.NamedArguments {
 		if spanContains(reference.Span, offset) {
-			return ReferenceTarget{Path: path, Name: reference.Name, Declaration: reference.Declaration, Local: true}, true
+			return ReferenceTarget{Path: path, Name: reference.Name, Declaration: reference.Declaration, Local: true, FunctionParameter: true}, true
+		}
+	}
+	for _, reference := range namedArgumentReferencesForSource(path, index, resolveImport, readSource) {
+		if spanContains(reference.Span, offset) {
+			return ReferenceTarget{Path: reference.DeclarationPath, Name: reference.Name, Declaration: reference.Declaration, Local: true, FunctionParameter: true}, true
 		}
 	}
 	name, selected, ok := identifierAt(source, offset)
@@ -132,7 +138,10 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 	}
 
 	if local := index.LocalAt(name, offset); local.Found {
-		return ReferenceTarget{Path: path, Name: name, Declaration: local.Binding.Declaration, Local: true}, true
+		return ReferenceTarget{
+			Path: path, Name: name, Declaration: local.Binding.Declaration, Local: true,
+			FunctionParameter: isFunctionParameter(index.Module, local.Binding.Declaration),
+		}, true
 	}
 	target, typeName, found := declarationAt(index, name, offset, selected)
 	if !found {
@@ -144,6 +153,22 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 	}
 
 	return ReferenceTarget{Path: path, Name: name, TypeName: typeName, Declaration: declaration, Exported: ASTDeclarationExported(index.Module.Nodes[target])}, true
+}
+
+func isFunctionParameter(module syntax.ModuleAST, declaration syntax.SourceSpan) bool {
+	for _, node := range module.Nodes {
+		function, ok := node.(*syntax.FunctionDeclaration)
+		if !ok || function.Function == nil {
+			continue
+		}
+		for _, parameter := range function.Function.Parameters {
+			if parameter.Span == declaration {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // ReferencesForProject finds references to a resolved target in the supplied project snapshot.
@@ -205,6 +230,18 @@ func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget
 						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
 					}
 				}
+				if target.FunctionParameter {
+					readSource := func(sourcePath string) (string, bool) {
+						source, exists := sources[sourcePath]
+
+						return source, exists
+					}
+					for _, reference := range namedArgumentReferencesForSource(path, index, resolveImport, readSource) {
+						if reference.DeclarationPath == target.Path && reference.Declaration == target.Declaration {
+							result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
+						}
+					}
+				}
 
 				continue
 			}
@@ -229,6 +266,19 @@ func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget
 			continue
 		}
 		if target.Local {
+			if target.FunctionParameter {
+				readSource := func(sourcePath string) (string, bool) {
+					source, exists := sources[sourcePath]
+
+					return source, exists
+				}
+				for _, reference := range namedArgumentReferencesForSource(path, index, resolveImport, readSource) {
+					if reference.DeclarationPath == target.Path && reference.Declaration == target.Declaration {
+						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
+					}
+				}
+			}
+
 			continue
 		}
 		aliases := make(map[string]struct{})

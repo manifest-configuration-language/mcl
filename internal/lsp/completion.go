@@ -23,6 +23,11 @@ func (s *server) completions(ctx context.Context, params completionParams) []lan
 	if !exists {
 		return languageservice.CompletionForSourceWithContext(ctx, "", params.Position.Line, params.Position.Character, "")
 	}
+	path, ok := canonicalSourcePath(documentPath(params.TextDocument.URI))
+	if !ok {
+		return languageservice.CompletionForSourceWithContext(ctx, state.Text, params.Position.Line, params.Position.Character, "")
+	}
+	resolver, readSource := projectReferenceResolvers(s)
 
-	return languageservice.CompletionForSourceWithContext(ctx, state.Text, params.Position.Line, params.Position.Character, documentPath(params.TextDocument.URI))
+	return languageservice.CompletionForSourceWithProjectImportsWithContext(ctx, state.Text, params.Position.Line, params.Position.Character, path, resolver, readSource)
 }

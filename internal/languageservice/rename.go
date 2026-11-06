@@ -38,22 +38,23 @@ func RenameForSource(path, source string, position Position, newName string) *Re
 	}
 
 	var spans []syntax.SourceSpan
-	local := index.LocalAt(name, offset)
-	if !local.Found {
-		for _, reference := range index.NamedArguments {
-			if reference.Name != name || !spanContains(reference.Span, offset) {
-				continue
-			}
-			for _, binding := range index.Locals {
-				if binding.Name == name && binding.Declaration == reference.Declaration {
-					local = LocalBindingMatch{Binding: binding, Found: true}
-
-					break
-				}
-			}
-
-			break
+	var local LocalBindingMatch
+	for _, reference := range index.NamedArguments {
+		if reference.Name != name || !spanContains(reference.Span, offset) {
+			continue
 		}
+		for _, binding := range index.Locals {
+			if binding.Name == name && binding.Declaration == reference.Declaration {
+				local = LocalBindingMatch{Binding: binding, Found: true}
+
+				break
+			}
+		}
+
+		break
+	}
+	if !local.Found {
+		local = index.LocalAt(name, offset)
 	}
 	if local.Found {
 		spans = localRenameSpans(source, name, newName, local.Binding, index.Locals, index.References)

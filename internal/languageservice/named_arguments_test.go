@@ -86,3 +86,65 @@ func TestNamedArgumentCompletionOmitsArgumentsAlreadyProvided(t *testing.T) {
 		})
 	}
 }
+
+func TestNamedArgumentRenamePrefersArgumentParameterOverShadowingLocal(t *testing.T) {
+	t.Parallel()
+
+	const source = "fn outer(name: String) -> String = inner(name = \"api\")\nfn inner(name: String) -> String = name\n"
+	callName := strings.Index(source, "name =")
+	result := RenameForSource(mainMCLPath, source, Position{Line: 0, Character: callName}, "serviceName")
+	if result == nil || len(result.Edits) != 3 {
+		t.Fatalf("RenameForSource() = %#v, want the inner parameter, body reference, and call argument", result)
+	}
+	outerParameter := strings.Index(source, "name:")
+	for _, edit := range result.Edits {
+		if edit.Range.Start.Line == 0 && edit.Range.Start.Character == outerParameter {
+			t.Fatalf("RenameForSource() changed the shadowing outer parameter: %#v", result.Edits)
+		}
+	}
+}
+
+func TestNamedArgumentCompletionHandlesExistingAssignmentAndMultilineCalls(t *testing.T) {
+	t.Parallel()
+
+	const declaration = "fn render(name: String, namespace: String) -> String = name\n"
+	tests := []struct {
+		name       string
+		call       string
+		line       int
+		character  int
+		wantInsert string
+	}{
+		{
+			name:       "existing assignment",
+			call:       "let result = render(na = \"api\")\n",
+			line:       1,
+			character:  strings.Index("let result = render(na = \"api\")", "na ="),
+			wantInsert: "name",
+		},
+		{
+			name:       "multiline call",
+			call:       "let result = render(\n  na\n)\n",
+			line:       2,
+			character:  len("  na"),
+			wantInsert: "name = ",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			source := declaration + test.call
+			items := CompletionForSource(source, test.line, test.character, "")
+			for _, item := range items {
+				if item.Label == "name" {
+					if item.InsertText != test.wantInsert {
+						t.Fatalf("name completion InsertText = %q, want %q", item.InsertText, test.wantInsert)
+					}
+
+					return
+				}
+			}
+			t.Fatalf("completion omitted named argument name: %#v", items)
+		})
+	}
+}

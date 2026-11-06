@@ -38,7 +38,7 @@ func CompletionsForProjectFS(params CompletionParams, projectFiles fs.FS) []Comp
 
 // CompletionsForProjectFSWithContext returns completion candidates using the supplied context.
 func CompletionsForProjectFSWithContext(ctx context.Context, params CompletionParams, projectFiles fs.FS) []CompletionItem {
-	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "")
+	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "", nil, nil)
 }
 
 // CompletionForSource returns completion candidates for a document backed by the host filesystem.
@@ -48,10 +48,15 @@ func CompletionForSource(source string, line, character int, sourcePath string) 
 
 // CompletionForSourceWithContext returns completion candidates using the supplied context.
 func CompletionForSourceWithContext(ctx context.Context, source string, line, character int, sourcePath string) []CompletionItem {
-	return complete(ctx, source, Position{Line: line, Character: character}, "", "", nil, sourcePath)
+	return complete(ctx, source, Position{Line: line, Character: character}, "", "", nil, sourcePath, nil, nil)
 }
 
-func complete(ctx context.Context, source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []CompletionItem {
+// CompletionForSourceWithProjectImportsWithContext resolves imported function signatures from the source reader.
+func CompletionForSourceWithProjectImportsWithContext(ctx context.Context, source string, line, character int, sourcePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
+	return complete(ctx, source, Position{Line: line, Character: character}, "", sourcePath, nil, sourcePath, resolveImport, readSource)
+}
+
+func complete(ctx context.Context, source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
 	items := []CompletionItem{
 		{Label: "let", Kind: 14, Detail: "キーワード", Documentation: "現在のモジュールで値を宣言します。"},
 		{Label: "emit", Kind: 14, Detail: "キーワード", Documentation: "値をレンダリング結果へ追加します。"},
@@ -93,7 +98,17 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 			}
 		}
 	}
-	if namedArguments := namedArgumentCompletions(source, position, start); len(namedArguments) != 0 {
+	if projectFiles != nil && resolveImport == nil && readSource == nil {
+		resolveImport = func(importer, modulePath string) (string, bool) {
+			return ResolveProjectImport(importer, modulePath, projectFiles)
+		}
+		readSource = func(path string) (string, bool) {
+			data, err := fs.ReadFile(projectFiles, path)
+
+			return string(data), err == nil
+		}
+	}
+	if namedArguments := namedArgumentCompletions(source, position, start, entrypoint, resolveImport, readSource); len(namedArguments) != 0 {
 		items = append(namedArguments, items...)
 	}
 	if offset, err := offsetAtUTF16(source, position); err == nil {
@@ -128,7 +143,7 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 	return filtered
 }
 
-func namedArgumentCompletions(source string, position Position, prefixStart int) []CompletionItem {
+func namedArgumentCompletions(source string, position Position, prefixStart int, entrypoint string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
 	lines := strings.Split(source, "\n")
 	if position.Line < 0 || position.Line >= len(lines) {
 		return nil
@@ -161,15 +176,22 @@ func namedArgumentCompletions(source string, position Position, prefixStart int)
 	}
 	const placeholder = "__mcl_named_argument_completion__"
 	placeholderArgument := placeholder
-	if !strings.HasPrefix(following, "=") {
+	hasAssignment := strings.HasPrefix(following, "=")
+	if !hasAssignment {
 		placeholderArgument += " = null"
 	}
 	candidate := source[:startOffset] + placeholderArgument + source[endOffset:]
 	index, err := AnalyzeSource(candidate)
+	cursorOffset := startOffset + len(placeholder)
+	if err != nil {
+		if candidateWithComma, inserted := addCompletionArgumentComma(candidate, cursorOffset); inserted {
+			candidate = candidateWithComma
+			index, err = AnalyzeSource(candidate)
+		}
+	}
 	if err != nil {
 		return nil
 	}
-	cursorOffset := startOffset + len(placeholder)
 	var selected *syntax.CallExpr
 	VisitModuleExpressions(index.Module, func(expression syntax.Expr) {
 		call, ok := expression.(*syntax.CallExpr)
@@ -184,22 +206,54 @@ func namedArgumentCompletions(source string, position Position, prefixStart int)
 		return nil
 	}
 	callee, ok := selected.Callee.(*syntax.ReferenceExpr)
-	if !ok || index.LocalAt(callee.Name, callee.ExprSpan().Start).Found {
+	if !ok {
 		return nil
 	}
-	var function *syntax.FunctionDeclaration
-	for _, node := range index.Module.Nodes {
-		declaration, ok := node.(*syntax.FunctionDeclaration)
-		if !ok || declaration.Function == nil || declaration.Name != callee.Name {
-			continue
-		}
-		if function != nil {
+	var parameters []syntax.RuleParameter
+	if alias, member, qualified := strings.Cut(callee.Name, "."); qualified {
+		if alias == "" || member == "" || strings.Contains(member, ".") || resolveImport == nil || readSource == nil || entrypoint == "" || index.LocalAt(alias, callee.ExprSpan().Start).Found {
 			return nil
 		}
-		function = declaration
-	}
-	if function == nil {
-		return nil
+		var modulePath string
+		var foundImport bool
+		for _, node := range index.Module.Nodes {
+			declaration, ok := node.(*syntax.ImportDeclaration)
+			if !ok || declaration.Text || declaration.Name != alias || strings.HasPrefix(declaration.ModulePath, "std:") {
+				continue
+			}
+			if foundImport {
+				return nil
+			}
+			modulePath = declaration.ModulePath
+			foundImport = true
+		}
+		if !foundImport {
+			return nil
+		}
+		function := loadImportedFunctionModuleUsing(entrypoint, modulePath, resolveImport, readSource).functions[member]
+		if function == nil {
+			return nil
+		}
+		parameters = function.Function.Parameters
+	} else {
+		if index.LocalAt(callee.Name, callee.ExprSpan().Start).Found {
+			return nil
+		}
+		var function *syntax.FunctionDeclaration
+		for _, node := range index.Module.Nodes {
+			declaration, ok := node.(*syntax.FunctionDeclaration)
+			if !ok || declaration.Function == nil || declaration.Name != callee.Name {
+				continue
+			}
+			if function != nil {
+				return nil
+			}
+			function = declaration
+		}
+		if function == nil {
+			return nil
+		}
+		parameters = function.Function.Parameters
 	}
 	currentArgument := -1
 	for argumentIndex, argument := range selected.Arguments {
@@ -225,18 +279,111 @@ func namedArgumentCompletions(source string, position Position, prefixStart int)
 			used[name] = true
 		}
 	}
-	for parameterIndex := 0; parameterIndex < positionals && parameterIndex < len(function.Function.Parameters); parameterIndex++ {
-		used[function.Function.Parameters[parameterIndex].Name] = true
+	for parameterIndex := 0; parameterIndex < positionals && parameterIndex < len(parameters); parameterIndex++ {
+		used[parameters[parameterIndex].Name] = true
 	}
 	var items []CompletionItem
-	for _, parameter := range function.Function.Parameters {
+	for _, parameter := range parameters {
 		if used[parameter.Name] {
 			continue
 		}
-		items = append(items, CompletionItem{Label: parameter.Name, Kind: 5, InsertText: parameter.Name + " = ", Detail: "名前付き引数"})
+		insertText := parameter.Name + " = "
+		if hasAssignment {
+			insertText = parameter.Name
+		}
+		items = append(items, CompletionItem{Label: parameter.Name, Kind: 5, InsertText: insertText, Detail: "名前付き引数"})
 	}
 
 	return items
+}
+
+func addCompletionArgumentComma(source string, anchor int) (string, bool) {
+	tokens, err := syntax.Lex(source)
+	if err != nil {
+		return "", false
+	}
+	type delimiter struct {
+		text string
+		span syntax.SourceSpan
+	}
+	var open []delimiter
+	for _, token := range tokens {
+		if token.Kind != syntax.TokenLexeme || token.Lexeme.Kind != syntax.LexemeSymbol || token.Span.Start >= anchor {
+			continue
+		}
+		text := source[token.Span.Start:token.Span.End]
+		switch text {
+		case "(", "[", "{":
+			open = append(open, delimiter{text: text, span: token.Span})
+		case ")", "]", "}":
+			if len(open) != 0 && matchingDelimiter(open[len(open)-1].text, text) {
+				open = open[:len(open)-1]
+			}
+		}
+	}
+	if len(open) == 0 || open[len(open)-1].text != "(" {
+		return "", false
+	}
+
+	depth := make([]string, 0, 4)
+	argumentEnd := anchor
+	for _, token := range tokens {
+		if token.Kind != syntax.TokenLexeme || token.Span.Start <= open[len(open)-1].span.Start {
+			continue
+		}
+		text := source[token.Span.Start:token.Span.End]
+		if token.Lexeme.Kind != syntax.LexemeSymbol {
+			if token.Span.Start >= anchor && len(depth) == 0 {
+				argumentEnd = token.Span.End
+			}
+
+			continue
+		}
+		switch text {
+		case "(", "[", "{":
+			depth = append(depth, text)
+			if token.Span.Start >= anchor {
+				argumentEnd = token.Span.End
+			}
+		case ",":
+			if token.Span.Start >= anchor && len(depth) == 0 {
+				return source, false
+			}
+		case ")", "]", "}":
+			if len(depth) == 0 {
+				if text != ")" || !strings.Contains(source[argumentEnd:token.Span.Start], "\n") {
+					return "", false
+				}
+
+				return source[:argumentEnd] + "," + source[argumentEnd:], true
+			}
+			if matchingDelimiter(depth[len(depth)-1], text) {
+				depth = depth[:len(depth)-1]
+				if token.Span.Start >= anchor && len(depth) == 0 {
+					argumentEnd = token.Span.End
+				}
+			}
+		default:
+			if token.Span.Start >= anchor && len(depth) == 0 {
+				argumentEnd = token.Span.End
+			}
+		}
+	}
+
+	return "", false
+}
+
+func matchingDelimiter(open, closing string) bool {
+	switch open {
+	case "(":
+		return closing == ")"
+	case "[":
+		return closing == "]"
+	case "{":
+		return closing == "}"
+	default:
+		return false
+	}
 }
 
 func schemaFieldCompletions(ctx context.Context, position Position, lines []string, runes []rune, cursor int, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string) []string {

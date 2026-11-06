@@ -58,7 +58,7 @@ type location struct {
 	Character int `json:"character"`
 }
 
-func (s *server) definition(params definitionParams) *definitionLocation {
+func (s *server) definition(ctx context.Context, params definitionParams) *definitionLocation {
 	state, exists := s.documents[params.TextDocument.URI]
 	if !exists {
 		return nil
@@ -74,6 +74,19 @@ func (s *server) definition(params definitionParams) *definitionLocation {
 	if offset, err := offsetAtUTF16(state.Text, params.Position); err == nil {
 		if index, err := analyzeSource(state.Text); err == nil {
 			module := index.Module
+			if path, ok := canonicalSourcePath(documentPath(params.TextDocument.URI)); ok {
+				resolver, readSource := projectReferenceResolvers(s)
+				target, found := languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
+					Line: params.Position.Line, Character: params.Position.Character,
+				}, resolver, readSource)
+				if found && target.FunctionParameter {
+					if source, exists := readSource(target.Path); exists {
+						return sourceDefinitionLocation(s.diagnosticURIForPath(target.Path), source, target.Declaration)
+					}
+
+					return nil
+				}
+			}
 			for _, reference := range index.NamedArguments {
 				if reference.Span.Start <= offset && offset <= reference.Span.End {
 					return sourceDefinitionLocation(params.TextDocument.URI, state.Text, reference.Declaration)
@@ -823,6 +836,19 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 		return nil
 	}
 	module := index.Module
+	if path, ok := canonicalSourcePath(documentPath(params.TextDocument.URI)); ok {
+		resolver, readSource := projectReferenceResolvers(s)
+		target, found := languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
+			Line: params.Position.Line, Character: params.Position.Character,
+		}, resolver, readSource)
+		if found && target.FunctionParameter {
+			if target.Path == path && len(s.workspaceRoots) == 0 {
+				return renameFunctionParameterInSource(ctx, params, state.Text)
+			}
+
+			return s.renameFunctionParameterWithContext(ctx, params, target, resolver)
+		}
+	}
 	if edit, handled := s.renameImportedExport(ctx, params, name, offset, module, index); handled {
 		return edit
 	}
@@ -959,6 +985,74 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 
 		return left.Range.Start.Character - right.Range.Start.Character
 	})
+
+	return &workspaceEdit{Changes: map[string][]textEdit{params.TextDocument.URI: edits}}
+}
+
+func (s *server) renameFunctionParameterWithContext(ctx context.Context, params renameParams, target languageservice.ReferenceTarget, resolveImport languageservice.ReferenceImportResolver) *workspaceEdit {
+	if ctx.Err() != nil {
+		return nil
+	}
+	overlays, openURIs := s.renameOverlays()
+	if s.renameIndex == nil {
+		s.renameIndex = &engine.DependentMCLSourceIndex{}
+	}
+	var sources map[string]string
+	var err error
+	if s.watchRegistered {
+		sources, err = s.renameIndex.SourcesFromIndexWithContext(ctx, target.Path, s.workspaceRoots, overlays)
+	} else {
+		sources, err = s.renameIndex.SourcesWithContext(ctx, target.Path, s.workspaceRoots, overlays)
+	}
+	if err != nil || ctx.Err() != nil {
+		return nil
+	}
+	result := languageservice.RenameFunctionParameterForProjectSources(target, params.NewName, sources, resolveImport)
+	if result == nil || len(result.Edits) == 0 {
+		return nil
+	}
+	changes := make(map[string][]textEdit)
+	for _, edit := range result.Edits {
+		if ctx.Err() != nil {
+			return nil
+		}
+		path, ok := canonicalSourcePath(edit.Path)
+		if !ok {
+			return nil
+		}
+		uri := openURIs[path]
+		if uri == "" {
+			uri = filePathToURI(path)
+		}
+		var protocolEdit textEdit
+		protocolEdit.Range.Start = location{Line: edit.Range.Start.Line, Character: edit.Range.Start.Character}
+		protocolEdit.Range.End = location{Line: edit.Range.End.Line, Character: edit.Range.End.Character}
+		protocolEdit.NewText = edit.NewText
+		changes[uri] = append(changes[uri], protocolEdit)
+	}
+
+	return &workspaceEdit{Changes: changes}
+}
+
+func renameFunctionParameterInSource(ctx context.Context, params renameParams, source string) *workspaceEdit {
+	result := languageservice.RenameForSource(
+		params.TextDocument.URI,
+		source,
+		languageservice.Position{Line: params.Position.Line, Character: params.Position.Character},
+		params.NewName,
+	)
+	if result == nil || len(result.Edits) == 0 {
+		return nil
+	}
+	edits := make([]textEdit, len(result.Edits))
+	for index, edit := range result.Edits {
+		if ctx.Err() != nil || edit.Path != params.TextDocument.URI {
+			return nil
+		}
+		edits[index].Range.Start = location{Line: edit.Range.Start.Line, Character: edit.Range.Start.Character}
+		edits[index].Range.End = location{Line: edit.Range.End.Line, Character: edit.Range.End.Character}
+		edits[index].NewText = edit.NewText
+	}
 
 	return &workspaceEdit{Changes: map[string][]textEdit{params.TextDocument.URI: edits}}
 }

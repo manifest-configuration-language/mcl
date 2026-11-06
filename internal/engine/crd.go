@@ -25,7 +25,6 @@ import (
 	schemaobjectmeta "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/objectmeta"
 	crdpruning "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	crdvalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
-	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 )
@@ -136,12 +135,9 @@ func validateRuntimeBundleCustomResourcesWithCatalog(ctx context.Context, artifa
 		instanceMap, isMap := instance.(map[string]any)
 		var validationErrors field.ErrorList
 		if isMap {
-			objectMeta, _, unknownMetadataFields, err := schemaobjectmeta.GetObjectMetaWithOptions(instanceMap, schemaobjectmeta.ObjectMetaOptions{ReturnUnknownFieldPaths: true, ParentPath: field.NewPath("resource")})
+			_, _, unknownMetadataFields, err := schemaobjectmeta.GetObjectMetaWithOptions(instanceMap, schemaobjectmeta.ObjectMetaOptions{ReturnUnknownFieldPaths: true, ParentPath: field.NewPath("resource")})
 			if err != nil {
 				validationErrors = append(validationErrors, field.Invalid(field.NewPath("resource", "metadata"), nil, err.Error()))
-			} else if objectMeta != nil {
-				requiresNamespace := registered.descriptor.Scope == KubernetesResourceScopeNamespaced && objectMeta.Namespace != ""
-				validationErrors = append(validationErrors, apivalidation.ValidateObjectMeta(objectMeta, requiresNamespace, apivalidation.NameIsDNSSubdomain, field.NewPath("resource", "metadata"))...)
 			}
 			for _, unknownField := range unknownMetadataFields {
 				validationErrors = append(validationErrors, field.Invalid(field.NewPath(unknownField), nil, "unknown field"))

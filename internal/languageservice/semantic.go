@@ -66,7 +66,10 @@ func (index *SemanticIndex) ResolveTopLevel(name string, offset int, typeName bo
 	for _, declarationIndex := range index.Declarations[name] {
 		node := index.Module.Nodes[declarationIndex]
 		declarationName, _, nameSpan, ok := ASTDeclarationInfo(node)
-		if !ok || IsTypeDeclaration(node) || declarationName != name || nameSpan.Start > offset || !IsRenameableASTDeclaration(node) {
+		if !ok || IsTypeDeclaration(node) || declarationName != name || !IsRenameableASTDeclaration(node) {
+			continue
+		}
+		if _, isFunction := node.(*syntax.FunctionDeclaration); !isFunction && nameSpan.Start > offset {
 			continue
 		}
 		definition = declarationIndex
@@ -121,8 +124,10 @@ func (index *SemanticIndex) VisibleDeclarationNames(line int) []string {
 	var names []string
 	for name, declarationIndexes := range index.Declarations {
 		for _, declarationIndex := range declarationIndexes {
-			_, declarationLine, _, ok := ASTDeclarationInfo(index.Module.Nodes[declarationIndex])
-			if ok && declarationLine < line {
+			node := index.Module.Nodes[declarationIndex]
+			_, declarationLine, _, ok := ASTDeclarationInfo(node)
+			_, isFunction := node.(*syntax.FunctionDeclaration)
+			if ok && (isFunction || declarationLine < line) {
 				names = append(names, name)
 
 				break

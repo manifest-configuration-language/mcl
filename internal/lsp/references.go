@@ -13,6 +13,30 @@ import (
 	"go.lsp.dev/uri"
 )
 
+func projectReferenceResolvers(s *server) (languageservice.ReferenceImportResolver, languageservice.ReferenceSourceReader) {
+	resolveImport := func(importer, modulePath string) (string, bool) {
+		resolved, err := engine.ResolveImportPath(importer, modulePath)
+		if err != nil {
+			return "", false
+		}
+
+		return canonicalSourcePath(resolved)
+	}
+	readSource := func(path string) (string, bool) {
+		if _, source, ok := s.openDocumentForPath(path); ok {
+			return source, true
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", false
+		}
+
+		return string(data), true
+	}
+
+	return resolveImport, readSource
+}
+
 func (s *server) References(ctx context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
 	if ctx.Err() != nil {
 		return nil, protocol.ErrRequestCancelled
@@ -30,25 +54,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 	if path == "" {
 		return []protocol.Location{}, nil
 	}
-	resolver := func(importer, modulePath string) (string, bool) {
-		resolved, err := engine.ResolveImportPath(importer, modulePath)
-		if err != nil {
-			return "", false
-		}
-
-		return canonicalSourcePath(resolved)
-	}
-	readSource := func(path string) (string, bool) {
-		if _, source, ok := snapshot.openDocumentForPath(path); ok {
-			return source, true
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", false
-		}
-
-		return string(data), true
-	}
+	resolver, readSource := projectReferenceResolvers(snapshot)
 	target, ok := languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
 		Line: int(params.Position.Line), Character: int(params.Position.Character),
 	}, resolver, readSource)
@@ -77,7 +83,7 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 			sources[target.Path] = source
 		}
 	}
-	if target.Exported && !target.Local {
+	if (target.Exported && !target.Local) || target.FunctionParameter {
 		overlays, _ := snapshot.renameOverlays()
 		if snapshot.renameIndex == nil {
 			snapshot.renameIndex = &engine.DependentMCLSourceIndex{}

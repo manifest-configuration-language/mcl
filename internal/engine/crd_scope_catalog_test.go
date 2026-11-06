@@ -16,14 +16,14 @@ func TestProjectCRDCatalogEnforcesResourceScopeAndIdentity(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name              string
-		scope             string
-		resources         string
-		wantError         string
-		wantEvaluateError bool
+		name            string
+		scope           string
+		resources       string
+		wantError       string
+		wantRenderError bool
 	}{
 		{
-			name:  "cluster scoped resources reject namespace",
+			name:  "cluster scoped resources reject namespace during rendering",
 			scope: "Cluster",
 			resources: `let resource =
   apiVersion: "example.test/v1"
@@ -33,8 +33,8 @@ func TestProjectCRDCatalogEnforcesResourceScopeAndIdentity(t *testing.T) {
     namespace: "default"
 emit resource
 `,
-			wantError:         "not allowed on this type",
-			wantEvaluateError: true,
+			wantError:       "must not set metadata.namespace",
+			wantRenderError: true,
 		},
 		{
 			name:  "namespaced identity normalizes default namespace",
@@ -53,7 +53,8 @@ let explicitNamespace =
 emit implicitNamespace
 emit explicitNamespace
 `,
-			wantError: "duplicate Kubernetes resource",
+			wantError:       "duplicate Kubernetes resource",
+			wantRenderError: true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -82,19 +83,16 @@ emit explicitNamespace
 				t.Fatalf("open dependency lock: %v", err)
 			}
 			bundle, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, test.resources, files, nil)
-			if test.wantEvaluateError {
-				if err == nil || !strings.Contains(err.Error(), test.wantError) {
-					t.Fatalf("EvaluateProjectSourceContext() error = %v, want %q", err, test.wantError)
-				}
-
-				return
-			}
 			if err != nil {
 				t.Fatalf("EvaluateProjectSourceContext() error = %v", err)
 			}
 			_, err = Render(bundle)
-			if err == nil || !strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("Render() error = %v, want %q", err, test.wantError)
+			if test.wantRenderError {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("Render() error = %v, want %q", err, test.wantError)
+				}
+			} else if err != nil {
+				t.Fatalf("Render() error = %v, want CRD scope metadata to remain governed by its schema", err)
 			}
 		})
 	}

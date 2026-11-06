@@ -44,6 +44,9 @@ func RenameForProjectFS(params NavigationParams, projectFiles fs.FS, newName str
 	if target.ImportAlias {
 		return renameImportAlias(params.Entrypoint, params.Source, target.Declaration, newName)
 	}
+	if target.FunctionParameter {
+		return renameFunctionParameterForProject(target, newName, sources, resolveImport)
+	}
 	if target.Local || !target.Exported {
 		return RenameForSource(params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, newName)
 	}
@@ -104,6 +107,140 @@ func RenameForProjectFS(params NavigationParams, projectFiles fs.FS, newName str
 		}
 		for _, span := range importerSpans {
 			result.Edits = append(result.Edits, RenameEdit{Path: relativePath, Range: SourceRangeAt(source, span), NewText: newName})
+		}
+	}
+	slices.SortFunc(result.Edits, func(left, right RenameEdit) int {
+		if left.Path != right.Path {
+			return strings.Compare(left.Path, right.Path)
+		}
+		if left.Range.Start.Line != right.Range.Start.Line {
+			return left.Range.Start.Line - right.Range.Start.Line
+		}
+
+		return left.Range.Start.Character - right.Range.Start.Character
+	})
+
+	return result
+}
+
+// RenameFunctionParameterForProjectSources renames a function parameter across the supplied project snapshot.
+func RenameFunctionParameterForProjectSources(target ReferenceTarget, newName string, sources map[string]string, resolveImport ReferenceImportResolver) *RenameResult {
+	if !IsMCLIdentifier(newName) || !target.FunctionParameter {
+		return nil
+	}
+
+	return renameFunctionParameterForProject(target, newName, sources, resolveImport)
+}
+
+func renameFunctionParameterForProject(target ReferenceTarget, newName string, sources map[string]string, resolveImport ReferenceImportResolver) *RenameResult {
+	targetSource, exists := sources[target.Path]
+	if !exists {
+		return nil
+	}
+	semanticIndex, err := AnalyzeSource(targetSource)
+	if err != nil {
+		return nil
+	}
+	parameterFunction := ""
+	functionNames := make(map[string]int)
+	for _, node := range semanticIndex.Module.Nodes {
+		function, ok := node.(*syntax.FunctionDeclaration)
+		if !ok || function.Function == nil {
+			continue
+		}
+		functionNames[function.Name]++
+		for _, parameter := range function.Function.Parameters {
+			if parameter.Span == target.Declaration {
+				parameterFunction = function.Name
+			}
+		}
+	}
+	if parameterFunction == "" || functionNames[parameterFunction] != 1 {
+		return nil
+	}
+	var binding *ScopedLocalBinding
+	for bindingIndex := range semanticIndex.Locals {
+		candidate := &semanticIndex.Locals[bindingIndex]
+		if candidate.Name == target.Name && candidate.Declaration == target.Declaration {
+			binding = candidate
+
+			break
+		}
+	}
+	if binding == nil {
+		return nil
+	}
+	spans := localRenameSpans(targetSource, target.Name, newName, *binding, semanticIndex.Locals, semanticIndex.References)
+	if spans == nil {
+		return nil
+	}
+	for _, reference := range semanticIndex.NamedArguments {
+		if reference.Declaration == target.Declaration {
+			spans = append(spans, reference.Span)
+		}
+	}
+	spans = uniqueValidSpans(targetSource, target.Name, spans)
+	if spans == nil || !candidateParses(targetSource, spans, newName) {
+		return nil
+	}
+	result := &RenameResult{Edits: make([]RenameEdit, 0, len(spans))}
+	for _, span := range spans {
+		result.Edits = append(result.Edits, RenameEdit{Path: target.Path, Range: SourceRangeAt(targetSource, span), NewText: newName})
+	}
+
+	paths := make([]string, 0, len(sources))
+	for sourcePath := range sources {
+		paths = append(paths, sourcePath)
+	}
+	slices.Sort(paths)
+	for _, sourcePath := range paths {
+		source := sources[sourcePath]
+		importerIndex, err := AnalyzeSource(source)
+		if err != nil {
+			return nil
+		}
+		aliasesToTarget := make(map[string]bool)
+		aliasCounts := make(map[string]int)
+		for _, node := range importerIndex.Module.Nodes {
+			declaration, ok := node.(*syntax.ImportDeclaration)
+			if !ok || strings.HasPrefix(declaration.ModulePath, "std:") {
+				continue
+			}
+			aliasCounts[declaration.Name]++
+			if declaration.Text {
+				continue
+			}
+			resolvedPath, resolved := resolveImport(sourcePath, declaration.ModulePath)
+			if !resolved || resolvedPath != target.Path {
+				continue
+			}
+			aliasesToTarget[declaration.Name] = true
+		}
+		for alias := range aliasesToTarget {
+			if aliasCounts[alias] > 1 {
+				return nil
+			}
+		}
+		readSource := func(path string) (string, bool) {
+			source, exists := sources[path]
+
+			return source, exists
+		}
+		var importerSpans []syntax.SourceSpan
+		for _, reference := range namedArgumentReferencesForSource(sourcePath, importerIndex, resolveImport, readSource) {
+			if reference.DeclarationPath == target.Path && reference.Declaration == target.Declaration {
+				importerSpans = append(importerSpans, reference.Span)
+			}
+		}
+		if len(importerSpans) == 0 {
+			continue
+		}
+		importerSpans = uniqueValidSpans(source, target.Name, importerSpans)
+		if importerSpans == nil || !candidateParses(source, importerSpans, newName) {
+			return nil
+		}
+		for _, span := range importerSpans {
+			result.Edits = append(result.Edits, RenameEdit{Path: sourcePath, Range: SourceRangeAt(source, span), NewText: newName})
 		}
 	}
 	slices.SortFunc(result.Edits, func(left, right RenameEdit) int {

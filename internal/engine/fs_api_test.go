@@ -145,7 +145,7 @@ spec:
 	}
 }
 
-func TestEvaluateProjectSourceValidatesConfiguredCRDObjectMeta(t *testing.T) {
+func TestEvaluateProjectSourceDoesNotValidateKubernetesObjectMetaForCRD(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
 	crd := []byte(`apiVersion: apiextensions.k8s.io/v1
@@ -189,33 +189,19 @@ emit widget
 		t.Fatalf("EvaluateProjectSourceContext() error = %v, want a valid namespaced CRD resource with omitted namespace to pass", err)
 	}
 
-	invalidSource := `let widget =
+	customMetadataSource := `let widget =
   apiVersion: "example.test/v1"
   kind: "Widget"
   metadata:
     name: "Invalid_Name"
 emit widget
 `
-	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, invalidSource, files, nil)
-	if err == nil {
-		t.Fatal("EvaluateProjectSourceContext() succeeded, want invalid metadata.name to fail")
+	customMetadataBundle, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, customMetadataSource, files, nil)
+	if err != nil {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want CRD metadata.name to remain governed by its schema", err)
 	}
-	diagnostic, ok := errors.AsType[SourceDiagnosticError](err)
-	if !ok {
-		t.Fatalf("EvaluateProjectSourceContext() error = %T, want SourceDiagnosticError", err)
-	}
-	if diagnostic.Code != "MCL-CRD" {
-		t.Errorf("diagnostic code = %q, want MCL-CRD", diagnostic.Code)
-	}
-	wantPath := filepath.Join(root, projectFileEntrypoint)
-	if diagnostic.Path != wantPath {
-		t.Errorf("diagnostic path = %q, want %q", diagnostic.Path, wantPath)
-	}
-	if diagnostic.Span.Start < 0 || diagnostic.Span.End > len(invalidSource) || !strings.Contains(invalidSource[diagnostic.Span.Start:diagnostic.Span.End], "Invalid_Name") {
-		t.Errorf("diagnostic span = %#v, want the invalid metadata.name value", diagnostic.Span)
-	}
-	if !strings.Contains(diagnostic.Message, "metadata.name") {
-		t.Errorf("diagnostic message = %q, want metadata.name validation error", diagnostic.Message)
+	if _, err := Render(customMetadataBundle); err != nil {
+		t.Fatalf("Render() error = %v, want CRD metadata.name to remain governed by its schema", err)
 	}
 
 	unknownFieldSource := `let widget =
@@ -231,7 +217,7 @@ emit widget
 	if err == nil {
 		t.Fatal("EvaluateProjectSourceContext() succeeded, want an unknown CRD field to fail")
 	}
-	diagnostic, ok = errors.AsType[SourceDiagnosticError](err)
+	diagnostic, ok := errors.AsType[SourceDiagnosticError](err)
 	if !ok {
 		t.Fatalf("EvaluateProjectSourceContext() error = %T, want SourceDiagnosticError", err)
 	}
@@ -246,12 +232,13 @@ emit widget
 	}
 }
 
-func TestEvaluateProjectSourceRejectsInvalidConfiguredCRD(t *testing.T) {
+func TestEvaluateProjectSourceRequiresResourceIdentityForConfiguredCRD(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
 	crd := []byte(`apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
-metadata: {}
+metadata:
+  name: widgets.example.test
 spec:
   group: example.test
   scope: Namespaced
@@ -272,13 +259,10 @@ spec:
 	resource := `let widget =
   apiVersion: "example.test/v1"
   kind: "Widget"
-  metadata:
-    name: "sample"
 emit widget
 `
-	_, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, resource, files, nil)
-	if err == nil || !strings.Contains(err.Error(), "metadata.name") {
-		t.Fatalf("EvaluateProjectSourceContext() error = %v, want a CRD metadata.name validation error", err)
+	if _, err := EvaluateProjectSourceContext(t.Context(), root, projectFileEntrypoint, resource, files, nil); err == nil || !strings.Contains(err.Error(), "invalid Kubernetes resource identity") {
+		t.Fatalf("EvaluateProjectSourceContext() error = %v, want the generic resource identity check to require metadata.name", err)
 	}
 }
 
