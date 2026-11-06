@@ -34,6 +34,8 @@ infraのAkvoradoではContainerの構築に5つの位置引数を渡し、未使
 
 複数行のインラインMapを関数本文として返すと、継続行の検出が丸括弧しか数えず、`unmatched opening brace`で失敗していました。継続行の判定では`()`、`[]`、`{}`を扱い、関数呼び出し内だけでなく、通常の式でも同じMap・List構文を使用可能にします。
 
+Cluster APIの設定合成では、`identity()`の戻り値を`Map<String, Any>`と宣言すると、`identity() with: ...`から閉じた設定レコードへの型検査に必要なフィールド情報が失われます。この挙動はv0.3.32でも再現します。関数の戻り値型にないフィールドを呼び出し元で推測する変更は行わず、infraでは`patches`、`schematicID`、`talosVersion`、`hostSelectorLabels`を持つ共有の`MachineIdentity`型を定義します。identity関数はそのレコードを返し、ControlPlaneConfigとWorkerConfigへ残りのフィールドを明示的に追加します。identityはハッシュと設定の入力なので通常のMapとして構築し、独立したResourceの同一性を付与する`node:`は使いません。
+
 `node:`の名前と構文は維持します。参照可能な同一性が必要な値と通常のMapを区別する設計は、構文の置換と分けて検討します。
 
 ## infraへの適用
