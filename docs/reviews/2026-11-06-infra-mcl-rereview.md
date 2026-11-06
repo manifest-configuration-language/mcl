@@ -30,4 +30,8 @@ AkvoradoのInletは`cake`へ固定されていますが、確認したinfraの�
 
 ## 検証
 
-MCLの`mise run quality:check`で全Goテスト、golangci-lint、gofmt確認、WASM検証が通りました。infraでは`applications.mcl`とCiliumの`values.mcl`を整形・lintし、Runner ApplicationをMCL 0.4.0でレンダリングしました。Actions Runnerの`values.mcl`は変更前のHEADでも整形確認に失敗する差分があり、ファイル全体の整形は行っていません。Renovate設定検証とタグ抽出の確認は通りました。MCL 0.4.1への更新後に、同じRunnerレンダリングと対象アプリの再検証を行います。
+MCLの`mise run quality:check`で全Goテスト、golangci-lint、gofmt確認、WASM検証が通り、GitHub ActionsのMCL core CIも成功しました。MCL 0.4.1のRelease workflowは成功し、GitHub Releaseと`@manifest-configuration-language/browser`、`@manifest-configuration-language/language`のnpm packageを確認しました。
+
+infraの`mise.toml`と`k8s/mcl.lock`をMCL 0.4.1、revision `7cd20ea7b1bd6c7e5c064e7be96b519dcad6ded0`へ揃えました。認証付き`mcl update`が成功し、toolchain情報以外のlock内容に変更がないことを確認しました。MCL対象の135配置を新しいrelease CLIでrenderし、失敗がないことを確認しました。Actions Runnerの出力には設定一覧と同数の5つのApplicationが含まれ、CiliumはBiscuitで28 resource、Kurumiで62 resourceを出力しました。
+
+infraでは`applications.mcl`とCiliumの`values.mcl`を整形確認し、3つの変更対象MCLファイルをlintしました。Actions Runnerの`values.mcl`は変更前のHEADでも整形確認に失敗する差分があり、ファイル全体の整形は行っていません。Renovate設定検証とタグ抽出の確認も通りました。デプロイは実行していません。
