@@ -48,6 +48,7 @@ type Lock struct {
 	//nolint:containedctx // Lockは同一の依存更新処理で使う取得Contextを共有します。
 	ctx               context.Context
 	root              string
+	cacheFilesystem   *rootFilesystem
 	update            bool
 	fetchLocked       bool
 	manifests         map[string]string
@@ -163,6 +164,38 @@ func (lock *Lock) SetGitCredentialProvider(provider GitCredentialProvider) {
 	lock.gitFetcher = func(ctx context.Context, source, revision, directory string) ([]byte, error) {
 		return fetchGitTreeWithCredentials(ctx, source, revision, directory, provider)
 	}
+}
+
+// SetCacheDirectory configures a shared filesystem directory for digest-addressed dependency content.
+// An empty directory keeps the project-local cache, while a configured directory must be absolute.
+func (lock *Lock) SetCacheDirectory(directory string) error {
+	if directory == "" {
+		return nil
+	}
+	if !filepath.IsAbs(directory) {
+		return errors.New("dependency cache directory must be absolute")
+	}
+	if lock.filesystem == nil || !lock.filesystem.osBacked {
+		return errors.New("shared dependency cache requires an OS-backed project filesystem")
+	}
+	directory = filepath.Clean(directory)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create dependency cache directory: %w", err)
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return fmt.Errorf("inspect dependency cache directory: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("dependency cache path must be a directory, not a symbolic link")
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return fmt.Errorf("resolve dependency cache directory: %w", err)
+	}
+	lock.cacheFilesystem = newOSRootFilesystem(resolved)
+
+	return nil
 }
 
 func openLockedFetchWithFilesystem(ctx context.Context, root string, identity ToolchainIdentity, files *rootFilesystem) (*Lock, error) {
@@ -669,17 +702,26 @@ func (lock *Lock) IsUpdate() bool { return lock.update }
 func (lock *Lock) IsLockedFetch() bool { return lock.fetchLocked }
 
 func (lock *Lock) cachePath(digest string) string {
+	if lock.cacheFilesystem != nil {
+		return filepath.Join(lock.cacheFilesystem.root, "sha256", digest)
+	}
+
 	return filepath.Join(lock.root, ".mcl", "cache", "sha256", digest)
 }
 
 func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 	cachePath := lock.cachePath(digest)
-	relative, err := filepath.Rel(lock.root, cachePath)
+	filesystem := lock.filesystem
+	cacheRoot := lock.root
+	if lock.cacheFilesystem != nil {
+		filesystem = lock.cacheFilesystem
+		cacheRoot = filesystem.root
+	}
+	relative, err := filepath.Rel(cacheRoot, cachePath)
 	if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return nil, errors.New("cached dependency path escapes the project directory")
+		return nil, errors.New("cached dependency path escapes its cache directory")
 	}
 	relative = filepath.ToSlash(relative)
-	filesystem := lock.filesystem
 	if filesystem == nil {
 		return nil, errors.New("dependency filesystem is required")
 	}
@@ -698,12 +740,12 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 		return nil, fmt.Errorf("%w: cached Manifest with SHA-256 %s is missing; run mcl update", ErrRemoteDependencyUnavailable, digest)
 	}
 	if filesystem.osBacked {
-		if _, err := safepath.ResolveWithin(lock.root, cachePath); err != nil {
+		if _, err := safepath.ResolveWithin(cacheRoot, cachePath); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, fmt.Errorf("%w: cached Manifest with SHA-256 %s is missing; run mcl update", ErrRemoteDependencyUnavailable, digest)
 			}
 			if errors.Is(err, safepath.ErrOutsideRoot) {
-				return nil, errors.New("cached Manifest escapes the project directory")
+				return nil, errors.New("cached dependency escapes its cache directory")
 			}
 
 			return nil, fmt.Errorf("resolve cached Manifest: %w", err)
@@ -718,16 +760,22 @@ func (lock *Lock) readCache(digest string, maximumSize int64) ([]byte, error) {
 }
 
 func (lock *Lock) writeCache(digest string, data []byte) error {
-	if lock.filesystem == nil {
+	filesystem := lock.filesystem
+	cacheRoot := lock.root
+	if lock.cacheFilesystem != nil {
+		filesystem = lock.cacheFilesystem
+		cacheRoot = filesystem.root
+	}
+	if filesystem == nil {
 		return errors.New("dependency filesystem is required")
 	}
 	path := lock.cachePath(digest)
-	relative, err := filepath.Rel(lock.root, path)
+	relative, err := filepath.Rel(cacheRoot, path)
 	if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return errors.New("dependency cache path escapes the project directory")
+		return errors.New("dependency cache path escapes its cache directory")
 	}
 
-	if err := lock.filesystem.writeFileAtomic(filepath.ToSlash(relative), data); err != nil {
+	if err := filesystem.writeFileAtomic(filepath.ToSlash(relative), data); err != nil {
 		return fmt.Errorf("write dependency cache: %w", err)
 	}
 

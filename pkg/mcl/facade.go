@@ -74,6 +74,10 @@ const KubernetesResourceScopeNamespaced = engine.KubernetesResourceScopeNamespac
 
 const KubernetesResourceScopeCluster = engine.KubernetesResourceScopeCluster
 
+const KubernetesResourceScopeUnknown = engine.KubernetesResourceScopeUnknown
+
+type KubernetesResourceIdentity = engine.KubernetesResourceIdentity
+
 type KubernetesResourceDescriptor = engine.KubernetesResourceDescriptor
 
 type KubernetesResourceCatalog = engine.KubernetesResourceCatalog
@@ -86,6 +90,11 @@ func DefaultKubernetesResourceCatalog() KubernetesResourceCatalog {
 // NewKubernetesResourceCatalogは現在の組み込みCatalogに追加Descriptorを設定して返します。
 func NewKubernetesResourceCatalog(additionalResources ...KubernetesResourceDescriptor) KubernetesResourceCatalog {
 	return engine.NewKubernetesResourceCatalog(additionalResources...)
+}
+
+// ResolveKubernetesResourceIdentity applies Kubernetes scope and Argo CD namespace defaults to a resource identity.
+func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespace, name, destinationNamespace string) (KubernetesResourceIdentity, error) {
+	return engine.ResolveKubernetesResourceIdentity(bundle, apiVersion, kind, namespace, name, destinationNamespace)
 }
 
 func EvaluateFile(path string) (Bundle, error) {

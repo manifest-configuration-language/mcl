@@ -308,6 +308,94 @@ func TestLockedFetchLoadsPinnedGitSourceIntoCache(t *testing.T) {
 	}
 }
 
+func TestLockedFetchReusesConfiguredCacheAcrossLocks(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	cacheDirectory := filepath.Join(t.TempDir(), "shared-cache")
+	identity := testToolchainIdentity()
+	source := "git+https://github.com/example/operator.git"
+	revision := "0123456789abcdef0123456789abcdef01234567"
+	directory := "."
+	archive := []byte("locked Git tree archive")
+	digest := contentutil.SHA256(archive)
+	key := GitSourceKey(source, revision, directory)
+	lockData, err := json.Marshal(lockFile{
+		Version: 3, Toolchain: identity.lock(),
+		GitSources: map[string]gitSourceLock{key: {Source: source, Revision: revision, Directory: directory, ArchiveDigest: digest}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, testLockFilename), lockData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := OpenLockedFetch(t.Context(), projectRoot, identity)
+	if err != nil {
+		t.Fatalf("open first locked fetch: %v", err)
+	}
+	if err := first.SetCacheDirectory(cacheDirectory); err != nil {
+		t.Fatalf("configure first shared cache: %v", err)
+	}
+	first.gitFetcher = func(context.Context, string, string, string) ([]byte, error) {
+		return append([]byte(nil), archive...), nil
+	}
+	if _, err := first.LoadGitSource(source, revision, directory); err != nil {
+		t.Fatalf("fetch and cache locked Git source: %v", err)
+	}
+
+	second, err := OpenLockedFetch(t.Context(), projectRoot, identity)
+	if err != nil {
+		t.Fatalf("open second locked fetch: %v", err)
+	}
+	if err := second.SetCacheDirectory(cacheDirectory); err != nil {
+		t.Fatalf("configure second shared cache: %v", err)
+	}
+	second.gitFetcher = func(context.Context, string, string, string) ([]byte, error) {
+		t.Fatal("second lock fetched a dependency already present in the shared cache")
+
+		return nil, nil
+	}
+	loaded, err := second.LoadGitSource(source, revision, directory)
+	if err != nil {
+		t.Fatalf("load locked Git source from shared cache: %v", err)
+	}
+	if string(loaded) != string(archive) {
+		t.Fatalf("cached Git archive = %q, want %q", loaded, archive)
+	}
+	if got, err := os.ReadFile(filepath.Join(cacheDirectory, "sha256", digest)); err != nil || string(got) != string(archive) {
+		t.Fatalf("shared cache content = %q, %v; want %q", got, err, archive)
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".mcl", "cache")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("project-local cache stat error = %v, want no project-local cache", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(projectRoot, testLockFilename)); err != nil || string(got) != string(lockData) {
+		t.Fatalf("mcl.lock = %s, %v; want unchanged lock data", got, err)
+	}
+}
+
+func TestSetCacheDirectoryRequiresAbsoluteOSBackedDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	lock, err := Open(t.Context(), root, false, testToolchainIdentity())
+	if err != nil {
+		t.Fatalf("open OS-backed lock: %v", err)
+	}
+	if err := lock.SetCacheDirectory("relative-cache"); err == nil {
+		t.Fatal("SetCacheDirectory() accepted a relative path")
+	}
+	files := &atomicMapFS{files: make(fstest.MapFS)}
+	virtualLock, err := OpenWithFS(t.Context(), "/virtual/project", false, testToolchainIdentity(), files)
+	if err != nil {
+		t.Fatalf("open injected-filesystem lock: %v", err)
+	}
+	if err := virtualLock.SetCacheDirectory(filepath.Join(t.TempDir(), "cache")); err == nil {
+		t.Fatal("SetCacheDirectory() accepted an external cache for an injected filesystem")
+	}
+}
+
 func TestLockedFetchLoadsPinnedOCIChartIntoCache(t *testing.T) {
 	t.Parallel()
 

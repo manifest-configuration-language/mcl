@@ -42,9 +42,11 @@ const (
 // EvaluationOptionsはMCL評価全体に適用する実行オプションを保持します。
 type EvaluationOptions struct {
 	AllowNondeterministicOutput bool
-	KubernetesVersion           string
-	ParameterSources            map[string]ParameterSource
-	GitCredentialProvider       GitCredentialProvider
+	// CacheDirectory shares digest-addressed dependencies between project evaluations. It must be absolute and requires an OS-backed project filesystem; empty keeps the project-local cache.
+	CacheDirectory        string
+	KubernetesVersion     string
+	ParameterSources      map[string]ParameterSource
+	GitCredentialProvider GitCredentialProvider
 }
 
 type GitCredentials struct {
@@ -1176,6 +1178,11 @@ func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fe
 	}
 	if err != nil {
 		return Bundle{}, err
+	}
+	if options.CacheDirectory != "" {
+		if err := dependencies.SetCacheDirectory(options.CacheDirectory); err != nil {
+			return Bundle{}, err
+		}
 	}
 	if options.GitCredentialProvider != nil {
 		dependencies.SetGitCredentialProvider(func(ctx context.Context, source string) (dependency.GitCredentials, error) {

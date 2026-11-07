@@ -17,9 +17,19 @@ const KubernetesResourceCatalogRevision = "mcl-kubernetes-resource-catalog-v1"
 type KubernetesResourceScope string
 
 const (
+	KubernetesResourceScopeUnknown    KubernetesResourceScope = "Unknown"
 	KubernetesResourceScopeNamespaced KubernetesResourceScope = "Namespaced"
 	KubernetesResourceScopeCluster    KubernetesResourceScope = "Cluster"
 )
+
+// KubernetesResourceIdentity is the namespace-aware identity Argo CD uses when comparing desired resources.
+type KubernetesResourceIdentity struct {
+	APIGroup  string
+	Kind      string
+	Namespace string
+	Name      string
+	Scope     KubernetesResourceScope
+}
 
 // KubernetesResourceDescriptorはResourceのAPI identityとnamespace scopeを表します。
 type KubernetesResourceDescriptor struct {
@@ -176,6 +186,59 @@ func KubernetesResourceScopeForBundle(bundle Bundle, catalog KubernetesResourceC
 	}
 
 	return KubernetesResourceScopeNamespaced, true, nil
+}
+
+// ResolveKubernetesResourceIdentity normalizes a resource identity using its Bundle's CRDs and the Argo CD destination namespace.
+func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespace, name, destinationNamespace string) (KubernetesResourceIdentity, error) {
+	if kind == "" || name == "" {
+		return KubernetesResourceIdentity{}, errors.New("kubernetes resource kind and name must not be empty")
+	}
+	group, version, hasGroup := strings.Cut(apiVersion, "/")
+	if !hasGroup {
+		group = ""
+		version = apiVersion
+	} else if group == "" || strings.Contains(version, "/") {
+		return KubernetesResourceIdentity{}, errors.New("kubernetes resource apiVersion is invalid")
+	}
+	if !validKubernetesAPIVersion(version) {
+		return KubernetesResourceIdentity{}, errors.New("kubernetes resource apiVersion is invalid")
+	}
+	if group != "" && len(validation.IsDNS1123Subdomain(group)) != 0 {
+		return KubernetesResourceIdentity{}, fmt.Errorf("invalid Kubernetes resource API group %q", group)
+	}
+	if len(validation.IsDNS1035Label(strings.ToLower(kind))) != 0 {
+		return KubernetesResourceIdentity{}, fmt.Errorf("invalid Kubernetes resource kind %q", kind)
+	}
+
+	index, err := newKubernetesResourceScopeIndexForBundle(bundle, DefaultKubernetesResourceCatalog())
+	if err != nil {
+		return KubernetesResourceIdentity{}, err
+	}
+	descriptor, known := index[kubernetesResourceKey{group: group, kind: kind}]
+	scope := KubernetesResourceScopeUnknown
+	if known {
+		if descriptor.scope == kubernetesResourceCluster {
+			scope = KubernetesResourceScopeCluster
+		} else {
+			scope = KubernetesResourceScopeNamespaced
+		}
+	}
+	switch scope {
+	case KubernetesResourceScopeNamespaced:
+		if namespace == "" {
+			namespace = destinationNamespace
+			if namespace == "" {
+				namespace = defaultKubernetesNamespace
+			}
+		}
+	case KubernetesResourceScopeCluster:
+		if namespace != "" {
+			return KubernetesResourceIdentity{}, fmt.Errorf("cluster-scoped Kubernetes resource %s/%s must not set metadata.namespace", group, kind)
+		}
+	case KubernetesResourceScopeUnknown:
+	}
+
+	return KubernetesResourceIdentity{APIGroup: group, Kind: kind, Namespace: namespace, Name: name, Scope: scope}, nil
 }
 
 func kubernetesResourceKeyName(key kubernetesResourceKey) string {
