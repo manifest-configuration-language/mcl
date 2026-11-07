@@ -56,14 +56,17 @@ func (filesystem *readTrackingFS) Open(name string) (fs.File, error) {
 		return nil, err
 	}
 
+	filesystem.record(name)
+	return file, nil
+}
+
+func (filesystem *readTrackingFS) record(name string) {
 	clean := path.Clean(name)
 	if clean != "." && fs.ValidPath(clean) {
 		filesystem.mu.Lock()
 		filesystem.seen[clean] = struct{}{}
 		filesystem.mu.Unlock()
 	}
-
-	return file, nil
 }
 
 func (filesystem *readTrackingFS) paths() []string {

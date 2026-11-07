@@ -164,6 +164,9 @@ func EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext(ctx con
 	}
 	files := newOSProjectFilesystem(root)
 	bundle, err := evaluateFileWithFilesystemMode(ctx, canonical, false, false, operation, parameters, options, files)
+	if info, statErr := os.Stat(filepath.Join(root, "mcl.lock")); statErr == nil && info.Mode().IsRegular() {
+		files.reads.record("mcl.lock")
+	}
 
 	return bundle, files.readPaths(), err
 }
@@ -1154,9 +1157,11 @@ func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fe
 		return Bundle{}, fmt.Errorf("read entry source %q: %w", canonical, err)
 	}
 	var dependencies *dependency.Lock
-	if fetchLocked {
+	if fetchLocked && files.osBacked {
+		dependencies, err = dependency.OpenLockedFetch(ctx, root, dependencyToolchainIdentity())
+	} else if fetchLocked {
 		dependencies, err = dependency.OpenLockedFetchWithFS(ctx, root, dependencyToolchainIdentity(), files.files)
-	} else if files.osBacked && update {
+	} else if files.osBacked {
 		dependencies, err = dependency.Open(ctx, root, update, dependencyToolchainIdentity())
 	} else {
 		dependencies, err = dependency.OpenWithFS(ctx, root, update, dependencyToolchainIdentity(), files.files)
