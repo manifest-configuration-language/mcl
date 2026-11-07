@@ -13,15 +13,17 @@ import (
 )
 
 func TestFetchGitCommitUsesBasicAuth(t *testing.T) {
+	t.Parallel()
+
 	var authorized atomic.Bool
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		username, password, ok := request.BasicAuth()
 		if ok && username == "git-user" && password == "git-password" {
 			authorized.Store(true)
 			writer.WriteHeader(http.StatusInternalServerError)
-			return
+		} else {
+			writer.WriteHeader(http.StatusUnauthorized)
 		}
-		writer.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
 

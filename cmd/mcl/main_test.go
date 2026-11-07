@@ -59,6 +59,8 @@ func TestDiffParsesInterspersedFlagsWithBundleCRDs(t *testing.T) {
 }
 
 func TestRenderCommandMatchesBundlePhaseOutput(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	path := filepath.Join(root, "main.mcl")
 	source := `let resource =
@@ -79,6 +81,8 @@ emit hook
 
 	for _, phase := range []string{"main", "before.create"} {
 		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+
 			var output bytes.Buffer
 			command := newRootCommand([]string{"render", path, "--phase", phase})
 			command.SetOut(&output)
