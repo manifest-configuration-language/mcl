@@ -153,6 +153,18 @@ func OpenLockedFetchWithFS(ctx context.Context, root string, identity ToolchainI
 	return openLockedFetchWithFilesystem(ctx, root, identity, newRootFilesystem(root, files))
 }
 
+// SetGitCredentialProvider configures credentials for HTTPS Git sources loaded by this lock.
+func (lock *Lock) SetGitCredentialProvider(provider GitCredentialProvider) {
+	if provider == nil {
+		lock.gitFetcher = fetchGitTree
+
+		return
+	}
+	lock.gitFetcher = func(ctx context.Context, source, revision, directory string) ([]byte, error) {
+		return fetchGitTreeWithCredentials(ctx, source, revision, directory, provider)
+	}
+}
+
 func openLockedFetchWithFilesystem(ctx context.Context, root string, identity ToolchainIdentity, files *rootFilesystem) (*Lock, error) {
 	lock, err := openWithFilesystem(ctx, root, false, identity, files)
 	if err != nil {

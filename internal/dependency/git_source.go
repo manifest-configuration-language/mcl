@@ -73,6 +73,17 @@ func GitSourceKey(source, revision, directory string) string {
 }
 
 func fetchGitTree(ctx context.Context, source, revision, directory string) ([]byte, error) {
+	return fetchGitTreeWithCredentials(ctx, source, revision, directory, nil)
+}
+
+type GitCredentials struct {
+	Username string
+	Password string
+}
+
+type GitCredentialProvider func(context.Context, string) (GitCredentials, error)
+
+func fetchGitTreeWithCredentials(ctx context.Context, source, revision, directory string, provider GitCredentialProvider) ([]byte, error) {
 	if err := ValidateGitSource(source); err != nil {
 		return nil, err
 	}
@@ -110,7 +121,17 @@ func fetchGitTree(ctx context.Context, source, revision, directory string) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("initialize in-memory Git storage: %w", err)
 	}
-	if err := fetchGitCommit(fetchContext, parsed.String(), revision, strictHTTP, repository); err != nil {
+	var auth *gitHTTP.BasicAuth
+	if provider != nil {
+		credentials, err := provider(fetchContext, parsed.String())
+		if err != nil {
+			return nil, fmt.Errorf("get Kustomize Git credentials: %w", err)
+		}
+		if credentials.Username != "" || credentials.Password != "" {
+			auth = &gitHTTP.BasicAuth{Username: credentials.Username, Password: credentials.Password}
+		}
+	}
+	if err := fetchGitCommit(fetchContext, parsed.String(), revision, strictHTTP, repository, auth); err != nil {
 		return nil, fmt.Errorf("fetch Kustomize Git source %q at %s: %w", source, revision, err)
 	}
 	commitHash := plumbing.NewHash(revision)
@@ -132,12 +153,12 @@ func fetchGitTree(ctx context.Context, source, revision, directory string) ([]by
 // fetchGitCommit requests only the pinned commit with a depth-one upload-pack request. The caller
 // supplies the redirect-disabled, byte-limited HTTP client and quota-backed object store so the
 // fetch cannot silently expand to a branch history or exceed the dependency resource limits.
-func fetchGitCommit(ctx context.Context, source, revision string, httpClient *http.Client, repository *git.Repository) (retErr error) {
+func fetchGitCommit(ctx context.Context, source, revision string, httpClient *http.Client, repository *git.Repository, auth *gitHTTP.BasicAuth) (retErr error) {
 	endpoint, err := transport.NewEndpoint(source)
 	if err != nil {
 		return fmt.Errorf("parse Kustomize Git endpoint: %w", err)
 	}
-	session, err := gitHTTP.NewClient(httpClient).NewUploadPackSession(endpoint, nil)
+	session, err := gitHTTP.NewClient(httpClient).NewUploadPackSession(endpoint, auth)
 	if err != nil {
 		return fmt.Errorf("start Kustomize Git upload-pack session: %w", err)
 	}

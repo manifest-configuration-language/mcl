@@ -44,7 +44,15 @@ type EvaluationOptions struct {
 	AllowNondeterministicOutput bool
 	KubernetesVersion           string
 	ParameterSources            map[string]ParameterSource
+	GitCredentialProvider       GitCredentialProvider
 }
+
+type GitCredentials struct {
+	Username string
+	Password string
+}
+
+type GitCredentialProvider func(context.Context, string) (GitCredentials, error)
 
 type moduleLoader struct {
 	//nolint:containedctx // Contextはモジュール評価とAdapter呼び出しの間で共有します。
@@ -1168,6 +1176,13 @@ func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fe
 	}
 	if err != nil {
 		return Bundle{}, err
+	}
+	if options.GitCredentialProvider != nil {
+		dependencies.SetGitCredentialProvider(func(ctx context.Context, source string) (dependency.GitCredentials, error) {
+			credentials, err := options.GitCredentialProvider(ctx, source)
+
+			return dependency.GitCredentials{Username: credentials.Username, Password: credentials.Password}, err
+		})
 	}
 	crdSchemaSources, err := configuredCRDSchemaSources(files)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 const (
 	helmFSTestChartSource = "charts/app"
 	helmKubeVersionOption = "kubeVersion"
+	helmConfigMapPath     = "chart/templates/configmap.yaml"
 )
 
 func TestHelmRenderReadsRootRelativeProjectFS(t *testing.T) {
@@ -65,8 +66,8 @@ func TestHelmRenderAcceptsOptionsFunctionReturningMap(t *testing.T) {
 
 	root := filepath.Clean(t.TempDir())
 	files := fstest.MapFS{
-		"chart/Chart.yaml":               &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 1.0.0\n")},
-		"chart/templates/configmap.yaml": &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n")},
+		"chart/Chart.yaml": &fstest.MapFile{Data: []byte("apiVersion: v2\nname: app\nversion: 1.0.0\n")},
+		helmConfigMapPath:  &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n")},
 	}
 	source := `import "std:helm" as helm
 fn options() -> Map<String, Any> =
@@ -173,7 +174,7 @@ func TestHelmRenderAllowNondeterministicOutput(t *testing.T) {
 
 func BenchmarkHelmRenderValidatedCacheHit(b *testing.B) {
 	const cacheKey = "benchmark-validated-helm-render-cache-hit"
-	value := helmRenderCacheValue{rendered: map[string]string{"chart/templates/configmap.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cached\n"}}
+	value := helmRenderCacheValue{rendered: map[string]string{helmConfigMapPath: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cached\n"}}
 	helmRenderedCache.set(cacheKey, value, helmRenderCacheWeight(value))
 	prepared := helmPreparedRender{cacheKey: cacheKey, cacheKeyAvailable: true}
 	b.ReportAllocs()
@@ -277,8 +278,8 @@ func TestHelmRenderUsesDeterministicNow(t *testing.T) {
 	)
 	root := filepath.Join(t.TempDir(), "project")
 	files := fstest.MapFS{
-		"chart/Chart.yaml":               &fstest.MapFile{Data: []byte("apiVersion: v2\nname: sample\nversion: 1.0.0\n")},
-		"chart/templates/configmap.yaml": &fstest.MapFile{Data: []byte(chartTemplate)},
+		"chart/Chart.yaml": &fstest.MapFile{Data: []byte("apiVersion: v2\nname: sample\nversion: 1.0.0\n")},
+		helmConfigMapPath:  &fstest.MapFile{Data: []byte(chartTemplate)},
 	}
 	baseSource := `import "std:helm" as helm
 let apiVersions: List<String> = []
@@ -324,7 +325,7 @@ emit each resources
 						continue
 					}
 					for _, origin := range entry.Origins {
-						if (origin.Kind == SourceOriginHelmExpression || origin.Kind == SourceOriginHelmBranch) && strings.HasSuffix(origin.Path, "chart/templates/configmap.yaml") {
+						if (origin.Kind == SourceOriginHelmExpression || origin.Kind == SourceOriginHelmBranch) && strings.HasSuffix(origin.Path, helmConfigMapPath) {
 							mappedTimestamp = true
 						}
 					}
