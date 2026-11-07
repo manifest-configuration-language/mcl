@@ -1,9 +1,43 @@
 package dependency
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	git "github.com/go-git/go-git/v5"
+	gitHTTP "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"github.com/go-git/go-git/v5/storage/memory"
 )
+
+func TestFetchGitCommitUsesBasicAuth(t *testing.T) {
+	var authorized atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if ok && username == "git-user" && password == "git-password" {
+			authorized.Store(true)
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	repository, err := git.Init(memory.NewStorage(), nil)
+	if err != nil {
+		t.Fatalf("git.Init() error = %v", err)
+	}
+	auth := &gitHTTP.BasicAuth{Username: "git-user", Password: "git-password"}
+	err = fetchGitCommit(t.Context(), server.URL, strings.Repeat("a", 40), server.Client(), repository, auth)
+	if err == nil {
+		t.Fatal("fetchGitCommit() succeeded without a Git upload-pack advertisement")
+	}
+	if !authorized.Load() {
+		t.Fatal("fetchGitCommit() did not send the provided BasicAuth credentials")
+	}
+}
 
 func TestValidateGitSource(t *testing.T) {
 	t.Parallel()
