@@ -139,14 +139,6 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 
 		return typedExpression{kind: typedExpressionDeferredReference, span: node.Span, paths: slices.Clone(node.Path), args: arguments}, true
 	case *NodeExpr:
-		if schemaType, exists := builtinKubernetesSchemaTypeForNode(node.Body, context); exists {
-			body, ok := typeExpression(node.Body, schemaType, context)
-			if !ok {
-				return typedExpression{}, false
-			}
-
-			return typedExpression{kind: typedExpressionNode, span: node.Span, operand: &body}, true
-		}
 		expectedNode, expectedNodeKnown := resolveStaticAlias(inferred, context.types, make(map[string]bool))
 		if expectedNodeKnown && expectedNode.Name == typeNode && len(expectedNode.Arguments) == 1 {
 			body, ok := typeExpressionWithInferredExpected(node.Body, expectedNode.Arguments[0], context)
@@ -371,7 +363,7 @@ func builtinKubernetesStaticTypeDiagnosticAtPath(expression Expr, expected Resol
 		if err != nil {
 			return err
 		}
-		if !known || actual.Name == typeAny {
+		if !known || actual.Name == typeAny || builtinKubernetesStaticTypeHasDynamicCollection(actual, expected, context.types) {
 			return nil
 		}
 		if staticTypeCompatibility(actual, expected, context.types).isDefinitelyIncompatible() {
@@ -382,7 +374,7 @@ func builtinKubernetesStaticTypeDiagnosticAtPath(expression Expr, expected Resol
 		if err != nil {
 			return err
 		}
-		if !known || actual.Name == typeAny {
+		if !known || actual.Name == typeAny || builtinKubernetesStaticTypeHasDynamicCollection(actual, expected, context.types) {
 			return nil
 		}
 		if staticTypeCompatibility(actual, expected, context.types).isDefinitelyIncompatible() {
@@ -391,6 +383,19 @@ func builtinKubernetesStaticTypeDiagnosticAtPath(expression Expr, expected Resol
 	}
 
 	return nil
+}
+
+func builtinKubernetesStaticTypeHasDynamicCollection(actual, expected ResolvedType, types map[string]ResolvedType) bool {
+	if !staticTypeContainsAny(actual) {
+		return false
+	}
+	_, actualList := staticListElement(actual, types)
+	_, expectedList := staticListElement(expected, types)
+	if actualList && expectedList {
+		return true
+	}
+
+	return isStaticMapType(actual, types) && isStaticMapType(expected, types)
 }
 
 func builtinKubernetesStaticSchemaDiagnostic(context typedEvaluationContext, apiVersion, kind string, path []string, span SourceSpan, detail string) error {

@@ -372,10 +372,14 @@ func compileFunctionDeclaration(declaration *FunctionDeclaration, state *Evaluat
 	}
 	bodyType := *signature.Type.ReturnType
 	bodyType.Span = SourceSpan{}
-	body, supported := typeExpression(definition.Expression, bodyType, typedEvaluationContext{
+	bodyContext := typedEvaluationContext{
 		runtimeEnv: state.Environment, staticTypes: bindings, types: state.Types, stack: state.Stack,
 		budget: state.Budget, sourcePath: declaration.SourcePath, module: state.Module,
-	})
+	}
+	if err := builtinKubernetesStaticExpressionDiagnostic(definition.Expression, bodyContext); err != nil {
+		return RuntimeValue{}, TypeAnalysis{}, err
+	}
+	body, supported := typeExpression(definition.Expression, bodyType, bodyContext)
 	if !supported {
 		return RuntimeValue{}, TypeAnalysis{}, sourceDiagnostic(declaration.SourcePath, functionBodySpan(definition), fmt.Errorf("expression type %T is not supported by the typed evaluator", definition.Expression))
 	}

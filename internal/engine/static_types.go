@@ -883,6 +883,9 @@ func staticTypeAssignable(inferred, expected ResolvedType, types map[string]Reso
 	if inferred.Name == typeMap && inferred.Fields != nil && expected.Name == "" && expected.Fields != nil {
 		return staticOpenMapToRecordAssignable(inferred, expected, types, analyses...)
 	}
+	if inferred.Name == typeMap && inferred.Fields == nil && expected.Name == "" && expected.Fields != nil {
+		return staticMapFieldsAssignable(inferred, expected, types, analyses...)
+	}
 	if expected.Name == typeMap && expected.Fields != nil {
 		return staticMapFieldsAssignable(inferred, expected, types, analyses...)
 	}

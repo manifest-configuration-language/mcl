@@ -19,7 +19,7 @@ const (
 func TestEvaluationOptionsSelectBuiltinKubernetesSchemaVersion(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(t.TempDir(), "project")
-	path := filepath.Join(root, "main.mcl")
+	path := filepath.Join(root, projectFileEntrypoint)
 	const source = `let workload = node:
   apiVersion: "scheduling.k8s.io/v1alpha2"
   kind: "Workload"
@@ -34,7 +34,7 @@ emit workload
 `
 	files := newProjectFilesystem(root, fstest.MapFS{
 		projectConfigFileName: &fstest.MapFile{Data: []byte("")},
-		"main.mcl":            &fstest.MapFile{Data: []byte(source)},
+		projectFileEntrypoint: &fstest.MapFile{Data: []byte(source)},
 	})
 	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.36.4"}); err != nil {
 		t.Fatalf("evaluate with Kubernetes v1.36.4: %v", err)
@@ -48,7 +48,7 @@ func TestTypedResourceMapAcceptsIntOrStringNetworkPolicyPort(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join(t.TempDir(), "project")
-	path := filepath.Join(root, "main.mcl")
+	path := filepath.Join(root, projectFileEntrypoint)
 	const source = `export fn resources(namespace: String) -> Map<String, Any> =
   networkPolicy: node:
     apiVersion: "networking.k8s.io/v1"
@@ -76,10 +76,46 @@ emit manifests.networkPolicy
 `
 	files := newProjectFilesystem(root, fstest.MapFS{
 		projectConfigFileName: &fstest.MapFile{Data: []byte("")},
-		"main.mcl":            &fstest.MapFile{Data: []byte(source)},
+		projectFileEntrypoint: &fstest.MapFile{Data: []byte(source)},
 	})
 	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.36.4"}); err != nil {
 		t.Fatalf("evaluate typed resource map with integer NetworkPolicy port: %v", err)
+	}
+}
+
+func TestTypedResourceMapRetainsRuntimeValidationForAnyFields(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "project")
+	path := filepath.Join(root, projectFileEntrypoint)
+	const source = `fn service(labels: Map<String, String>, ports: List<Map<String, Any>>) -> Map<String, Any> = node:
+  apiVersion: "v1"
+  kind: "Service"
+  metadata:
+    name: "example"
+    namespace: "default"
+    labels: labels
+  spec:
+    selector:
+      app: "example"
+    ports: ports
+
+let ports: List<Map<String, Any>> =
+  - port: 80
+    targetPort: "http"
+    protocol: "TCP"
+
+let labels: Map<String, String> =
+  app: "example"
+
+emit service(labels, ports)
+`
+	files := newProjectFilesystem(root, fstest.MapFS{
+		projectConfigFileName: &fstest.MapFile{Data: []byte("")},
+		projectFileEntrypoint: &fstest.MapFile{Data: []byte(source)},
+	})
+	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.36.4"}); err != nil {
+		t.Fatalf("evaluate resource with runtime-validated Any fields: %v", err)
 	}
 }
 
