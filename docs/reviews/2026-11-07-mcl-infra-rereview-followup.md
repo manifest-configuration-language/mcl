@@ -8,7 +8,7 @@ MCLの`flatMap`と遅延参照の組み合わせ、Argo CD共通ヘルパーのM
 
 `lists.flatMap()`は変換関数が遅延Listを返すと即時にエラーにしていました。`ref()`を使う条件式の結果は参照解決まで遅延するため、変換関数の戻り値が最終的にListでも処理できませんでした。
 
-遅延したList操作を保持する継続を追加し、参照解決後に各変換結果を検証して1段平坦化します。`filter`と`exactlyOne`も同じ継続型を使い、flatMapだけの評価経路を増やさずに既存の遅延解決へ統合します。`TestEvaluateListsFlatMapResolvesDeferredListResults`で`ref()`に依存する条件分岐の結果が元の順序で展開されることを確認します。
+遅延したList操作を保持する継続を追加し、参照解決後に各変換結果を検証して1段平坦化します。`filter`と`exactlyOne`も同じ継続型を使い、flatMapだけの評価経路を増やさずに既存の遅延解決へ統合します。`TestEvaluateListsFlatMapResolvesDeferredListResults`で`ref()`に依存する条件分岐の結果が元の順序で展開されることを確認し、遅延した非List結果はList型エラーになることも確認します。
 
 ## Argo CD共通ヘルパーのNode同一性
 
@@ -22,8 +22,18 @@ Argo CDのApplication生成で6個の位置引数を渡していたため、`nam
 
 `kurumi`と`biscuit`の`resources()`が同じ`config(cluster)`を6回計算していました。関数ブロック内で一度だけ`settings`を生成し、6つのリソース生成関数へ渡します。現在のMCL構文ではローカル変数を使う関数はブロック形式で記述し、最終値をListとして返します。
 
+## Helmの乱数関数
+
+Helm templateで乱数関数が呼び出された場合は、同じ入力で再renderしてManifest出力を比較する既存の`RenderVerified()`を維持します。乱数関数の結果を使わず出力が同じ場合は許可し、出力が変化する場合は明示的な非決定的出力許可がない限りエラーにします。
+
+## infraでの`flatMap`
+
+SeaweedFSのS3 Client生成は、現在も`lists.flatMap()`でClientごとのResource Listをまとめます。infraには`ref()`に依存してList自体を切り替える既存の設定がないため、遅延Listの挙動だけを見せる目的でManifest生成へ不要な参照依存を追加しません。MCL 0.4.5をinfraへ反映し、現在の`flatMap`利用を含む全配置のrenderで実行互換性を確認します。
+
+## Releaseとinfraへの反映
+
+MCL 0.4.5の[release workflow](https://github.com/manifest-configuration-language/mcl/actions/runs/42369553696)は成功し、[公式release archive](https://github.com/manifest-configuration-language/mcl/releases/tag/v0.4.5)のmacOS arm64 SHA256は`SHA256SUMS`と一致しました。infraの`mise.toml`と`k8s/mcl.lock`を0.4.5とrevision `fafaf663998a8ff22b3639cb31510037097307d0`へ更新しました。
+
 ## 検証
 
-`TestEvaluateListsFlatMapResolvesDeferredListResults`は、Nodeのフィールドを参照する条件分岐から返したListが、参照解決後に順序を保って平坦化されることを確認します。MCLの`mise run quality:check`はGo test、golangci-lint、gofmt、WASM checkを含めて成功しました。
-
-infraの変更対象4ファイルはMCL 0.4.4の`mcl lint`と`mcl fmt --check`を通過しました。MCL 0.4.5のrelease後にtoolchain lockを更新し、全配置のrender結果を追記します。
+MCLの`mise run quality:check`はGo test、golangci-lint、gofmt、WASM checkを含めて成功しました。infraの変更対象4ファイルはMCL 0.4.5の`mcl lint`と`mcl fmt --check`を通過しました。全135アプリ配置と、Cluster APIの`kurumi`・`biscuit`、Argo CD Applicationの`kurumi`・`biscuit`をrenderし、すべて成功しました。render中に`k8s/mcl.lock`の依存エントリーは変更されませんでした。
