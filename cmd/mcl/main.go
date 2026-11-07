@@ -260,7 +260,7 @@ func newRenderCommand() *cobra.Command {
 				return err
 			}
 
-			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
+			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters, command.OutOrStdout(), commandEvaluationOptions(command, allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("phase", "", "lifecycle phase to render")
@@ -707,7 +707,7 @@ func checkCommand(ctx context.Context, path, operation string, parameters map[st
 	return mcl.ValidateBundleOutput(bundle)
 }
 
-func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
+func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]jsontext.Value, outputWriter io.Writer, evaluationOptions mcl.EvaluationOptions) error {
 	if operation != "" && phase != "" {
 		return errors.New("--operation and --phase cannot be used together")
 	}
@@ -754,7 +754,7 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	if err != nil {
 		return err
 	}
-	_, err = os.Stdout.Write(output)
+	_, err = outputWriter.Write(output)
 
 	return err
 }

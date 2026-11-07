@@ -58,6 +58,44 @@ func TestDiffParsesInterspersedFlagsWithBundleCRDs(t *testing.T) {
 	}
 }
 
+func TestRenderCommandMatchesBundlePhaseOutput(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.mcl")
+	source := `let resource =
+  apiVersion: "v1"
+  kind: "ConfigMap"
+  metadata:
+    name: "sample"
+let hook = lifecycle.attach(resource, ["before.create"], 2, false, [])
+emit hook
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := engine.EvaluateSource(path, source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v", err)
+	}
+
+	for _, phase := range []string{"main", "before.create"} {
+		t.Run(phase, func(t *testing.T) {
+			var output bytes.Buffer
+			command := newRootCommand([]string{"render", path, "--phase", phase})
+			command.SetOut(&output)
+			if err := command.ExecuteContext(t.Context()); err != nil {
+				t.Fatalf("render command error = %v", err)
+			}
+			want, err := engine.RenderPhase(bundle, phase)
+			if err != nil {
+				t.Fatalf("RenderPhase(%q) error = %v", phase, err)
+			}
+			if !bytes.Equal(output.Bytes(), want) {
+				t.Fatalf("render command output differs from RenderPhase(%q):\n got: %s\nwant: %s", phase, output.Bytes(), want)
+			}
+		})
+	}
+}
+
 func TestParseParameterInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
