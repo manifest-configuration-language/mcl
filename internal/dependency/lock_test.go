@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 )
@@ -372,6 +374,99 @@ func TestLockedFetchReusesConfiguredCacheAcrossLocks(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(projectRoot, testLockFilename)); err != nil || string(got) != string(lockData) {
 		t.Fatalf("mcl.lock = %s, %v; want unchanged lock data", got, err)
+	}
+}
+
+func TestLockedFetchWritesSharedCacheConcurrentlyAcrossLocks(t *testing.T) {
+	t.Parallel()
+
+	const workerCount = 4
+	projectRoot := t.TempDir()
+	cacheDirectory := filepath.Join(t.TempDir(), "shared-cache")
+	identity := testToolchainIdentity()
+	source := "git+https://github.com/example/operator.git"
+	revision := "0123456789abcdef0123456789abcdef01234567"
+	directory := "."
+	archive := []byte("locked Git tree archive")
+	digest := contentutil.SHA256(archive)
+	key := GitSourceKey(source, revision, directory)
+	lockData, err := json.Marshal(lockFile{
+		Version: 3, Toolchain: identity.lock(),
+		GitSources: map[string]gitSourceLock{key: {Source: source, Revision: revision, Directory: directory, ArchiveDigest: digest}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, testLockFilename), lockData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	locks := make([]*Lock, workerCount)
+	for i := range locks {
+		lock, err := OpenLockedFetch(ctx, projectRoot, identity)
+		if err != nil {
+			t.Fatalf("open locked fetch %d: %v", i, err)
+		}
+		if err := lock.SetCacheDirectory(cacheDirectory); err != nil {
+			t.Fatalf("configure shared cache %d: %v", i, err)
+		}
+		locks[i] = lock
+	}
+
+	start := make(chan struct{})
+	fetchReady := make(chan struct{}, workerCount)
+	releaseFetch := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFetch) }) }
+	defer release()
+	for _, lock := range locks {
+		lock.gitFetcher = func(ctx context.Context, _, _, _ string) ([]byte, error) {
+			fetchReady <- struct{}{}
+			select {
+			case <-releaseFetch:
+				return append([]byte(nil), archive...), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	loaded := make([][]byte, workerCount)
+	errorsByWorker := make([]error, workerCount)
+	var workers sync.WaitGroup
+	for i, lock := range locks {
+		workers.Go(func() {
+			<-start
+			loaded[i], errorsByWorker[i] = lock.LoadGitSource(source, revision, directory)
+		})
+	}
+	close(start)
+	for range workerCount {
+		select {
+		case <-fetchReady:
+		case <-ctx.Done():
+			release()
+			workers.Wait()
+			t.Fatalf("concurrent fetchers did not reach the cache write barrier: %v", ctx.Err())
+		}
+	}
+	release()
+	workers.Wait()
+	for i, got := range loaded {
+		if errorsByWorker[i] != nil {
+			t.Fatalf("load locked Git source %d: %v", i, errorsByWorker[i])
+		}
+		if string(got) != string(archive) {
+			t.Fatalf("loaded Git source %d = %q, want %q", i, got, archive)
+		}
+	}
+	cached, err := os.ReadFile(filepath.Join(cacheDirectory, "sha256", digest))
+	if err != nil {
+		t.Fatalf("read concurrently written cache entry: %v", err)
+	}
+	if string(cached) != string(archive) {
+		t.Fatalf("concurrent cache entry = %q, want %q", cached, archive)
 	}
 }
 
