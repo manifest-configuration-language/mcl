@@ -8,7 +8,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
 )
@@ -39,6 +41,42 @@ type projectFilesystem struct {
 	root     string
 	files    fs.FS
 	osBacked bool
+	reads    *readTrackingFS
+}
+
+type readTrackingFS struct {
+	fs.FS
+	mu   sync.Mutex
+	seen map[string]struct{}
+}
+
+func (filesystem *readTrackingFS) Open(name string) (fs.File, error) {
+	file, err := filesystem.FS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+
+	clean := path.Clean(name)
+	if clean != "." && fs.ValidPath(clean) {
+		filesystem.mu.Lock()
+		filesystem.seen[clean] = struct{}{}
+		filesystem.mu.Unlock()
+	}
+
+	return file, nil
+}
+
+func (filesystem *readTrackingFS) paths() []string {
+	filesystem.mu.Lock()
+	defer filesystem.mu.Unlock()
+
+	paths := make([]string, 0, len(filesystem.seen))
+	for name := range filesystem.seen {
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+
+	return paths
 }
 
 type rootConfinedFS struct {
@@ -65,11 +103,20 @@ func (filesystem rootConfinedFS) Open(name string) (fs.File, error) {
 }
 
 func newOSProjectFilesystem(root string) *projectFilesystem {
-	return &projectFilesystem{root: filepath.Clean(root), files: os.DirFS(root), osBacked: true}
+	return newTrackedProjectFilesystem(root, os.DirFS(root), true)
 }
 
 func newProjectFilesystem(root string, files fs.FS) *projectFilesystem {
-	return &projectFilesystem{root: filepath.Clean(root), files: rootConfinedFS{files: files}}
+	return newTrackedProjectFilesystem(root, rootConfinedFS{files: files}, false)
+}
+
+func newTrackedProjectFilesystem(root string, files fs.FS, osBacked bool) *projectFilesystem {
+	reads := &readTrackingFS{FS: files, seen: make(map[string]struct{})}
+	return &projectFilesystem{root: filepath.Clean(root), files: reads, osBacked: osBacked, reads: reads}
+}
+
+func (filesystem *projectFilesystem) readPaths() []string {
+	return filesystem.reads.paths()
 }
 
 func projectFilesystemFor(root string, filesystems []*projectFilesystem) *projectFilesystem {

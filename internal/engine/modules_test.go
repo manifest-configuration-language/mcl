@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +42,43 @@ emit workload
 	}
 	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.37.1"}); err == nil || !strings.Contains(err.Error(), "no schema is registered") {
 		t.Fatalf("evaluate with Kubernetes v1.37.1 error = %v, want unavailable Workload schema", err)
+	}
+}
+
+func TestEvaluateFileReturnsOpenedProjectPaths(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	files := map[string]string{
+		projectConfigFileName: "",
+		"main.mcl": `import "./child.mcl" as child
+let resource =
+  apiVersion: "v1"
+  kind: "ConfigMap"
+  metadata:
+    name: child.name
+emit resource
+`,
+		"child.mcl": `export let name = "tracked"
+`,
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	bundle, paths, err := EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext(t.Context(), filepath.Join(root, "main.mcl"), "create", nil, EvaluationOptions{})
+	if err != nil {
+		t.Fatalf("evaluate with read tracking: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("bundle artifact count = %d, want 1", len(bundle.Artifacts))
+	}
+	for _, want := range []string{"child.mcl", "main.mcl", projectConfigFileName} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("read paths %v do not contain %q", paths, want)
+		}
 	}
 }
 

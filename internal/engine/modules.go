@@ -142,6 +142,32 @@ func EvaluateFileForOperationWithParametersAndOptionsContext(ctx context.Context
 	return evaluateFileWithParameters(ctx, path, false, operation, parameters, options)
 }
 
+// EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext evaluates an MCL file and returns project-relative paths opened during evaluation.
+func EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, []string, error) {
+	if !validOperation(operation) {
+		return Bundle{}, nil, fmt.Errorf("unknown operation %q", operation)
+	}
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, nil, err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return Bundle{}, nil, err
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return Bundle{}, nil, err
+	}
+	root, err := discoverProjectRoot(filepath.Dir(canonical))
+	if err != nil {
+		return Bundle{}, nil, err
+	}
+	files := newOSProjectFilesystem(root)
+	bundle, err := evaluateFileWithFilesystemMode(ctx, canonical, false, false, operation, parameters, options, files)
+
+	return bundle, files.readPaths(), err
+}
+
 func UpdateFile(path string) error {
 	return UpdateFileContext(context.Background(), path)
 }
@@ -1128,11 +1154,9 @@ func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fe
 		return Bundle{}, fmt.Errorf("read entry source %q: %w", canonical, err)
 	}
 	var dependencies *dependency.Lock
-	if fetchLocked && files.osBacked {
-		dependencies, err = dependency.OpenLockedFetch(ctx, root, dependencyToolchainIdentity())
-	} else if fetchLocked {
+	if fetchLocked {
 		dependencies, err = dependency.OpenLockedFetchWithFS(ctx, root, dependencyToolchainIdentity(), files.files)
-	} else if files.osBacked {
+	} else if files.osBacked && update {
 		dependencies, err = dependency.Open(ctx, root, update, dependencyToolchainIdentity())
 	} else {
 		dependencies, err = dependency.OpenWithFS(ctx, root, update, dependencyToolchainIdentity(), files.files)

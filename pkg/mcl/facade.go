@@ -131,6 +131,11 @@ func EvaluateFileForOperationWithParametersAndOptionsContext(ctx context.Context
 	return engine.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, options)
 }
 
+// EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext evaluates an MCL file and returns project-relative paths opened during evaluation.
+func EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, []string, error) {
+	return engine.EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext(ctx, path, operation, parameters, options)
+}
+
 func UpdateFile(path string) error { return engine.UpdateFile(path) }
 
 // UpdateFileContextは呼び出し元のContextを使って依存ロックを更新します。
