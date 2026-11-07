@@ -52,7 +52,7 @@ func TestNormalizeKubernetesResourceIdentityAfterValidation(t *testing.T) {
 	}}
 
 	identity, ok := kubernetesResourceIdentityOf(resource)
-	if !ok || identity.namespace != "default" {
+	if !ok || identity.namespace != defaultKubernetesNamespace {
 		t.Fatalf("kubernetesResourceIdentityOf() = %#v, %t; want default namespace", identity, ok)
 	}
 	if identity.rawNamespace != "" {
@@ -96,7 +96,7 @@ func TestResolveKubernetesResourceIdentity(t *testing.T) {
 			name:       "namespace defaults to Kubernetes default",
 			apiVersion: "v1",
 			kind:       testConfigMapKind,
-			want:       KubernetesResourceIdentity{Kind: testConfigMapKind, Namespace: "default", Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
+			want:       KubernetesResourceIdentity{Kind: testConfigMapKind, Namespace: defaultKubernetesNamespace, Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
 		},
 		{
 			name:                 "destination namespace matches explicit namespace",
@@ -110,19 +110,19 @@ func TestResolveKubernetesResourceIdentity(t *testing.T) {
 			name:       "core API group remains empty",
 			apiVersion: "v1",
 			kind:       testConfigMapKind,
-			want:       KubernetesResourceIdentity{Kind: testConfigMapKind, Namespace: "default", Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
+			want:       KubernetesResourceIdentity{Kind: testConfigMapKind, Namespace: defaultKubernetesNamespace, Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
 		},
 		{
 			name:       "named API group is retained",
 			apiVersion: "apps/v1",
 			kind:       testDeploymentKind,
-			want:       KubernetesResourceIdentity{APIGroup: "apps", Kind: testDeploymentKind, Namespace: "default", Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
+			want:       KubernetesResourceIdentity{APIGroup: "apps", Kind: testDeploymentKind, Namespace: defaultKubernetesNamespace, Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
 		},
 		{
 			name:       "API versions share one identity",
 			apiVersion: "apps/v1beta1",
 			kind:       testDeploymentKind,
-			want:       KubernetesResourceIdentity{APIGroup: "apps", Kind: testDeploymentKind, Namespace: "default", Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
+			want:       KubernetesResourceIdentity{APIGroup: "apps", Kind: testDeploymentKind, Namespace: defaultKubernetesNamespace, Name: testResourceName, Scope: KubernetesResourceScopeNamespaced},
 		},
 		{
 			name:                 "CRD namespaced scope uses destination namespace",
