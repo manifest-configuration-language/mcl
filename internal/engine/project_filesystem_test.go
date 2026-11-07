@@ -42,7 +42,7 @@ func TestEvaluateSourceReadsImportedModulesFromInjectedFilesystem(t *testing.T) 
 	entry := filepath.Join(root, "main.mcl")
 	dependency := filepath.Join(root, "child.mcl")
 	filesystem := newProjectFilesystem(root, fstest.MapFS{
-		"child.mcl": &fstest.MapFile{Data: []byte("export type Child = String")},
+		testChildModuleFilename: &fstest.MapFile{Data: []byte("export type Child = String")},
 	})
 
 	_, loaded, err := evaluateSourceWithFilesystem(t.Context(), entry, `import "./child.mcl" as child`, nil, filesystem)

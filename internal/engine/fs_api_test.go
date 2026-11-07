@@ -14,7 +14,10 @@ import (
 	"github.com/manifest-configuration-language/mcl/internal/content"
 )
 
-const projectFileEntrypoint = "main.mcl"
+const (
+	projectFileEntrypoint   = "main.mcl"
+	testChildModuleFilename = "child.mcl"
+)
 
 const (
 	testLockFilename      = "mcl.lock"
@@ -26,7 +29,7 @@ func TestEvaluateProjectSourceUsesRootRelativeFilesystem(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
 	files := fstest.MapFS{
-		"child.mcl": &fstest.MapFile{Data: []byte("export type Child = String")},
+		testChildModuleFilename: &fstest.MapFile{Data: []byte("export type Child = String")},
 	}
 
 	bundle, loaded, err := EvaluateProjectSourceWithDependenciesContext(t.Context(), root, projectFileEntrypoint, `import "./child.mcl" as child`, files, nil)

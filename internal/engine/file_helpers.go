@@ -57,6 +57,7 @@ func (filesystem *readTrackingFS) Open(name string) (fs.File, error) {
 	}
 
 	filesystem.record(name)
+
 	return file, nil
 }
 
@@ -115,6 +116,7 @@ func newProjectFilesystem(root string, files fs.FS) *projectFilesystem {
 
 func newTrackedProjectFilesystem(root string, files fs.FS, osBacked bool) *projectFilesystem {
 	reads := &readTrackingFS{FS: files, seen: make(map[string]struct{})}
+
 	return &projectFilesystem{root: filepath.Clean(root), files: reads, osBacked: osBacked, reads: reads}
 }
 

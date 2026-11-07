@@ -59,7 +59,7 @@ let resource =
     name: child.name
 emit resource
 `,
-		"child.mcl": `export let name = "tracked"
+		testChildModuleFilename: `export let name = "tracked"
 `,
 	}
 	for name, source := range files {
