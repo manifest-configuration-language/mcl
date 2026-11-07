@@ -44,6 +44,45 @@ emit workload
 	}
 }
 
+func TestTypedResourceMapAcceptsIntOrStringNetworkPolicyPort(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "project")
+	path := filepath.Join(root, "main.mcl")
+	const source = `export fn resources(namespace: String) -> Map<String, Any> =
+  networkPolicy: node:
+    apiVersion: "networking.k8s.io/v1"
+    kind: "NetworkPolicy"
+    metadata:
+      name: "example"
+      namespace: namespace
+    spec:
+      egress:
+        -
+          ports:
+            -
+              port: 53
+              protocol: "UDP"
+          to:
+            -
+              ipBlock:
+                cidr: "0.0.0.0/0"
+      podSelector: {}
+      policyTypes:
+        - "Egress"
+
+let manifests = resources("example")
+emit manifests.networkPolicy
+`
+	files := newProjectFilesystem(root, fstest.MapFS{
+		projectConfigFileName: &fstest.MapFile{Data: []byte("")},
+		"main.mcl":            &fstest.MapFile{Data: []byte(source)},
+	})
+	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.36.4"}); err != nil {
+		t.Fatalf("evaluate typed resource map with integer NetworkPolicy port: %v", err)
+	}
+}
+
 func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(t.TempDir(), "project")

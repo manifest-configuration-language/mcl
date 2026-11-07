@@ -553,6 +553,7 @@ func RenderPhaseArtifacts(bundle Bundle, phase string) ([]RenderedArtifact, erro
 		lifecycle.Cleanup = slices.Clone(lifecycle.Cleanup)
 		result = append(result, RenderedArtifact{Resource: jsontext.Value(resource.Bytes()), Lifecycle: lifecycle})
 	}
+
 	return result, nil
 }
 

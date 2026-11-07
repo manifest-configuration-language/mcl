@@ -7,9 +7,11 @@ import (
 )
 
 func TestRenderPhaseArtifactsPreservesResourceAndLifecycle(t *testing.T) {
+	t.Parallel()
+
 	source := `let resource =
-  apiVersion: "v1"
-  kind: "ConfigMap"
+  apiVersion: "coordination.k8s.io/v1"
+  kind: "Lease"
   metadata:
     name: "sample"
 
@@ -31,7 +33,7 @@ emit hook
 	if err := json.Unmarshal(artifacts[0].Resource, &resource); err != nil {
 		t.Fatalf("resource is invalid JSON: %v", err)
 	}
-	if resource["kind"] != "ConfigMap" || artifacts[0].Lifecycle.Priority != 4 || len(artifacts[0].Lifecycle.Cleanup) != 1 || artifacts[0].Lifecycle.Cleanup[0] != cleanupOnSuccess {
+	if resource["kind"] != "Lease" || artifacts[0].Lifecycle.Priority != 4 || len(artifacts[0].Lifecycle.Cleanup) != 1 || artifacts[0].Lifecycle.Cleanup[0] != cleanupOnSuccess {
 		t.Fatalf("unexpected structured artifact: resource=%v lifecycle=%+v", resource, artifacts[0].Lifecycle)
 	}
 }

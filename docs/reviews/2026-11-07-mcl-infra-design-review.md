@@ -49,3 +49,13 @@ ApplicationSetはアプリのtop-level namespaceを既定値として維持し�
 ## 検証
 
 実装完了後、MCLの関連package testと`go test ./...`をまとめて実行します。MCLのrelease workflowが成功した後、infraのLockfileをそのreleaseへ更新し、Argo CD CMPのlocked fetchとrenderを使って全配置およびCluster API配置を確認します。Kubernetes clusterへのapplyは行いません。
+
+## `int-or-string` Schema型
+
+MCL 0.4.6の公開後にinfraの全配置をCMP経由でrenderしたところ、`actions-runners/kurumi`のNetworkPolicyが整数の`port`を含む正しい設定にもかかわらず、型付き評価で失敗しました。Kubernetes OpenAPIはNetworkPolicyPortの`port`を`format: int-or-string`として公開しますが、MCLの静的型モデルが`String`だけに変換していました。
+
+`k8sschema`は`format: int-or-string`を`Int | String`として型モデルへ変換します。v1.36.4 Schemaを選択し、整数の`NetworkPolicyPort`を`Map<String, Any>`から生成する回帰テストで、静的Schema検査と型付き評価が通ることを確認します。
+
+## 実装結果
+
+MCL本体の品質確認、MCL 0.4.7のrelease workflow、infraの135アプリ配置とkurumi・biscuitのCluster API配置に対するCMPのlocked fetchおよびrenderを、完了後に記録します。Kubernetes clusterへのapplyは行いません。

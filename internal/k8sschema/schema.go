@@ -18,9 +18,11 @@ import (
 )
 
 const (
-	maxDepth         = 128
-	kindNever        = "Never"
-	schemaTypeObject = "object"
+	maxDepth          = 128
+	kindNever         = "Never"
+	schemaTypeInteger = "integer"
+	schemaTypeObject  = "object"
+	schemaTypeString  = "string"
 )
 
 var builtinValidators sync.Map //nolint:gochecknoglobals
@@ -147,7 +149,7 @@ func normalizeKubernetesSchemaExtensions(value any) {
 	switch value := value.(type) {
 	case map[string]any:
 		if value["x-kubernetes-int-or-string"] == true || value["format"] == "int-or-string" {
-			value["type"] = []string{"string", "integer"}
+			value["type"] = []string{schemaTypeString, schemaTypeInteger}
 			delete(value, "x-kubernetes-int-or-string")
 			delete(value, "format")
 		}
@@ -342,6 +344,9 @@ func openAPISchema(schema *spec.Schema, definitions spec.Definitions, refs map[s
 		return *resolved
 	}
 	types := []string(schema.Type)
+	if schema.Format == "int-or-string" {
+		types = []string{schemaTypeInteger, schemaTypeString}
+	}
 	if len(types) == 0 && len(schema.Properties) > 0 {
 		types = []string{schemaTypeObject}
 	}
@@ -390,11 +395,11 @@ func openAPISchemaKind(kind string, schema *spec.Schema, definitions spec.Defini
 		return Type{Kind: "Null"}
 	case "boolean":
 		return Type{Kind: "Bool"}
-	case "integer":
+	case schemaTypeInteger:
 		return Type{Kind: "Int"}
 	case "number":
 		return Type{Options: []Type{{Kind: "Int"}, {Kind: "Decimal"}}}
-	case "string":
+	case schemaTypeString:
 		return Type{Kind: "String"}
 	case "array":
 		element := Type{Kind: "Any"}
@@ -449,11 +454,11 @@ func structuralSchema(schema *structuralschema.Structural, depth int) Type {
 		inferred = Type{Kind: "Null"}
 	case "boolean":
 		inferred = Type{Kind: "Bool"}
-	case "integer":
+	case schemaTypeInteger:
 		inferred = Type{Kind: "Int"}
 	case "number":
 		inferred = Type{Options: []Type{{Kind: "Int"}, {Kind: "Decimal"}}}
-	case "string":
+	case schemaTypeString:
 		inferred = Type{Kind: "String"}
 	case "array":
 		element := structuralSchema(schema.Items, depth+1)
