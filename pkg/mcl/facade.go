@@ -214,6 +214,13 @@ func RenderPhaseWithSourceMap(bundle Bundle, phase string) ([]byte, ManifestSour
 
 type RenderedFile = engine.RenderedFile
 
+type RenderedArtifact = engine.RenderedArtifact
+
+// RenderPhaseArtifactsはLifecycle情報を保った構造化Resourceを返します。
+func RenderPhaseArtifacts(bundle Bundle, phase string) ([]RenderedArtifact, error) {
+	return engine.RenderPhaseArtifacts(bundle, phase)
+}
+
 func RenderOperation(bundle Bundle, operation string) ([]RenderedFile, error) {
 	return engine.RenderOperation(bundle, operation)
 }

@@ -526,6 +526,36 @@ type RenderedFile struct {
 	Content []byte
 }
 
+// RenderedArtifact pairs a Kubernetes resource with the Lifecycle that selected it for rendering.
+type RenderedArtifact struct {
+	Resource  jsontext.Value
+	Lifecycle Lifecycle
+}
+
+// RenderPhaseArtifacts returns phase resources with their Lifecycle metadata without a YAML round trip.
+func RenderPhaseArtifacts(bundle Bundle, phase string) ([]RenderedArtifact, error) {
+	if !validLifecycleEvent(phase) {
+		return nil, fmt.Errorf("unknown output phase %q", phase)
+	}
+	plan := NewBundleOutputPlan(bundle)
+	if err := plan.validatePhase(phase); err != nil {
+		return nil, err
+	}
+	artifacts := plan.artifacts[phase]
+	result := make([]RenderedArtifact, 0, len(artifacts))
+	for _, indexed := range artifacts {
+		var resource bytes.Buffer
+		if err := appendJSONValue(&resource, indexed.artifact.Value); err != nil {
+			return nil, fmt.Errorf("render artifact %d as JSON: %w", indexed.index+1, err)
+		}
+		lifecycle := indexed.artifact.Lifecycle
+		lifecycle.Events = slices.Clone(lifecycle.Events)
+		lifecycle.Cleanup = slices.Clone(lifecycle.Cleanup)
+		result = append(result, RenderedArtifact{Resource: jsontext.Value(resource.Bytes()), Lifecycle: lifecycle})
+	}
+	return result, nil
+}
+
 type lifecycleManifest struct {
 	Operation string                    `json:"operation"`
 	Artifacts []lifecycleArtifactRecord `json:"artifacts"`
