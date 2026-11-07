@@ -44,6 +44,12 @@ type Bundle = engine.Bundle
 // EvaluationOptions controls execution behavior for an MCL evaluation.
 type EvaluationOptions = engine.EvaluationOptions
 
+// GitCredentials contains credentials for an HTTPS Git source.
+type GitCredentials = engine.GitCredentials
+
+// GitCredentialProvider retrieves credentials for a specific HTTPS Git source.
+type GitCredentialProvider = engine.GitCredentialProvider
+
 type ParameterSource = engine.ParameterSource
 
 type ParameterLocation = engine.ParameterLocation
