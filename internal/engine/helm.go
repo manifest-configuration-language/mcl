@@ -563,6 +563,51 @@ type helmRenderOptions struct {
 	allowNondeterministicOutput bool
 }
 
+var helmRenderOperations = []string{operationCreate, operationUpdate, operationDelete, operationRollback, phaseVerify}
+
+func helmRenderOptionType(name string) (ResolvedType, bool) {
+	stringType := ResolvedType{Name: typeString}
+	anyType := ResolvedType{Name: typeAny}
+	mapType := ResolvedType{Name: typeMap, Element: &anyType}
+	stringList := ResolvedType{Name: typeList, Element: &stringType}
+	resourceList := ResolvedType{Name: typeList, Element: &mapType}
+	switch name {
+	case paramValues, "lookupResources":
+		if name == paramValues {
+			return mapType, true
+		}
+
+		return resourceList, true
+	case paramRevision:
+		return ResolvedType{Name: typeInt}, true
+	case helmOptionReleaseName, helmOptionNamespace, helmOptionKubeVersion, helmOptionVersion, "now":
+		return stringType, true
+	case helmOptionOperation:
+		operations := make([]ResolvedType, 0, len(helmRenderOperations))
+		for _, operation := range helmRenderOperations {
+			operations = append(operations, ResolvedType{Name: typeString, StringLiteral: operation, StringLiteralKnown: true})
+		}
+
+		return ResolvedType{Options: operations}, true
+	case "apiVersions":
+		return stringList, true
+	default:
+		return ResolvedType{}, false
+	}
+}
+
+// HelmRenderOptionFieldsは静的検査と補完で使うoption名と型を返します。
+func HelmRenderOptionFields() []TypeField {
+	names := []string{paramValues, paramRevision, helmOptionReleaseName, helmOptionNamespace, helmOptionOperation, helmOptionKubeVersion, helmOptionVersion, "now", "apiVersions", "lookupResources"}
+	fields := make([]TypeField, 0, len(names))
+	for _, name := range names {
+		fieldType, _ := helmRenderOptionType(name)
+		fields = append(fields, TypeField{Name: name, Type: fieldType, Optional: true})
+	}
+
+	return fields
+}
+
 func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 	options := helmRenderOptions{releaseName: "mcl", namespace: "default", operation: operationCreate, revision: 1, values: make(map[string]any)}
 	for _, entry := range value.Entries() {
@@ -590,14 +635,14 @@ func helmOptions(value RuntimeValue) (helmRenderOptions, error) {
 				return options, errors.New("helm.render option revision must be a positive Int")
 			}
 			options.revision = revision
-		case "releaseName", "namespace", "operation", "kubeVersion", "version", "now":
+		case helmOptionReleaseName, helmOptionNamespace, helmOptionOperation, helmOptionKubeVersion, helmOptionVersion, "now":
 			if entry.Value.Kind() != String {
 				return options, fmt.Errorf("helm.render option %s must be a String", entry.Key)
 			}
 			switch entry.Key {
 			case "releaseName":
 				options.releaseName = entry.Value.TextValue()
-			case "namespace":
+			case helmOptionNamespace:
 				options.namespace = entry.Value.TextValue()
 			case "operation":
 				switch entry.Value.TextValue() {

@@ -252,8 +252,12 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 			return fmt.Errorf("%s: %w", check.Message, err)
 		}
 	}
+	kubernetesVersion := ""
+	if state.Module != nil {
+		kubernetesVersion = state.Module.KubernetesVersion
+	}
 	for index := range bundle.Artifacts {
-		annotateBuiltinSchemaProvenanceRuntime(&bundle.Artifacts[index].Value)
+		annotateBuiltinSchemaProvenanceRuntime(&bundle.Artifacts[index].Value, kubernetesVersion)
 	}
 	var validationContext context.Context
 	if state.Module != nil {
@@ -357,7 +361,7 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 	}
 	for index := range bundle.Artifacts {
 		artifact := &bundle.Artifacts[index]
-		if err := validateBuiltinKubernetesResource(artifact.Value, customSchemas); err != nil {
+		if err := validateBuiltinKubernetesResource(artifact.Value, customSchemas, kubernetesVersion); err != nil {
 			metadata := artifact.Value.Metadata()
 
 			return sourceDiagnostic(metadata.SourcePath, metadata.Span, fmt.Errorf("emitted value %d: %w", index+1, err))

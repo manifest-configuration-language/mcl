@@ -741,7 +741,7 @@ func findHelmCompletionTargetInExpr(expression Expr, aliases map[string]bool, de
 				if chartOK {
 					if optionMap, ok := options.(*MapExpr); ok {
 						for _, entry := range optionMap.Entries {
-							if entry.Key != "values" {
+							if entry.Key != paramValues {
 								continue
 							}
 							if fieldPath, existing, found := locateCompletionMap(entry.Value, nil, placeholder); found {

@@ -753,8 +753,17 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 	case fnManifestLoadOne:
 		stringArguments = 1
 	}
-	for index := range stringArguments {
-		if known[index] && argumentTypes[index].Name != typeString && argumentTypes[index].Name != typeAny {
+	for index, isKnown := range known {
+		if index >= stringArguments {
+			break
+		}
+		if !isKnown {
+			continue
+		}
+		if index >= len(argumentTypes) {
+			return ResolvedType{}, false, fmt.Errorf("%s argument analysis is incomplete", item.name)
+		}
+		if argumentTypes[index].Name != typeString && argumentTypes[index].Name != typeAny {
 			return ResolvedType{}, false, fmt.Errorf("%s expects String arguments", item.name)
 		}
 	}
@@ -762,6 +771,16 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 		optionsType := argumentTypes[1]
 		if optionsType.Name != typeMap && optionsType.Fields == nil && !optionsType.OpenRecord && optionsType.Name != typeAny {
 			return ResolvedType{}, false, errors.New("helm.render options must be a Map")
+		}
+		if optionsType.Fields != nil {
+			if err := validateStaticHelmOptions(optionsType); err != nil {
+				return ResolvedType{}, false, err
+			}
+		}
+		if mapExpr, ok := arguments[1].(*MapExpr); ok {
+			if err := validateStaticHelmOptionEntries(mapExpr); err != nil {
+				return ResolvedType{}, false, err
+			}
 		}
 	}
 	anyType := ResolvedType{Name: typeAny}
@@ -776,6 +795,50 @@ func inferStaticAdapterBuiltin(item builtin, arguments []Expr, argumentTypes []R
 	}
 
 	return ResolvedType{Name: typeList, Element: &anyType}, true, nil
+}
+
+func validateStaticHelmOptions(options ResolvedType) error {
+	for _, field := range options.Fields {
+		expected, exists := helmRenderOptionType(field.Name)
+		if !exists {
+			return fmt.Errorf("helm.render has no option named %q", field.Name)
+		}
+		matches, compatible := staticTypeAssignable(field.Type, expected, nil)
+		if compatible && !matches {
+			return fmt.Errorf("helm.render option %s must be %s, got %s", field.Name, staticTypeName(expected), staticTypeName(field.Type))
+		}
+	}
+
+	return nil
+}
+
+func validateStaticHelmOptionEntries(options *MapExpr) error {
+	for _, entry := range options.Entries {
+		if entry.KeyExpr != nil {
+			continue
+		}
+		expected, exists := helmRenderOptionType(entry.Key)
+		if !exists {
+			return fmt.Errorf("helm.render has no option named %q", entry.Key)
+		}
+		actual, known, err := inferStaticExprType(entry.Value, nil, nil)
+		if err != nil {
+			return fmt.Errorf("helm.render option %s: %w", entry.Key, err)
+		}
+		if known {
+			matches, compatible := staticTypeAssignable(actual, expected, nil)
+			if compatible && !matches {
+				return fmt.Errorf("helm.render option %s must be %s, got %s", entry.Key, staticTypeName(expected), staticTypeName(actual))
+			}
+		}
+		if entry.Key == helmOptionOperation {
+			if operation, ok := entry.Value.(*StringExpr); ok && !slices.Contains(helmRenderOperations, operation.Value) {
+				return errors.New("helm.render option operation must be create, update, delete, rollback, or verify")
+			}
+		}
+	}
+
+	return nil
 }
 
 func inferStaticExprCallArgument(argument Expr, expected ResolvedType, bindings map[string]TypeAnalysis, types map[string]ResolvedType, analyses ...*TypeAnalysisContext) (ResolvedType, bool, error) {

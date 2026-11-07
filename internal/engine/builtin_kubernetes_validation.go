@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[customResourceDefinitionKey]struct{}) error {
+func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[customResourceDefinitionKey]struct{}, kubernetesVersion string) error {
 	value = runtimeMapContents(value)
 	if value.Kind() != Map {
 		return nil
@@ -32,7 +32,11 @@ func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[cus
 		return nil
 	}
 	apiVersion, _ := valueStringField(converted, "apiVersion")
-	if !k8sschema.HasBuiltinSchema(apiVersion, identity.kind) {
+	_, hasBuiltinSchema, err := k8sschema.BuiltinOpenAPIForVersion(kubernetesVersion, apiVersion, identity.kind)
+	if err != nil {
+		return fmt.Errorf("load Kubernetes resource schema for %s (%s): %w", identity.kind, apiVersion, err)
+	}
+	if !hasBuiltinSchema {
 		group, version, hasGroup := strings.Cut(apiVersion, "/")
 		if !hasGroup {
 			version = group
@@ -48,7 +52,7 @@ func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[cus
 	if err != nil {
 		return fmt.Errorf("convert Kubernetes resource %s: %w", identity.kind, err)
 	}
-	validationErrors := k8sschema.ValidateBuiltin(apiVersion, identity.kind, instance)
+	validationErrors := k8sschema.ValidateBuiltinForVersion(kubernetesVersion, apiVersion, identity.kind, instance)
 	if len(validationErrors) == 0 {
 		return nil
 	}

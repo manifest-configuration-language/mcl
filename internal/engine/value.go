@@ -67,6 +67,7 @@ type ModuleContext struct {
 	Dependencies                *dependency.Lock
 	HelmOperation               string
 	AllowNondeterministicOutput bool
+	KubernetesVersion           string
 	Analysis                    *TypeAnalysisContext
 	CRDSchemas                  map[customResourceDefinitionKey]crdVersionSchema
 }

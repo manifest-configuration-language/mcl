@@ -128,6 +128,9 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 	if fields := helmSchemaFieldCompletions(ctx, position, lines, runes, end, projectRoot, entrypoint, projectFiles, sourcePath); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
+	if fields := helmRenderOptionCompletions(position, lines, runes, end); len(fields) != 0 {
+		items = append(items, fields...)
+	}
 	if fields := kubernetesSchemaFieldCompletions(position, lines, runes, end); len(fields) != 0 {
 		items = appendFieldCompletions(items, fields)
 	}
@@ -141,6 +144,97 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 	}
 
 	return filtered
+}
+
+func helmRenderOptionCompletions(position Position, lines []string, runes []rune, cursor int) []CompletionItem {
+	line := lines[position.Line]
+	const placeholder = "__mcl_helm_render_option_completion__"
+	start := cursor
+	for start > 0 && IsIdentifierRune(runes[start-1]) {
+		start--
+	}
+	lineRunes := []rune(line)
+	replacement := placeholder
+	hasAssignment := cursor < len(lineRunes) && lineRunes[cursor] == ':'
+	if !hasAssignment {
+		replacement += ": null"
+	}
+	candidateLines := slices.Clone(lines)
+	candidateLines[position.Line] = string(lineRunes[:start]) + replacement + string(lineRunes[cursor:])
+	index, err := AnalyzeSource(strings.Join(candidateLines, "\n"))
+	if err != nil {
+		return nil
+	}
+	insideOptions := false
+	usedOptions := make(map[string]bool)
+	VisitModuleExpressions(index.Module, func(expression syntax.Expr) {
+		call, ok := expression.(*syntax.CallExpr)
+		if !ok || len(call.Arguments) != 2 {
+			return
+		}
+		callee, ok := call.Callee.(*syntax.ReferenceExpr)
+		if !ok || callee.Name != "helm.render" {
+			return
+		}
+		options, ok := call.Arguments[1].(*syntax.MapExpr)
+		if !ok {
+			return
+		}
+		if !slices.ContainsFunc(options.Entries, func(entry syntax.ExprMapEntry) bool { return entry.Key == placeholder }) {
+			return
+		}
+		insideOptions = true
+		for _, entry := range options.Entries {
+			if entry.Key == placeholder {
+				continue
+			}
+			usedOptions[entry.Key] = true
+		}
+	})
+	if !insideOptions {
+		return nil
+	}
+
+	fields := engine.HelmRenderOptionFields()
+	items := make([]CompletionItem, 0, len(fields))
+	for _, field := range fields {
+		if usedOptions[field.Name] {
+			continue
+		}
+		insertText := field.Name + ": "
+		if hasAssignment {
+			insertText = field.Name
+		}
+		items = append(items, CompletionItem{
+			Label: field.Name, Kind: 10, InsertText: insertText, Detail: completionTypeName(field.Type),
+		})
+	}
+
+	return items
+}
+
+func completionTypeName(typeExpr engine.ResolvedType) string {
+	if len(typeExpr.Options) != 0 {
+		values := make([]string, 0, len(typeExpr.Options))
+		for _, option := range typeExpr.Options {
+			if option.StringLiteralKnown {
+				values = append(values, option.StringLiteral)
+			}
+		}
+		if len(values) != 0 {
+			return strings.Join(values, " | ")
+		}
+
+		return "String"
+	}
+	if typeExpr.Name == "List" && typeExpr.Element != nil {
+		return "List<" + completionTypeName(*typeExpr.Element) + ">"
+	}
+	if typeExpr.Name == "Map" && typeExpr.Element != nil {
+		return "Map<String, " + completionTypeName(*typeExpr.Element) + ">"
+	}
+
+	return typeExpr.Name
 }
 
 func namedArgumentCompletions(source string, position Position, prefixStart int, entrypoint string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {

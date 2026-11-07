@@ -64,7 +64,7 @@ emit explicitNamespace
 			crd := strings.Replace(projectCRD("example.test", "Widget", "widgets"), "scope: Namespaced", "scope: "+test.scope, 1)
 			identity := dependencyToolchainIdentity()
 			lockData, err := json.Marshal(map[string]any{
-				"version": 3,
+				testLockVersionField: 3,
 				"toolchain": map[string]string{
 					"mcl": identity.MCL, testLockRevisionField: identity.Revision, "modified": identity.Modified,
 					"go": identity.Go, "helm": identity.Helm, "kustomizeAPI": identity.KustomizeAPI, "kustomizeKYAML": identity.KustomizeKYAML,

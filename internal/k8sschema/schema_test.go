@@ -6,6 +6,7 @@ const (
 	apiVersionField = "apiVersion"
 	metadataField   = "metadata"
 	objectName      = "sample"
+	workloadKind    = "Workload"
 )
 
 func TestBuiltinOpenAPILimitsResourcesToSupportedKubernetesVersion(t *testing.T) {
@@ -20,6 +21,50 @@ func TestBuiltinOpenAPILimitsResourcesToSupportedKubernetesVersion(t *testing.T)
 		t.Fatalf("load removed schema: %v", err)
 	} else if exists {
 		t.Fatal("removed extensions/v1beta1 Ingress schema is available")
+	}
+}
+
+func TestBuiltinOpenAPISelectsTargetKubernetesVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		version    string
+		apiVersion string
+		kind       string
+		want       bool
+	}{
+		{version: "v1.36.4", apiVersion: "scheduling.k8s.io/v1alpha2", kind: workloadKind, want: true},
+		{version: "v1.36.4", apiVersion: "scheduling.k8s.io/v1beta1", kind: workloadKind, want: false},
+		{version: "v1.37.1", apiVersion: "scheduling.k8s.io/v1alpha2", kind: workloadKind, want: false},
+		{version: "v1.37.1", apiVersion: "scheduling.k8s.io/v1beta1", kind: workloadKind, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.version+"/"+test.apiVersion, func(t *testing.T) {
+			t.Parallel()
+			_, exists, err := BuiltinOpenAPIForVersion(test.version, test.apiVersion, test.kind)
+			if err != nil {
+				t.Fatalf("load %s schema: %v", test.version, err)
+			}
+			if exists != test.want {
+				t.Fatalf("schema availability = %t, want %t", exists, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeKubernetesVersion(t *testing.T) {
+	t.Parallel()
+	if got, err := NormalizeKubernetesVersion(""); err != nil || got != DefaultKubernetesVersion {
+		t.Fatalf(`NormalizeKubernetesVersion("") = (%q, %v), want default %q`, got, err, DefaultKubernetesVersion)
+	}
+	if _, err := NormalizeKubernetesVersion("v1.35.0"); err == nil {
+		t.Fatal("NormalizeKubernetesVersion accepted a version without an embedded schema")
+	}
+}
+
+func TestHasBuiltinSchemaForVersionReturnsFalseForUnsupportedVersion(t *testing.T) {
+	t.Parallel()
+	if HasBuiltinSchemaForVersion("v1.35.0", "v1", "Pod") {
+		t.Fatal("HasBuiltinSchemaForVersion returned true for a version without an embedded schema")
 	}
 }
 

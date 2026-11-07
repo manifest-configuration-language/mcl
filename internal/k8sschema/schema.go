@@ -42,14 +42,19 @@ type Type struct {
 
 // ValidateBuiltinは組み込みKubernetes Schemaでインスタンスを検証します。
 func ValidateBuiltin(apiVersion, kind string, value any) []error {
-	resource, exists, err := BuiltinOpenAPI(apiVersion, kind)
+	return ValidateBuiltinForVersion(DefaultKubernetesVersion, apiVersion, kind, value)
+}
+
+// ValidateBuiltinForVersionは指定した組み込みKubernetes Schemaでinstanceを検証します。
+func ValidateBuiltinForVersion(version, apiVersion, kind string, value any) []error {
+	resource, exists, err := BuiltinOpenAPIForVersion(version, apiVersion, kind)
 	if err != nil {
 		return []error{err}
 	}
 	if !exists {
 		return nil
 	}
-	key := apiVersion + "/" + kind
+	key := resourceVersionKey(version, apiVersion, kind)
 	compiled, exists := builtinValidators.Load(key)
 	if !exists {
 		created, err := compileBuiltinValidator(resource.Schema, resource.Definitions)
@@ -78,9 +83,23 @@ func ValidateBuiltin(apiVersion, kind string, value any) []error {
 
 // HasBuiltinSchemaは組み込みSchemaが指定したGVKに登録されているかを返します。
 func HasBuiltinSchema(apiVersion, kind string) bool {
-	_, exists, err := BuiltinOpenAPI(apiVersion, kind)
+	return HasBuiltinSchemaForVersion(DefaultKubernetesVersion, apiVersion, kind)
+}
 
-	return exists || err != nil
+// HasBuiltinSchemaForVersionは指定したCatalogにresource Schemaがあるか返します。
+func HasBuiltinSchemaForVersion(version, apiVersion, kind string) bool {
+	_, exists, _ := BuiltinOpenAPIForVersion(version, apiVersion, kind)
+
+	return exists
+}
+
+func resourceVersionKey(version, apiVersion, kind string) string {
+	normalized, err := NormalizeKubernetesVersion(version)
+	if err != nil {
+		return version + "/" + apiVersion + "/" + kind
+	}
+
+	return normalized + "/" + apiVersion + "/" + kind
 }
 
 func compileBuiltinValidator(resource *spec.Schema, definitions spec.Definitions) (*builtinValidator, error) {
@@ -238,7 +257,12 @@ type Field struct {
 }
 
 func Builtin(apiVersion, kind string) (Type, bool) {
-	resource, exists, err := BuiltinOpenAPI(apiVersion, kind)
+	return BuiltinForVersion(DefaultKubernetesVersion, apiVersion, kind)
+}
+
+// BuiltinForVersion returns the structural type for a resource in the selected catalog.
+func BuiltinForVersion(version, apiVersion, kind string) (Type, bool) {
+	resource, exists, err := BuiltinOpenAPIForVersion(version, apiVersion, kind)
 	if err != nil || !exists {
 		return Type{}, false
 	}

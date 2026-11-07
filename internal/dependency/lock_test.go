@@ -17,6 +17,11 @@ import (
 	contentutil "github.com/manifest-configuration-language/mcl/internal/content"
 )
 
+const (
+	testLockFilename   = "mcl.lock"
+	testManifestSource = "https://example.test/deployment.yaml"
+)
+
 func TestCheckRemoteRedirect(t *testing.T) {
 	t.Parallel()
 
@@ -99,7 +104,7 @@ func TestOpenRejectsMismatchedToolchainForCurrentLockVersions(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = OpenWithFS(t.Context(), "/virtual/project", false, testToolchainIdentity(), fstest.MapFS{
-				"mcl.lock": {Data: lockData},
+				testLockFilename: {Data: lockData},
 			})
 			if err == nil || !strings.Contains(err.Error(), "toolchain does not match") {
 				t.Fatalf("OpenWithFS() error = %v, want toolchain mismatch", err)
@@ -120,7 +125,7 @@ func TestLoadManifestRejectsTamperedOfflineCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := "https://example.test/deployment.yaml"
+	source := testManifestSource
 	digest := contentutil.SHA256([]byte("expected manifest"))
 	lock.manifests[source] = digest
 	if err := lock.Save(); err != nil {
@@ -148,7 +153,7 @@ func TestLoadManifestRejectsTamperedOfflineCache(t *testing.T) {
 func TestLoadManifestReadsLockAndCacheFromInjectedFilesystem(t *testing.T) {
 	t.Parallel()
 	identity := testToolchainIdentity()
-	source := "https://example.test/deployment.yaml"
+	source := testManifestSource
 	content := []byte("apiVersion: v1\nkind: ConfigMap\n")
 	digest := contentutil.SHA256(content)
 	lockData, err := json.Marshal(lockFile{
@@ -159,7 +164,7 @@ func TestLoadManifestReadsLockAndCacheFromInjectedFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := fstest.MapFS{
-		"mcl.lock":                    &fstest.MapFile{Data: lockData},
+		testLockFilename:              &fstest.MapFile{Data: lockData},
 		".mcl/cache/sha256/" + digest: &fstest.MapFile{Data: content},
 	}
 	lock, err := OpenWithFS(t.Context(), "/virtual/project", false, identity, files)
@@ -172,6 +177,249 @@ func TestLoadManifestReadsLockAndCacheFromInjectedFilesystem(t *testing.T) {
 	}
 	if string(loaded) != string(content) {
 		t.Fatalf("loaded manifest = %q, want %q", loaded, content)
+	}
+}
+
+func TestLockedFetchUsesVerifiedCacheWithoutChangingLock(t *testing.T) {
+	t.Parallel()
+	identity := testToolchainIdentity()
+	source := testManifestSource
+	content := []byte("apiVersion: v1\nkind: ConfigMap\n")
+	digest := contentutil.SHA256(content)
+	lockData, err := json.Marshal(lockFile{
+		Version: 3, Toolchain: identity.lock(),
+		Manifests: map[string]string{source: digest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &atomicMapFS{files: fstest.MapFS{
+		testLockFilename:              &fstest.MapFile{Data: lockData},
+		".mcl/cache/sha256/" + digest: &fstest.MapFile{Data: content},
+	}}
+	lock, err := OpenLockedFetchWithFS(t.Context(), "/virtual/project", identity, files)
+	if err != nil {
+		t.Fatalf("open locked fetch filesystem: %v", err)
+	}
+	if lock.IsUpdate() || !lock.IsLockedFetch() {
+		t.Fatalf("lock modes = update:%t fetch-locked:%t, want false/true", lock.IsUpdate(), lock.IsLockedFetch())
+	}
+	loaded, err := lock.LoadManifest(source)
+	if err != nil {
+		t.Fatalf("load manifest from cache: %v", err)
+	}
+	if string(loaded) != string(content) {
+		t.Fatalf("loaded manifest = %q, want %q", loaded, content)
+	}
+	if got := files.files[testLockFilename].Data; string(got) != string(lockData) {
+		t.Fatalf("locked fetch changed mcl.lock: got %s, want %s", got, lockData)
+	}
+}
+
+func TestLockedFetchFillsCacheFromTheLockedContentWithoutChangingLock(t *testing.T) {
+	t.Parallel()
+	identity := testToolchainIdentity()
+	source := testManifestSource
+	content := []byte("apiVersion: v1\nkind: ConfigMap\n")
+	digest := contentutil.SHA256(content)
+	lockData, err := json.Marshal(lockFile{Version: 3, Toolchain: identity.lock(), Manifests: map[string]string{source: digest}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &atomicMapFS{files: fstest.MapFS{testLockFilename: &fstest.MapFile{Data: lockData}}}
+	lock, err := OpenLockedFetchWithFS(t.Context(), "/virtual/project", identity, files)
+	if err != nil {
+		t.Fatalf("open locked fetch filesystem: %v", err)
+	}
+	fetchCount := 0
+	lock.remoteFetcher = func(_ context.Context, gotSource, category string) ([]byte, error) {
+		fetchCount++
+		if gotSource != source || category != "manifest" {
+			t.Fatalf("fetch arguments = (%q, %q), want (%q, manifest)", gotSource, category, source)
+		}
+
+		return append([]byte(nil), content...), nil
+	}
+	for range 2 {
+		loaded, err := lock.LoadManifest(source)
+		if err != nil {
+			t.Fatalf("load manifest on pass %d: %v", fetchCount+1, err)
+		}
+		if string(loaded) != string(content) {
+			t.Fatalf("loaded manifest = %q, want %q", loaded, content)
+		}
+	}
+	if fetchCount != 1 {
+		t.Fatalf("remote fetch count = %d, want one fetch followed by a cache hit", fetchCount)
+	}
+	if got := files.files[".mcl/cache/sha256/"+digest].Data; string(got) != string(content) {
+		t.Fatalf("cached content = %q, want %q", got, content)
+	}
+	if got := files.files[testLockFilename].Data; string(got) != string(lockData) {
+		t.Fatalf("locked fetch changed mcl.lock: got %s, want %s", got, lockData)
+	}
+}
+
+func TestLockedFetchLoadsPinnedGitSourceIntoCache(t *testing.T) {
+	t.Parallel()
+
+	identity := testToolchainIdentity()
+	source := "git+https://github.com/example/operator.git"
+	revision := "0123456789abcdef0123456789abcdef01234567"
+	directory := "config/crd/bases"
+	archive := []byte("locked Git tree archive")
+	digest := contentutil.SHA256(archive)
+	key := GitSourceKey(source, revision, directory)
+	lockData, err := json.Marshal(lockFile{
+		Version: 3, Toolchain: identity.lock(),
+		GitSources: map[string]gitSourceLock{key: {Source: source, Revision: revision, Directory: directory, ArchiveDigest: digest}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &atomicMapFS{files: fstest.MapFS{testLockFilename: &fstest.MapFile{Data: lockData}}}
+	lock, err := OpenLockedFetchWithFS(t.Context(), "/virtual/project", identity, files)
+	if err != nil {
+		t.Fatalf("open locked fetch filesystem: %v", err)
+	}
+	fetchCount := 0
+	lock.gitFetcher = func(_ context.Context, gotSource, gotRevision, gotDirectory string) ([]byte, error) {
+		fetchCount++
+		if gotSource != source || gotRevision != revision || gotDirectory != directory {
+			t.Fatalf("Git fetch arguments = (%q, %q, %q), want locked source, revision, and directory", gotSource, gotRevision, gotDirectory)
+		}
+
+		return append([]byte(nil), archive...), nil
+	}
+	for range 2 {
+		loaded, err := lock.LoadGitSource(source, revision, directory)
+		if err != nil {
+			t.Fatalf("load locked Git source: %v", err)
+		}
+		if string(loaded) != string(archive) {
+			t.Fatalf("loaded Git archive = %q, want %q", loaded, archive)
+		}
+	}
+	if fetchCount != 1 {
+		t.Fatalf("Git fetch count = %d, want one fetch followed by a cache hit", fetchCount)
+	}
+	if got := files.files[testLockFilename].Data; string(got) != string(lockData) {
+		t.Fatalf("locked fetch changed mcl.lock: got %s, want %s", got, lockData)
+	}
+}
+
+func TestLockedFetchLoadsPinnedOCIChartIntoCache(t *testing.T) {
+	t.Parallel()
+
+	identity := testToolchainIdentity()
+	source := "oci://ghcr.io/example/operator"
+	version := "1.2.3"
+	archive := []byte("locked OCI chart archive")
+	manifest := []byte("locked OCI manifest")
+	entry := ociChartLock{
+		ManifestDigest:   "sha256:" + contentutil.SHA256(manifest),
+		ManifestSize:     int64(len(manifest)),
+		ChartLayerDigest: "sha256:" + contentutil.SHA256(archive),
+		ChartLayerSize:   int64(len(archive)),
+		ArchiveDigest:    contentutil.SHA256(archive),
+	}
+	lockData, err := json.Marshal(lockFile{
+		Version: 3, Toolchain: identity.lock(),
+		OCICharts: map[string]map[string]ociChartLock{source: {version: entry}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &atomicMapFS{files: fstest.MapFS{testLockFilename: &fstest.MapFile{Data: lockData}}}
+	lock, err := OpenLockedFetchWithFS(t.Context(), "/virtual/project", identity, files)
+	if err != nil {
+		t.Fatalf("open locked fetch filesystem: %v", err)
+	}
+	fetchCount := 0
+	lock.ociChartFetcher = func(_ context.Context, gotSource, gotVersion string) ([]byte, ociChartLock, error) {
+		fetchCount++
+		if gotSource != source || gotVersion != version {
+			t.Fatalf("OCI fetch arguments = (%q, %q), want locked source and version", gotSource, gotVersion)
+		}
+
+		return append([]byte(nil), archive...), entry, nil
+	}
+	for range 2 {
+		loaded, err := lock.LoadOCIChart(source, version)
+		if err != nil {
+			t.Fatalf("load locked OCI chart: %v", err)
+		}
+		if string(loaded) != string(archive) {
+			t.Fatalf("loaded OCI archive = %q, want %q", loaded, archive)
+		}
+	}
+	if fetchCount != 1 {
+		t.Fatalf("OCI fetch count = %d, want one fetch followed by a cache hit", fetchCount)
+	}
+	if got := files.files[testLockFilename].Data; string(got) != string(lockData) {
+		t.Fatalf("locked fetch changed mcl.lock: got %s, want %s", got, lockData)
+	}
+}
+
+func TestLockedFetchRejectsUnavailableOrMismatchedContent(t *testing.T) {
+	t.Parallel()
+	identity := testToolchainIdentity()
+	source := testManifestSource
+	lockedContent := []byte("locked content")
+	digest := contentutil.SHA256(lockedContent)
+	lockData, err := json.Marshal(lockFile{Version: 3, Toolchain: identity.lock(), Manifests: map[string]string{source: digest}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name        string
+		content     []byte
+		fetchErr    error
+		wantErrText string
+	}{
+		{name: "network unavailable", fetchErr: errors.New("network unavailable"), wantErrText: "network unavailable"},
+		{name: "digest mismatch", content: []byte("different content"), wantErrText: "does not match its locked SHA-256 digest"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			files := &atomicMapFS{files: fstest.MapFS{testLockFilename: &fstest.MapFile{Data: lockData}}}
+			lock, err := OpenLockedFetchWithFS(t.Context(), "/virtual/project", identity, files)
+			if err != nil {
+				t.Fatalf("open locked fetch filesystem: %v", err)
+			}
+			lock.remoteFetcher = func(context.Context, string, string) ([]byte, error) {
+				return append([]byte(nil), test.content...), test.fetchErr
+			}
+			if _, err := lock.LoadManifest(source); err == nil || !strings.Contains(err.Error(), test.wantErrText) {
+				t.Fatalf("LoadManifest() error = %v, want text %q", err, test.wantErrText)
+			}
+			if _, exists := files.files[".mcl/cache/sha256/"+digest]; exists {
+				t.Fatal("failed locked fetch wrote content to the cache")
+			}
+			if got := files.files[testLockFilename].Data; string(got) != string(lockData) {
+				t.Fatalf("failed locked fetch changed mcl.lock: got %s, want %s", got, lockData)
+			}
+		})
+	}
+}
+
+func TestLockedFetchRejectsUnlockedDependency(t *testing.T) {
+	t.Parallel()
+	identity := testToolchainIdentity()
+	lockData, err := json.Marshal(lockFile{Version: 3, Toolchain: identity.lock(), Manifests: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := &atomicMapFS{files: fstest.MapFS{testLockFilename: &fstest.MapFile{Data: lockData}}}
+	lock, err := OpenLockedFetchWithFS(t.Context(), "/virtual/project", identity, files)
+	if err != nil {
+		t.Fatalf("open locked fetch filesystem: %v", err)
+	}
+	if _, err := lock.LoadManifest("https://example.test/unlocked.yaml"); err == nil || !strings.Contains(err.Error(), "is not locked") {
+		t.Fatalf("LoadManifest() error = %v, want unlocked dependency error", err)
+	}
+	if got := files.files[testLockFilename].Data; string(got) != string(lockData) {
+		t.Fatalf("locked fetch changed mcl.lock: got %s, want %s", got, lockData)
 	}
 }
 
@@ -203,7 +451,7 @@ func TestInjectedFilesystemDoesNotFallBackToOrWriteOSCache(t *testing.T) {
 	if err := lock.writeCache(digest, content); err == nil || !strings.Contains(err.Error(), "atomic writes") {
 		t.Fatalf("writeCache() error = %v, want atomic writes error", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "mcl.lock")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, testLockFilename)); !os.IsNotExist(err) {
 		t.Fatalf("mcl.lock stat error = %v, want file not to be created", err)
 	}
 	if _, err := os.Stat(cachePath); err != nil {
@@ -237,14 +485,14 @@ func TestOpenWithAtomicFilesystemWritesLockAndCacheWithinRoot(t *testing.T) {
 	}
 	content := []byte("apiVersion: v1\nkind: ConfigMap\n")
 	digest := contentutil.SHA256(content)
-	lock.manifests["https://example.test/deployment.yaml"] = digest
+	lock.manifests[testManifestSource] = digest
 	if err := lock.writeCache(digest, content); err != nil {
 		t.Fatalf("write dependency cache: %v", err)
 	}
 	if err := lock.Save(); err != nil {
 		t.Fatalf("save dependency lock: %v", err)
 	}
-	if _, exists := files.files["mcl.lock"]; !exists {
+	if _, exists := files.files[testLockFilename]; !exists {
 		t.Fatal("atomic filesystem did not receive mcl.lock")
 	}
 	if _, exists := files.files[".mcl/cache/sha256/"+digest]; !exists {
@@ -254,7 +502,7 @@ func TestOpenWithAtomicFilesystemWritesLockAndCacheWithinRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen writable filesystem: %v", err)
 	}
-	read, err := loaded.LoadManifest("https://example.test/deployment.yaml")
+	read, err := loaded.LoadManifest(testManifestSource)
 	if err != nil {
 		t.Fatalf("load dependency cache: %v", err)
 	}
@@ -323,7 +571,7 @@ func TestLoadManifestRejectsCacheDirectorySymlinkOutsideProject(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	identity := testToolchainIdentity()
-	source := "https://example.test/deployment.yaml"
+	source := testManifestSource
 	content := []byte("apiVersion: v1\nkind: ConfigMap\n")
 	digest := contentutil.SHA256(content)
 	lock, err := Open(t.Context(), root, true, identity)
@@ -366,7 +614,7 @@ func TestFailedUpdateKeepsExistingLock(t *testing.T) {
 	if err := initial.Save(); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := filepath.Join(root, "mcl.lock")
+	lockPath := filepath.Join(root, testLockFilename)
 	before, err := os.ReadFile(lockPath)
 	if err != nil {
 		t.Fatal(err)

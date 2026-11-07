@@ -19,6 +19,7 @@ const projectFileEntrypoint = "main.mcl"
 const (
 	testLockFilename      = "mcl.lock"
 	testLockRevisionField = "revision"
+	testLockVersionField  = "version"
 )
 
 func TestEvaluateProjectSourceUsesRootRelativeFilesystem(t *testing.T) {
@@ -272,7 +273,7 @@ func lockedHTTPSCRDFiles(t *testing.T, crd []byte) fstest.MapFS {
 	digest := content.SHA256(crd)
 	identity := dependencyToolchainIdentity()
 	lockData, err := json.Marshal(map[string]any{
-		"version": 3,
+		testLockVersionField: 3,
 		"toolchain": map[string]string{
 			"mcl": identity.MCL, testLockRevisionField: identity.Revision, "modified": identity.Modified,
 			"go": identity.Go, "helm": identity.Helm, "kustomizeAPI": identity.KustomizeAPI, "kustomizeKYAML": identity.KustomizeKYAML,

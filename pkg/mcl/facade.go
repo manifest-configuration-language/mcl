@@ -29,6 +29,11 @@ func DiffBundles(before, after Bundle) ([]BundleChange, error) {
 	return engine.DiffBundles(before, after)
 }
 
+// DiffBundlesForKubernetesVersionは指定したKubernetes versionのSchemaでresourceを比較します。
+func DiffBundlesForKubernetesVersion(before, after Bundle, kubernetesVersion string) ([]BundleChange, error) {
+	return engine.DiffBundlesForKubernetesVersion(before, after, kubernetesVersion)
+}
+
 // DiffBundlesWithCatalogsは各BundleのCatalogを使ってResource identityを解決し、差分を返します。
 func DiffBundlesWithCatalogs(before, after Bundle, beforeCatalog, afterCatalog KubernetesResourceCatalog) ([]BundleChange, error) {
 	return engine.DiffBundlesWithCatalogs(before, after, beforeCatalog, afterCatalog)
@@ -141,6 +146,11 @@ func UpdateFileWithParametersContext(ctx context.Context, path string, parameter
 // UpdateFileWithParametersAndOptionsContext updates dependencies with runtime parameters and execution options.
 func UpdateFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) error {
 	return engine.UpdateFileWithParametersAndOptionsContext(ctx, path, parameters, options)
+}
+
+// FetchFileWithParametersAndOptionsContextはmcl.lockに記録された依存だけをcacheへ取得します。
+func FetchFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) error {
+	return engine.FetchFileWithParametersAndOptionsContext(ctx, path, parameters, options)
 }
 
 func EvaluateSource(path, source string) (Bundle, error) {

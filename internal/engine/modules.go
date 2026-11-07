@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
+	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
@@ -41,6 +42,7 @@ const (
 // EvaluationOptionsはMCL評価全体に適用する実行オプションを保持します。
 type EvaluationOptions struct {
 	AllowNondeterministicOutput bool
+	KubernetesVersion           string
 	ParameterSources            map[string]ParameterSource
 }
 
@@ -57,6 +59,7 @@ type moduleLoader struct {
 	dependencies                *dependency.Lock
 	operation                   string
 	allowNondeterministicOutput bool
+	kubernetesVersion           string
 	parameters                  map[string]jsontext.Value
 	parameterSources            map[string]ParameterSource
 	overlays                    map[string]string
@@ -156,6 +159,13 @@ func UpdateFileWithParametersContext(ctx context.Context, path string, parameter
 // UpdateFileWithParametersAndOptionsContextは実行オプションとruntime parametersを指定して依存lockを更新します。
 func UpdateFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) error {
 	_, err := evaluateFileWithParameters(ctx, path, true, "", parameters, options)
+
+	return err
+}
+
+// FetchFileWithParametersAndOptionsContextはmcl.lockに記録された依存だけをcacheへ取得します。
+func FetchFileWithParametersAndOptionsContext(ctx context.Context, path string, parameters map[string]jsontext.Value, options EvaluationOptions) error {
+	_, err := evaluateFileWithParametersMode(ctx, path, false, true, "", parameters, options)
 
 	return err
 }
@@ -1070,13 +1080,26 @@ func dependentModuleSourcesWithContext(ctx context.Context, target string, sourc
 }
 
 func evaluateFileWithParameters(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
-	return evaluateFileWithFilesystem(ctx, path, update, operation, parameters, options, nil)
+	return evaluateFileWithParametersMode(ctx, path, update, false, operation, parameters, options)
+}
+
+func evaluateFileWithParametersMode(ctx context.Context, path string, update, fetchLocked bool, operation string, parameters map[string]jsontext.Value, options EvaluationOptions) (Bundle, error) {
+	return evaluateFileWithFilesystemMode(ctx, path, update, fetchLocked, operation, parameters, options, nil)
 }
 
 func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, operation string, parameters map[string]jsontext.Value, options EvaluationOptions, files *projectFilesystem) (Bundle, error) {
+	return evaluateFileWithFilesystemMode(ctx, path, update, false, operation, parameters, options, files)
+}
+
+func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fetchLocked bool, operation string, parameters map[string]jsontext.Value, options EvaluationOptions, files *projectFilesystem) (Bundle, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
 	}
+	version, err := k8sschema.NormalizeKubernetesVersion(options.KubernetesVersion)
+	if err != nil {
+		return Bundle{}, err
+	}
+	options.KubernetesVersion = version
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return Bundle{}, err
@@ -1105,7 +1128,11 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		return Bundle{}, fmt.Errorf("read entry source %q: %w", canonical, err)
 	}
 	var dependencies *dependency.Lock
-	if files.osBacked {
+	if fetchLocked && files.osBacked {
+		dependencies, err = dependency.OpenLockedFetch(ctx, root, dependencyToolchainIdentity())
+	} else if fetchLocked {
+		dependencies, err = dependency.OpenLockedFetchWithFS(ctx, root, dependencyToolchainIdentity(), files.files)
+	} else if files.osBacked {
 		dependencies, err = dependency.Open(ctx, root, update, dependencyToolchainIdentity())
 	} else {
 		dependencies, err = dependency.OpenWithFS(ctx, root, update, dependencyToolchainIdentity(), files.files)
@@ -1123,7 +1150,8 @@ func evaluateFileWithFilesystem(ctx context.Context, path string, update bool, o
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters),
 		allowNondeterministicOutput: options.AllowNondeterministicOutput, parameterSources: cloneParameterSources(options.ParameterSources), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
-		analysis: &TypeAnalysisContext{},
+		kubernetesVersion: options.KubernetesVersion,
+		analysis:          &TypeAnalysisContext{},
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(canonical, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	if err != nil {
@@ -1253,6 +1281,11 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, nil, err
 	}
+	version, err := k8sschema.NormalizeKubernetesVersion(options.KubernetesVersion)
+	if err != nil {
+		return Bundle{}, nil, err
+	}
+	options.KubernetesVersion = version
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return Bundle{}, nil, err
@@ -1312,6 +1345,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		runtimeTypes:                make(map[string]map[string]ResolvedType),
 		dependencies:                dependencies,
 		allowNondeterministicOutput: options.AllowNondeterministicOutput,
+		kubernetesVersion:           options.KubernetesVersion,
 		parameterSources:            cloneParameterSources(options.ParameterSources),
 		overlays:                    canonicalOverlays,
 		loadedModules:               make(map[string]struct{}),
@@ -1415,7 +1449,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, AllowNondeterministicOutput: loader.allowNondeterministicOutput, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, AllowNondeterministicOutput: loader.allowNondeterministicOutput, KubernetesVersion: loader.kubernetesVersion, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
 	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
 	if entry {
 		state.Parameters = maps.Clone(loader.parameters)

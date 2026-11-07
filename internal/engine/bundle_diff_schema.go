@@ -39,7 +39,7 @@ func diffSchemaResourceKey(value Value) string {
 	return apiVersion + "\x00" + kind
 }
 
-func bundleDiffSchemas(bundle Bundle) (map[string]*bundleDiffSchema, error) {
+func bundleDiffSchemas(bundle Bundle, kubernetesVersion string) (map[string]*bundleDiffSchema, error) {
 	schemas := make(map[string]*bundleDiffSchema)
 	for _, artifact := range bundle.Artifacts {
 		value := nodeContents(artifact.Value)
@@ -62,7 +62,7 @@ func bundleDiffSchemas(bundle Bundle) (map[string]*bundleDiffSchema, error) {
 		if _, exists := schemas[key]; exists {
 			continue
 		}
-		resourceSchema, exists, err := k8sschema.BuiltinOpenAPI(apiVersion, kind)
+		resourceSchema, exists, err := k8sschema.BuiltinOpenAPIForVersion(kubernetesVersion, apiVersion, kind)
 		if err != nil {
 			return nil, fmt.Errorf("load built-in Kubernetes schema for %s %s: %w", apiVersion, kind, err)
 		}

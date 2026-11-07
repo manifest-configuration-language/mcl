@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -43,7 +44,7 @@ func typedExpressionFromKnownAnalysisWithStaticTypes(expression Expr, state *Eva
 func typedEvaluationContextFromState(state *EvaluationState) typedEvaluationContext {
 	return typedEvaluationContext{
 		runtimeEnv: state.Environment, staticTypes: state.StaticTypes, types: state.Types,
-		stack: state.Stack, budget: state.Budget, sourcePath: state.SourcePath,
+		stack: state.Stack, budget: state.Budget, sourcePath: state.SourcePath, module: state.Module,
 		analysis: newTypedAnalysisCache(),
 	}
 }
@@ -55,6 +56,9 @@ func typedExpressionFromAnalysis(expression Expr, analysis TypeAnalysis, known b
 			return typedExpression{}, false, nil
 		}
 		inferred = ResolvedType{Name: typeAny}
+	}
+	if err := builtinKubernetesStaticExpressionDiagnostic(expression, context); err != nil {
+		return typedExpression{}, false, err
 	}
 	result, supported := typeExpression(expression, inferred, context)
 	if supported {
@@ -135,6 +139,14 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 
 		return typedExpression{kind: typedExpressionDeferredReference, span: node.Span, paths: slices.Clone(node.Path), args: arguments}, true
 	case *NodeExpr:
+		if schemaType, exists := builtinKubernetesSchemaTypeForNode(node.Body, context); exists {
+			body, ok := typeExpression(node.Body, schemaType, context)
+			if !ok {
+				return typedExpression{}, false
+			}
+
+			return typedExpression{kind: typedExpressionNode, span: node.Span, operand: &body}, true
+		}
 		expectedNode, expectedNodeKnown := resolveStaticAlias(inferred, context.types, make(map[string]bool))
 		if expectedNodeKnown && expectedNode.Name == typeNode && len(expectedNode.Arguments) == 1 {
 			body, ok := typeExpressionWithInferredExpected(node.Body, expectedNode.Arguments[0], context)
@@ -232,6 +244,159 @@ func typeExpression(expression Expr, inferred ResolvedType, contexts ...typedEva
 	}
 
 	return typed, true
+}
+
+func builtinKubernetesSchemaTypeForNode(body Expr, context typedEvaluationContext) (ResolvedType, bool) {
+	if context.module == nil {
+		return ResolvedType{}, false
+	}
+	apiVersion, kind, ok := builtinKubernetesLiteralGVK(body)
+	if !ok {
+		return ResolvedType{}, false
+	}
+
+	return builtinKubernetesSchemaTypeForVersion(context.module.KubernetesVersion, apiVersion, kind)
+}
+
+func builtinKubernetesLiteralGVK(body Expr) (string, string, bool) {
+	bodyMap, ok := body.(*MapExpr)
+	if !ok {
+		return "", "", false
+	}
+	fields := make(map[string]string, 2)
+	for _, entry := range bodyMap.Entries {
+		if entry.KeyExpr != nil || entry.Key != "apiVersion" && entry.Key != "kind" {
+			continue
+		}
+		value, isString := entry.Value.(*StringExpr)
+		if !isString {
+			continue
+		}
+		fields[entry.Key] = value.Value
+	}
+	apiVersion, hasAPIVersion := fields["apiVersion"]
+	kind, hasKind := fields["kind"]
+	if !hasAPIVersion || !hasKind {
+		return "", "", false
+	}
+
+	return apiVersion, kind, true
+}
+
+func builtinKubernetesStaticTypeDiagnostic(expression Expr, expected ResolvedType, context typedEvaluationContext, apiVersion, kind string) error {
+	return builtinKubernetesStaticTypeDiagnosticAtPath(expression, expected, context, apiVersion, kind, nil)
+}
+
+func builtinKubernetesStaticExpressionDiagnostic(expression Expr, context typedEvaluationContext) error {
+	var diagnostic error
+	WalkExpr(expression, func(expression Expr) {
+		if diagnostic != nil {
+			return
+		}
+		node, ok := expression.(*NodeExpr)
+		if !ok {
+			return
+		}
+		schemaType, exists := builtinKubernetesSchemaTypeForNode(node.Body, context)
+		if !exists {
+			return
+		}
+		apiVersion, kind, _ := builtinKubernetesLiteralGVK(node.Body)
+		diagnostic = builtinKubernetesStaticTypeDiagnostic(node.Body, schemaType, context, apiVersion, kind)
+	})
+
+	return diagnostic
+}
+
+func builtinKubernetesStaticTypeDiagnosticAtPath(expression Expr, expected ResolvedType, context typedEvaluationContext, apiVersion, kind string, path []string) error {
+	switch node := expression.(type) {
+	case *MapExpr:
+		for _, entry := range node.Entries {
+			fieldPath := append(slices.Clone(path), entry.Key)
+			fieldType, exists := staticMapValueType(expected, entry.Key, entry.KeyExpr == nil, context.types)
+			if !exists {
+				if entry.KeyExpr == nil {
+					return builtinKubernetesStaticSchemaDiagnostic(context, apiVersion, kind, fieldPath, entry.Value.ExprSpan(), "unknown field")
+				}
+
+				continue
+			}
+			if err := builtinKubernetesStaticTypeDiagnosticAtPath(entry.Value, fieldType, context, apiVersion, kind, fieldPath); err != nil {
+				return err
+			}
+		}
+	case *ListExpr:
+		elementType, isList := staticListElement(expected, context.types)
+		if !isList {
+			return nil
+		}
+		for index, item := range node.Items {
+			itemPath := append(slices.Clone(path), strconv.Itoa(index))
+			if index < len(node.Spreads) && node.Spreads[index] {
+				expectedList := ResolvedType{Name: typeList, Element: &elementType}
+				if _, isLiteralList := item.(*ListExpr); isLiteralList {
+					if err := builtinKubernetesStaticTypeDiagnosticAtPath(item, expectedList, context, apiVersion, kind, itemPath); err != nil {
+						return err
+					}
+
+					continue
+				}
+				actual, known, err := context.inferType(item)
+				if err != nil {
+					return err
+				}
+				if !known || actual.Name == typeAny {
+					continue
+				}
+				actualElement, isSpreadList := staticListElement(actual, context.types)
+				if !isSpreadList {
+					return builtinKubernetesStaticSchemaDiagnostic(context, apiVersion, kind, itemPath, item.ExprSpan(), fmt.Sprintf("spread expects List<%s>, got %s", staticTypeName(elementType), staticTypeName(actual)))
+				}
+				if staticTypeCompatibility(actualElement, elementType, context.types).isDefinitelyIncompatible() {
+					return builtinKubernetesStaticSchemaDiagnostic(context, apiVersion, kind, itemPath, item.ExprSpan(), fmt.Sprintf("spread expects List<%s>, got %s", staticTypeName(elementType), staticTypeName(actual)))
+				}
+
+				continue
+			}
+			if err := builtinKubernetesStaticTypeDiagnosticAtPath(item, elementType, context, apiVersion, kind, itemPath); err != nil {
+				return err
+			}
+		}
+	case *NodeExpr:
+		if expectedNode, known := resolveStaticAlias(expected, context.types, make(map[string]bool)); known && expectedNode.Name == typeNode && len(expectedNode.Arguments) == 1 {
+			return builtinKubernetesStaticTypeDiagnosticAtPath(node.Body, expectedNode.Arguments[0], context, apiVersion, kind, path)
+		}
+	case *StringExpr, *BoolExpr, *IntegerExpr, *DecimalExpr, *NullExpr:
+		actual, known, err := context.inferType(expression)
+		if err != nil {
+			return err
+		}
+		if !known || actual.Name == typeAny {
+			return nil
+		}
+		if staticTypeCompatibility(actual, expected, context.types).isDefinitelyIncompatible() {
+			return builtinKubernetesStaticSchemaDiagnostic(context, apiVersion, kind, path, expression.ExprSpan(), fmt.Sprintf("expected %s, got %s", staticTypeName(expected), staticTypeName(actual)))
+		}
+	default:
+		actual, known, err := context.inferType(expression)
+		if err != nil {
+			return err
+		}
+		if !known || actual.Name == typeAny {
+			return nil
+		}
+		if staticTypeCompatibility(actual, expected, context.types).isDefinitelyIncompatible() {
+			return builtinKubernetesStaticSchemaDiagnostic(context, apiVersion, kind, path, expression.ExprSpan(), fmt.Sprintf("expected %s, got %s", staticTypeName(expected), staticTypeName(actual)))
+		}
+	}
+
+	return nil
+}
+
+func builtinKubernetesStaticSchemaDiagnostic(context typedEvaluationContext, apiVersion, kind string, path []string, span SourceSpan, detail string) error {
+	message := fmt.Sprintf("kubernetes resource %s (%s): %s: %s", kind, apiVersion, strings.Join(path, "."), detail)
+
+	return SourceDiagnosticError{Path: context.sourcePath, Code: "MCL-K8S", Message: message, Span: span, Cause: errors.New(detail)}
 }
 
 func typeBinaryExpression(node *BinaryExpr, inferred ResolvedType, context typedEvaluationContext) (typedExpression, bool) {

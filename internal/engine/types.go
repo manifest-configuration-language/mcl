@@ -483,7 +483,7 @@ func checkRuntimeTypeValue(value RuntimeValue, typeExpr ResolvedType, types map[
 	return errors.New("invalid type expression")
 }
 
-func annotateBuiltinSchemaProvenanceRuntime(value *RuntimeValue) {
+func annotateBuiltinSchemaProvenanceRuntime(value *RuntimeValue, kubernetesVersion string) {
 	if value == nil {
 		return
 	}
@@ -497,7 +497,7 @@ func annotateBuiltinSchemaProvenanceRuntime(value *RuntimeValue) {
 		apiVersion, hasAPIVersion := runtimeStringField(*contents, "apiVersion")
 		kind, hasKind := runtimeStringField(*contents, "kind")
 		if hasAPIVersion && hasKind {
-			if schemaType, exists := builtinKubernetesSchemaType(apiVersion, kind); exists {
+			if schemaType, exists := builtinKubernetesSchemaTypeForVersion(kubernetesVersion, apiVersion, kind); exists {
 				annotateRuntimeSchemaProvenance(value, apiVersion+"/"+kind, "", &schemaType)
 
 				return
@@ -505,11 +505,11 @@ func annotateBuiltinSchemaProvenanceRuntime(value *RuntimeValue) {
 			annotateUnknownRuntimeSchemaProvenance(value, apiVersion+"/"+kind)
 		}
 		for index := range contents.Map {
-			annotateBuiltinSchemaProvenanceRuntime(&contents.Map[index].Value)
+			annotateBuiltinSchemaProvenanceRuntime(&contents.Map[index].Value, kubernetesVersion)
 		}
 	case List, AdapterBundle:
 		for index := range contents.List {
-			annotateBuiltinSchemaProvenanceRuntime(&contents.List[index])
+			annotateBuiltinSchemaProvenanceRuntime(&contents.List[index], kubernetesVersion)
 		}
 	}
 }

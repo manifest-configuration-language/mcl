@@ -196,7 +196,7 @@ func newRootCommand(args []string) *cobra.Command {
 		},
 	}
 	root.AddCommand(newRenderCommand(), newCheckCommand(), newExplainCommand(), newDiffCommand(), newLintCommand(), newFormatCommand())
-	root.AddCommand(newUpdateCommand(), newLSPCommand(), newVersionCommand())
+	root.AddCommand(newUpdateCommand(), newFetchCommand(), newLSPCommand(), newVersionCommand())
 	root.AddCommand(newCompletionCommand())
 	root.AddCommand(newReferenceCommand())
 	root.SetArgs(args)
@@ -260,7 +260,7 @@ func newRenderCommand() *cobra.Command {
 				return err
 			}
 
-			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters, evaluationOptions(allowNondeterministicOutput, sources))
+			return renderCommand(command.Context(), args[0], phase, operation, outputDir, format, parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("phase", "", "lifecycle phase to render")
@@ -270,6 +270,7 @@ func newRenderCommand() *cobra.Command {
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
+	addKubernetesVersionFlag(command)
 
 	return command
 }
@@ -289,13 +290,14 @@ func newCheckCommand() *cobra.Command {
 				return err
 			}
 
-			return checkCommand(command.Context(), args[0], operation, parameters, evaluationOptions(allowNondeterministicOutput, sources))
+			return checkCommand(command.Context(), args[0], operation, parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("operation", "", "operation to check")
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
+	addKubernetesVersionFlag(command)
 
 	return command
 }
@@ -321,7 +323,7 @@ func newExplainCommand() *cobra.Command {
 				return err
 			}
 
-			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path, parameters, evaluationOptions(allowNondeterministicOutput, sources))
+			return explainCommand(command.Context(), args[0], apiVersion, kind, name, namespace, phase, operation, path, parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("api-version", "", "Kubernetes API version (required)")
@@ -334,6 +336,7 @@ func newExplainCommand() *cobra.Command {
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
+	addKubernetesVersionFlag(command)
 
 	return command
 }
@@ -353,13 +356,14 @@ func newDiffCommand() *cobra.Command {
 				return err
 			}
 
-			return diffCommand(command.Context(), args[0], args[1], operation, parameters, evaluationOptions(allowNondeterministicOutput, sources))
+			return diffCommand(command.Context(), args[0], args[1], operation, parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().String("operation", "", "operation to compare")
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
+	addKubernetesVersionFlag(command)
 
 	return command
 }
@@ -416,12 +420,43 @@ func newUpdateCommand() *cobra.Command {
 				return err
 			}
 
-			return mcl.UpdateFileWithParametersAndOptionsContext(command.Context(), path, parameters, evaluationOptions(allowNondeterministicOutput, sources))
+			return mcl.UpdateFileWithParametersAndOptionsContext(command.Context(), path, parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
 		},
 	}
 	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
 	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
+	addKubernetesVersionFlag(command)
+
+	return command
+}
+
+func newFetchCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "fetch <file>",
+		Short: "Fetch dependencies recorded in mcl.lock",
+		Args:  exactArgs(1, "fetch requires one input file"),
+		RunE: func(command *cobra.Command, args []string) error {
+			locked, _ := command.Flags().GetBool("locked")
+			if !locked {
+				return errors.New("fetch requires --locked")
+			}
+			parameterValues, _ := command.Flags().GetStringArray("parameter")
+			parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
+			allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
+			parameters, sources, err := parseParameterInputs(parameterValues, parameterFiles)
+			if err != nil {
+				return err
+			}
+
+			return mcl.FetchFileWithParametersAndOptionsContext(command.Context(), args[0], parameters, commandEvaluationOptions(command, allowNondeterministicOutput, sources))
+		},
+	}
+	command.Flags().Bool("locked", false, "fetch only dependencies already recorded in mcl.lock")
+	command.Flags().StringArray("parameter", nil, "runtime parameter in name=<JSON value> form; may be repeated and strings must be quoted")
+	command.Flags().StringArray("parameter-file", nil, "JSON object containing runtime parameters; may be repeated")
+	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
+	addKubernetesVersionFlag(command)
 
 	return command
 }
@@ -551,6 +586,17 @@ func evaluationOptions(allowNondeterministicOutput bool, sources map[string]engi
 	return mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput, ParameterSources: sources}
 }
 
+func commandEvaluationOptions(command *cobra.Command, allowNondeterministicOutput bool, sources map[string]engine.ParameterSource) mcl.EvaluationOptions {
+	options := evaluationOptions(allowNondeterministicOutput, sources)
+	options.KubernetesVersion, _ = command.Flags().GetString("kubernetes-version")
+
+	return options
+}
+
+func addKubernetesVersionFlag(command *cobra.Command) {
+	command.Flags().String("kubernetes-version", "", "Kubernetes OpenAPI schema version; omit to use the embedded default")
+}
+
 func lintFiles(denyWarnings bool, paths []string) error {
 	var warnings int
 	for _, path := range paths {
@@ -622,7 +668,7 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string, p
 	if err := mcl.ValidateBundleOutput(after); err != nil {
 		return err
 	}
-	changes, err := mcl.DiffBundles(before, after)
+	changes, err := mcl.DiffBundlesForKubernetesVersion(before, after, evaluationOptions.KubernetesVersion)
 	if err != nil {
 		return err
 	}

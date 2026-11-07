@@ -22,13 +22,13 @@ mcl render apps/cilium/main.mcl \
 
 各ファイルは、例えば`{"cluster": {"kubernetesVersion": "1.35"}}`のようにJSONオブジェクトを格納します。
 
-## ApplicationSetからCMPへの将来入力契約
+## ApplicationSetからCMPへの入力契約
 
 infraのApplicationSetは、将来作成するMCL CMPプラグインへ`MCL_CLUSTER_NAME`、`MCL_NAMESPACE`、`MCL_CLUSTER_INPUT`、`MCL_DEPLOYMENT_JSON`を渡す仕様です。CMPプラグイン自体はまだ実装されていません。実装時はArgo CDが付ける`ARGOCD_ENV_`接頭辞を除いた名前で入力を読みます。
 
-アプリ配置では`MCL_CLUSTER_INPUT=application`を指定し、`MCL_CLUSTER_NAME`が指す`cluster.json`から`name`、`namespace`、`kubernetesVersion`だけを`cluster`入力へ射影します。ApplicationSetは`app.json`のトップレベル`namespace`を`MCL_NAMESPACE`へ渡し、選択済み配置のFeatureとSettingsを`MCL_DEPLOYMENT_JSON`へ渡します。CMPは`cluster`と`namespace`を予約キーとして拒否し、非空の`MCL_NAMESPACE`を含むJSONパラメータファイルを作成します。
+アプリ配置では`MCL_CLUSTER_INPUT=application`を指定し、`MCL_CLUSTER_NAME`が指す`cluster.json`から`name`、`namespace`、`kubernetesVersion`だけを`cluster`入力へ射影します。ApplicationSetは選択済み配置の`namespace`を優先し、未指定の場合は`app.json`のトップレベル`namespace`を使います。解決したnamespaceは`MCL_NAMESPACE`へ渡し、選択済み配置のFeatureとSettingsだけを`MCL_DEPLOYMENT_JSON`へ渡します。CMPは`cluster`と`namespace`を予約キーとして拒否し、namespaceを含まないJSONパラメータファイルを作成します。
 
-Cluster API入口では`MCL_CLUSTER_INPUT=clusterAPI`を指定します。CMPはCluster APIが必要とする6フィールドを`cluster`へ射影し、`clusterApiManaged`が文字列`"true"`であることを確認します。このモードでは`MCL_NAMESPACE`を拒否し、Cluster APIリソースのnamespaceは`cluster.namespace`から取得します。未知の入力モードと必須値の欠落はエラーにします。
+Cluster API入口では`MCL_CLUSTER_INPUT=clusterAPI`を指定します。CMPはCluster APIが必要とする6フィールドを`cluster`へ射影し、`clusterApiManaged`が文字列`"true"`であることを確認します。このモードでは`MCL_NAMESPACE`を拒否し、Cluster APIリソースのnamespaceは`cluster.namespace`から取得します。CMPは`cluster.kubernetesVersion`と同じversionを`mcl fetch --locked`と`mcl render`の`--kubernetes-version`に指定します。未知の入力モードと必須値の欠落はエラーにします。
 
 Argo CD ApplicationSetが渡す環境変数と、公開済みMCL CLIの`--parameter-file`入力は別の契約です。MCL CLIはJSONパラメータファイルを読み込み、型不一致のJSON位置を診断します。環境変数をJSONパラメータファイルへ変換するCMPプラグインの実装は、将来の作業です。
 

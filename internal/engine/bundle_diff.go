@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
 )
 
 // BundleChangeKindは差分の種類を表します。
@@ -42,13 +44,26 @@ type bundleDiffArtifact struct {
 
 // DiffBundlesはResource、フィールド、Lifecycleの差分をBundle順に返します。
 func DiffBundles(before, after Bundle) ([]BundleChange, error) {
+	return DiffBundlesForKubernetesVersion(before, after, k8sschema.DefaultKubernetesVersion)
+}
+
+// DiffBundlesForKubernetesVersionは指定したKubernetes Schema versionでresourceを比較します。
+func DiffBundlesForKubernetesVersion(before, after Bundle, kubernetesVersion string) ([]BundleChange, error) {
 	defaultCatalog := DefaultKubernetesResourceCatalog()
 
-	return DiffBundlesWithCatalogs(before, after, defaultCatalog, defaultCatalog)
+	return diffBundlesWithCatalogsAndVersion(before, after, defaultCatalog, defaultCatalog, kubernetesVersion)
 }
 
 // DiffBundlesWithCatalogsは各BundleのCatalogを使ってResource identityを解決し、差分を返します。
 func DiffBundlesWithCatalogs(before, after Bundle, beforeCatalog, afterCatalog KubernetesResourceCatalog) ([]BundleChange, error) {
+	return diffBundlesWithCatalogsAndVersion(before, after, beforeCatalog, afterCatalog, k8sschema.DefaultKubernetesVersion)
+}
+
+func diffBundlesWithCatalogsAndVersion(before, after Bundle, beforeCatalog, afterCatalog KubernetesResourceCatalog, kubernetesVersion string) ([]BundleChange, error) {
+	version, err := k8sschema.NormalizeKubernetesVersion(kubernetesVersion)
+	if err != nil {
+		return nil, err
+	}
 	beforeScopes, err := newKubernetesResourceScopeIndexForBundle(before, beforeCatalog)
 	if err != nil {
 		return nil, fmt.Errorf("resolve before Resource scopes: %w", err)
@@ -59,11 +74,11 @@ func DiffBundlesWithCatalogs(before, after Bundle, beforeCatalog, afterCatalog K
 	}
 	beforeArtifacts := indexBundleDiffArtifacts(before, beforeScopes)
 	afterArtifacts := indexBundleDiffArtifacts(after, afterScopes)
-	beforeSchemas, err := bundleDiffSchemas(before)
+	beforeSchemas, err := bundleDiffSchemas(before, version)
 	if err != nil {
 		return nil, fmt.Errorf("resolve before Resource schemas: %w", err)
 	}
-	afterSchemas, err := bundleDiffSchemas(after)
+	afterSchemas, err := bundleDiffSchemas(after, version)
 	if err != nil {
 		return nil, fmt.Errorf("resolve after Resource schemas: %w", err)
 	}

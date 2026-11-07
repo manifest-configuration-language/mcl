@@ -49,6 +49,7 @@ type Lock struct {
 	ctx               context.Context
 	root              string
 	update            bool
+	fetchLocked       bool
 	manifests         map[string]string
 	schemas           map[string]string
 	charts            map[string]string
@@ -58,6 +59,9 @@ type Lock struct {
 	gitSources        map[string]gitSourceLock
 	fetched           map[string][]byte
 	filesystem        *rootFilesystem
+	remoteFetcher     func(context.Context, string, string) ([]byte, error)
+	gitFetcher        func(context.Context, string, string, string) ([]byte, error)
+	ociChartFetcher   func(context.Context, string, string) ([]byte, ociChartLock, error)
 }
 
 type ociChartLock struct {
@@ -115,6 +119,11 @@ func Open(ctx context.Context, root string, update bool, identity ToolchainIdent
 	return openWithFilesystem(ctx, root, update, identity, newOSRootFilesystem(root))
 }
 
+// OpenLockedFetchは記録済み依存だけを取得するLockを開きます。
+func OpenLockedFetch(ctx context.Context, root string, identity ToolchainIdentity) (*Lock, error) {
+	return openLockedFetchWithFilesystem(ctx, root, identity, newOSRootFilesystem(root))
+}
+
 // OpenWithFS loads the project lock and cached dependency content from a root-relative filesystem.
 // Updates refresh dependencies reached by the current entrypoint and preserve entries for other entrypoints.
 // Updates require files to implement AtomicFileWriter; read-only filesystems can
@@ -132,6 +141,28 @@ func OpenWithFS(ctx context.Context, root string, update bool, identity Toolchai
 	return openWithFilesystem(ctx, root, update, identity, newRootFilesystem(root, files))
 }
 
+// OpenLockedFetchWithFSはproject filesystemから記録済み依存だけを取得するLockを開きます。
+func OpenLockedFetchWithFS(ctx context.Context, root string, identity ToolchainIdentity, files fs.FS) (*Lock, error) {
+	if files == nil {
+		return nil, errors.New("dependency filesystem is required")
+	}
+	if _, ok := files.(AtomicFileWriter); !ok {
+		return nil, errors.New("locked dependency fetches require an atomic writable filesystem")
+	}
+
+	return openLockedFetchWithFilesystem(ctx, root, identity, newRootFilesystem(root, files))
+}
+
+func openLockedFetchWithFilesystem(ctx context.Context, root string, identity ToolchainIdentity, files *rootFilesystem) (*Lock, error) {
+	lock, err := openWithFilesystem(ctx, root, false, identity, files)
+	if err != nil {
+		return nil, err
+	}
+	lock.fetchLocked = true
+
+	return lock, nil
+}
+
 func openWithFilesystem(ctx context.Context, root string, update bool, identity ToolchainIdentity, files *rootFilesystem) (*Lock, error) {
 	if ctx == nil {
 		return nil, errors.New("dependency context is required")
@@ -140,7 +171,7 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 		ctx: ctx, root: root, update: update, identity: identity,
 		manifests: make(map[string]string), schemas: make(map[string]string), charts: make(map[string]string), chartDependencies: make(map[string]map[string]chartDependencyLock), repositoryIndexes: make(map[string][]byte),
 		ociCharts: make(map[string]map[string]ociChartLock), gitSources: make(map[string]gitSourceLock),
-		fetched: make(map[string][]byte), filesystem: files,
+		fetched: make(map[string][]byte), filesystem: files, remoteFetcher: fetchRemote, gitFetcher: fetchGitTree, ociChartFetcher: fetchOCIChart,
 	}
 	info, err := files.stat("mcl.lock")
 	if errors.Is(err, fs.ErrNotExist) {
@@ -403,12 +434,34 @@ func (lock *Lock) LoadOCIChart(source, version string) ([]byte, error) {
 	if version == "" {
 		return nil, errors.New("OCI Helm Chart version is required")
 	}
+	if lock.fetchLocked {
+		entry, exists := lock.ociCharts[source][version]
+		if !exists {
+			return nil, fmt.Errorf("OCI Helm Chart %q version %q is not locked; run mcl update", source, version)
+		}
+		if archive, err := lock.readCache(entry.ArchiveDigest, maxRemoteChartArchiveSize); err == nil && validOCIArchive(archive, entry) {
+			return archive, nil
+		}
+		archive, metadata, err := lock.ociChartFetcher(lock.ctx, source, version)
+		if err != nil {
+			return nil, err
+		}
+		metadata.ArchiveDigest = contentutil.SHA256(archive)
+		if metadata != entry {
+			return nil, fmt.Errorf("fetched OCI Helm Chart %q version %q does not match its locked digests", source, version)
+		}
+		if err := lock.writeCache(entry.ArchiveDigest, archive); err != nil {
+			return nil, err
+		}
+
+		return archive, nil
+	}
 	if lock.update {
 		key := "oci-chart\x00" + source + "\x00" + version
 		if data, exists := lock.fetched[key]; exists {
 			return data, nil
 		}
-		archive, metadata, err := fetchOCIChart(lock.ctx, source, version)
+		archive, metadata, err := lock.ociChartFetcher(lock.ctx, source, version)
 		if err != nil {
 			return nil, err
 		}
@@ -442,6 +495,10 @@ func (lock *Lock) LoadOCIChart(source, version string) ([]byte, error) {
 	return archive, nil
 }
 
+func validOCIArchive(archive []byte, entry ociChartLock) bool {
+	return contentutil.SHA256(archive) == entry.ArchiveDigest && int64(len(archive)) == entry.ChartLayerSize && "sha256:"+contentutil.SHA256(archive) == entry.ChartLayerDigest
+}
+
 func (lock *Lock) LoadGitSource(source, revision, directory string) ([]byte, error) {
 	if err := ValidateGitSource(source); err != nil {
 		return nil, err
@@ -453,12 +510,33 @@ func (lock *Lock) LoadGitSource(source, revision, directory string) ([]byte, err
 		return nil, err
 	}
 	key := GitSourceKey(source, revision, directory)
+	if lock.fetchLocked {
+		entry, exists := lock.gitSources[key]
+		if !exists {
+			return nil, fmt.Errorf("kustomize Git source %q revision %q directory %q is not locked; run mcl update", source, revision, directory)
+		}
+		if archive, err := lock.readCache(entry.ArchiveDigest, maxRemoteGitTreeSize); err == nil && contentutil.SHA256(archive) == entry.ArchiveDigest {
+			return archive, nil
+		}
+		archive, err := lock.gitFetcher(lock.ctx, source, revision, directory)
+		if err != nil {
+			return nil, err
+		}
+		if contentutil.SHA256(archive) != entry.ArchiveDigest {
+			return nil, fmt.Errorf("fetched Kustomize Git source %q does not match its locked SHA-256 digest", source)
+		}
+		if err := lock.writeCache(entry.ArchiveDigest, archive); err != nil {
+			return nil, err
+		}
+
+		return archive, nil
+	}
 	if lock.update {
 		fetchKey := "git-source\x00" + key
 		if data, exists := lock.fetched[fetchKey]; exists {
 			return data, nil
 		}
-		archive, err := fetchGitTree(lock.ctx, source, revision, directory)
+		archive, err := lock.gitFetcher(lock.ctx, source, revision, directory)
 		if err != nil {
 			return nil, err
 		}
@@ -487,6 +565,31 @@ func (lock *Lock) LoadGitSource(source, revision, directory string) ([]byte, err
 }
 
 func (lock *Lock) loadRemote(source, category string, entries map[string]string) ([]byte, error) {
+	if lock.fetchLocked {
+		digest, exists := entries[source]
+		if !exists {
+			return nil, fmt.Errorf("%s %q is not locked; run mcl update", category, source)
+		}
+		maximumSize := int64(maxRemoteManifestSize)
+		if category == "chart" {
+			maximumSize = maxRemoteChartArchiveSize
+		}
+		if data, err := lock.readCache(digest, maximumSize); err == nil && contentutil.SHA256(data) == digest {
+			return data, nil
+		}
+		data, err := lock.remoteFetcher(lock.ctx, source, category)
+		if err != nil {
+			return nil, err
+		}
+		if contentutil.SHA256(data) != digest {
+			return nil, fmt.Errorf("fetched %s %q does not match its locked SHA-256 digest", category, source)
+		}
+		if err := lock.writeCache(digest, data); err != nil {
+			return nil, err
+		}
+
+		return data, nil
+	}
 	if lock.update {
 		key := category + "\x00" + source
 		if data, exists := lock.fetched[key]; exists {
@@ -550,6 +653,8 @@ func (identity ToolchainIdentity) compatibleWith(locked toolchainLock) bool {
 }
 
 func (lock *Lock) IsUpdate() bool { return lock.update }
+
+func (lock *Lock) IsLockedFetch() bool { return lock.fetchLocked }
 
 func (lock *Lock) cachePath(digest string) string {
 	return filepath.Join(lock.root, ".mcl", "cache", "sha256", digest)

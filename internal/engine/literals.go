@@ -58,11 +58,20 @@ const (
 
 // 標準ライブラリ関数の引数名。
 const (
-	paramIndex  = "index"
-	paramKey    = "key"
-	paramSource = "source"
-	paramValue  = "value"
-	paramValues = "values"
+	paramIndex    = "index"
+	paramKey      = "key"
+	paramRevision = "revision"
+	paramSource   = "source"
+	paramValue    = "value"
+	paramValues   = "values"
+)
+
+const (
+	helmOptionReleaseName = "releaseName"
+	helmOptionNamespace   = "namespace"
+	helmOptionVersion     = "version"
+	helmOptionKubeVersion = "kubeVersion"
+	helmOptionOperation   = "operation"
 )
 
 // 構文ノードの種別。

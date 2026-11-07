@@ -35,7 +35,7 @@ func TestLoadCRDSchemaCatalogUsesLockedHTTPSGitAndOCIInputs(t *testing.T) {
 	ociDigest := content.SHA256(ociArchive)
 	identity := dependencyToolchainIdentity()
 	lockData, err := json.Marshal(map[string]any{
-		"version": 3,
+		testLockVersionField: 3,
 		"toolchain": map[string]string{
 			"mcl": identity.MCL, testLockRevisionField: identity.Revision, "modified": identity.Modified,
 			"go": identity.Go, "helm": identity.Helm, "kustomizeAPI": identity.KustomizeAPI, "kustomizeKYAML": identity.KustomizeKYAML,

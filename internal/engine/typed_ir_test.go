@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -546,6 +547,111 @@ func TestTypedEvaluatorPropagatesExpectedTypeThroughNestedListAndNode(t *testing
 			_, supported := typeExpressionWithInferredExpected(expression, listType, typedEvaluationContext{})
 			if supported != test.support {
 				t.Fatalf("typeExpressionWithInferredExpected() supported = %t, want %t", supported, test.support)
+			}
+		})
+	}
+}
+
+func TestTypedEvaluatorUsesBuiltinKubernetesSchemaForNodeLiterals(t *testing.T) {
+	t.Parallel()
+
+	const pod = `let pod = node:
+  apiVersion: "v1"
+  kind: "Pod"
+  metadata:
+    name: "sample"
+  spec:
+    containers:
+      - name: "app"
+        image: "nginx"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+emit pod
+`
+	const nestedPod = `let pods =
+  -
+    node:
+      apiVersion: "v1"
+      kind: "Pod"
+      metadata:
+        name: "sample"
+      spec:
+        containers:
+          - name: "app"
+            image: "nginx"
+            resources:
+              requests:
+                cpu: 100
+emit pods
+`
+	const podWithDynamicallyTypedResources = `let resourceValues: Map<String, Any> =
+  requests:
+    cpu: "100m"
+let pod = node:
+  apiVersion: "v1"
+  kind: "Pod"
+  metadata:
+    name: "sample"
+  spec:
+    containers:
+      - name: "app"
+        image: "nginx"
+        resources: resourceValues
+`
+	const podWithSpreadContainer = `let pod = node:
+  apiVersion: "v1"
+  kind: "Pod"
+  metadata:
+    name: "sample"
+  spec:
+    containers: [...[
+      {
+        name: "app",
+        image: "nginx",
+        resources: {
+          requests: {
+            cpu: 100,
+          },
+        },
+      },
+    ]]
+`
+	tests := []struct {
+		name       string
+		source     string
+		wantErr    bool
+		wantDetail string
+		wantSpan   string
+	}{
+		{name: "valid nested pod", source: pod},
+		{name: "invalid emitted nested pod", source: nestedPod, wantErr: true, wantDetail: "kubernetes resource Pod", wantSpan: "100"},
+		{name: "incompatible nested resource", source: strings.Replace(strings.Replace(pod, `cpu: "100m"`, `cpu: 100`, 1), "emit pod\n", "", 1), wantErr: true, wantDetail: "kubernetes resource Pod", wantSpan: "100"},
+		{name: "unknown nested field", source: strings.Replace(strings.Replace(pod, "requests:", "unknownResourceField: \"value\"\n          requests:", 1), "emit pod\n", "", 1), wantErr: true, wantDetail: "unknown field", wantSpan: `"value"`},
+		{name: "dynamically typed nested Map", source: podWithDynamicallyTypedResources, wantErr: true, wantDetail: "expected", wantSpan: "resourceValues"},
+		{name: "invalid spread container", source: podWithSpreadContainer, wantErr: true, wantDetail: "kubernetes resource Pod", wantSpan: "100"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := EvaluateSourceContext(t.Context(), "main.mcl", test.source)
+			if !test.wantErr {
+				if err != nil {
+					t.Fatalf("EvaluateSourceContext() error = %v, want valid Pod", err)
+				}
+
+				return
+			}
+			if err == nil {
+				t.Fatal("EvaluateSourceContext() succeeded, want a built-in Kubernetes schema diagnostic")
+			}
+			diagnostic, ok := errors.AsType[SourceDiagnosticError](err)
+			if !ok {
+				t.Fatalf("EvaluateSourceContext() error = %T %v, want a source diagnostic", err, err)
+			}
+			if diagnostic.Code != "MCL-K8S" || !strings.Contains(diagnostic.Message, test.wantDetail) || test.source[diagnostic.Span.Start:diagnostic.Span.End] != test.wantSpan {
+				t.Fatalf("diagnostic = %#v, source span = %q; want MCL-K8S message containing %q at %q", diagnostic, test.source[diagnostic.Span.Start:diagnostic.Span.End], test.wantDetail, test.wantSpan)
 			}
 		})
 	}

@@ -5,8 +5,8 @@ import (
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 )
 
-func builtinKubernetesSchemaType(apiVersion, kind string) (ResolvedType, bool) {
-	schema, exists := k8sschema.Builtin(apiVersion, kind)
+func builtinKubernetesSchemaTypeForVersion(version, apiVersion, kind string) (ResolvedType, bool) {
+	schema, exists := k8sschema.BuiltinForVersion(version, apiVersion, kind)
 	if !exists {
 		return ResolvedType{}, false
 	}

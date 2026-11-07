@@ -14,7 +14,7 @@ mcl version
 
 miseはGitHub Releaseの添付ファイルからOSとアーキテクチャに合うアーカイブを選択して展開します。`latest`はprereleaseを除外します。
 
-CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`などのコマンドを提供します。使い方は`mcl help`で確認できます。
+CLIは`check`、`lint`、`fmt`、`render`、`update`、`fetch`、`lsp`、`completion`などのコマンドを提供します。使い方は`mcl help`で確認できます。
 
 関数とResource Listの組み立て方、名前付き引数とデフォルト引数、Listの展開については[関数とList](docs/function-list-composition.md)を参照してください。
 
@@ -27,6 +27,10 @@ CLIは`check`、`lint`、`fmt`、`render`、`update`、`lsp`、`completion`な�
 ```sh
 mcl render main.mcl --parameter-file cluster.json --parameter-file app-settings.json
 ```
+
+Kubernetes出力の検証には、既定で組み込みの`v1.37.1` OpenAPI Schemaを使います。対象クラスタに合わせる場合は`--kubernetes-version v1.36.4`のように指定します。対応するKubernetes versionは[Project configuration](docs/project-configuration.md)に記載しています。
+
+`mcl update`は依存のLockfileを更新します。既存の`mcl.lock`に固定された依存を取得するときは`mcl fetch --locked main.mcl`を実行してください。`fetch --locked`はLockfileを変更せず、取得した依存をcacheへ保存します。cacheが揃っていれば、通常の`mcl render`はネットワーク接続なしで実行できます。
 
 再現性を必要としない場合は`--allow-nondeterministic-output`を指定できます。この場合は最初の出力を返し、その出力をレンダリングキャッシュへ保存しません。この検査は非決定的な関数が実行されたときの2回の結果を比較するもので、乱数による分岐などですべての実行の再現性を数学的に証明するものではありません。`lookup`は明示的なResource Snapshotを使い、`now`は固定時刻を指定した場合のみ使えます。DNS、環境変数、現在時刻への暗黙アクセスは引き続き無効です。
 

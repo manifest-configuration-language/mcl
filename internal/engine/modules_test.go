@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -14,6 +15,34 @@ const (
 	importerFilename   = "importer.mcl"
 	importerSourceText = "import \"./target.mcl\" as target\nemit target.value\n"
 )
+
+func TestEvaluationOptionsSelectBuiltinKubernetesSchemaVersion(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "project")
+	path := filepath.Join(root, "main.mcl")
+	const source = `let workload = node:
+  apiVersion: "scheduling.k8s.io/v1alpha2"
+  kind: "Workload"
+  metadata:
+    name: "sample"
+  spec:
+    podGroupTemplates:
+      - name: "basic"
+        schedulingPolicy:
+          basic: {}
+emit workload
+`
+	files := newProjectFilesystem(root, fstest.MapFS{
+		projectConfigFileName: &fstest.MapFile{Data: []byte("")},
+		"main.mcl":            &fstest.MapFile{Data: []byte(source)},
+	})
+	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.36.4"}); err != nil {
+		t.Fatalf("evaluate with Kubernetes v1.36.4: %v", err)
+	}
+	if _, _, err := evaluateSourceWithFilesystemAndParameters(t.Context(), path, source, nil, files, nil, EvaluationOptions{KubernetesVersion: "v1.37.1"}); err == nil || !strings.Contains(err.Error(), "no schema is registered") {
+		t.Fatalf("evaluate with Kubernetes v1.37.1 error = %v, want unavailable Workload schema", err)
+	}
+}
 
 func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
 	t.Parallel()
