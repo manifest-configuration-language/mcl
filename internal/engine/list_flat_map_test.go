@@ -34,6 +34,55 @@ emit each empty
 	}
 }
 
+func TestEvaluateListsFlatMapResolvesDeferredListResults(t *testing.T) {
+	t.Parallel()
+
+	const source = `import "std:list" as lists
+
+let settings = node:
+  enabled: true
+fn expand(value: Int) -> List<Int> =
+  if ref(settings).enabled:
+    [value, value + 10]
+  else:
+    []
+let expanded = lists.flatMap([1, 2], expand)
+let output = node:
+  values: expanded
+emit settings
+emit output
+`
+	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want deferred List results to be flattened: %v", err, err)
+	}
+	want := []string{"1", "11", "2", "12"}
+	if len(bundle.Artifacts) != 2 {
+		t.Fatalf("EvaluateSource() emitted %d artifacts, want settings and output", len(bundle.Artifacts))
+	}
+	output := bundle.Artifacts[1].Value
+	if output.Kind == Node && output.Base != nil {
+		output = *output.Base
+	}
+	if output.Kind != Map {
+		t.Fatalf("output = %#v, want a Map", output)
+	}
+	var values Value
+	for _, entry := range output.Map {
+		if entry.Key == "values" {
+			values = entry.Value
+		}
+	}
+	if values.Kind != List || len(values.List) != len(want) {
+		t.Fatalf("output values = %#v, want a List with %d items", values, len(want))
+	}
+	for index, expected := range want {
+		if values.List[index].Kind != Integer || values.List[index].Text != expected {
+			t.Errorf("output value %d = (%v, %q), want (Integer, %q)", index, values.List[index].Kind, values.List[index].Text, expected)
+		}
+	}
+}
+
 func TestEvaluateListsFlatMapRejectsNonListCallback(t *testing.T) {
 	t.Parallel()
 

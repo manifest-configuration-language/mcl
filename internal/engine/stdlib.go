@@ -362,7 +362,7 @@ func callRuntimeHigherOrder(name string, arguments []RuntimeValue, state *Evalua
 					return RuntimeValue{}, fmt.Errorf("exactlyOne item %d: %w", index, err)
 				}
 				if predicate.IsDeferred() {
-					return deferredRuntimePredicate(name, arguments), nil
+					return deferredRuntimeListOperation(name, arguments), nil
 				}
 				if predicate.Kind() != Bool {
 					return RuntimeValue{}, fmt.Errorf("exactlyOne predicate for item %d returned %s, expected Bool", index, kindName(predicate.Kind()))
@@ -395,7 +395,7 @@ func callRuntimeHigherOrder(name string, arguments []RuntimeValue, state *Evalua
 			}
 			if name == fnFlatMap {
 				if transformed.IsDeferred() {
-					return RuntimeValue{}, fmt.Errorf("%s transform for item %d returned a deferred value, expected a List", name, index)
+					return deferredRuntimeListOperation(name, arguments), nil
 				}
 				group, isGroupList := runtimeListValue(transformed)
 				if !isGroupList {
@@ -409,7 +409,7 @@ func callRuntimeHigherOrder(name string, arguments []RuntimeValue, state *Evalua
 				continue
 			}
 			if transformed.IsDeferred() {
-				return deferredRuntimePredicate(name, arguments), nil
+				return deferredRuntimeListOperation(name, arguments), nil
 			}
 			if transformed.Kind() != Bool {
 				return RuntimeValue{}, fmt.Errorf("filter predicate for item %d returned %s, expected Bool", index, kindName(transformed.Kind()))
@@ -441,10 +441,10 @@ func callRuntimeHigherOrder(name string, arguments []RuntimeValue, state *Evalua
 	return accumulator, nil
 }
 
-func deferredRuntimePredicate(name string, arguments []RuntimeValue) RuntimeValue {
+func deferredRuntimeListOperation(name string, arguments []RuntimeValue) RuntimeValue {
 	return RuntimeValue{
 		Value: runtimeValueData{Kind: Null},
-		Deferred: &typedContinuation{Predicate: &runtimePredicateContinuation{
+		Deferred: &typedContinuation{ListOperation: &runtimeListOperationContinuation{
 			Name: name, Arguments: slices.Clone(arguments),
 		}},
 	}

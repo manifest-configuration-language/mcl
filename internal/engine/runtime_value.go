@@ -131,20 +131,20 @@ type runtimeReference struct {
 }
 
 type typedContinuation struct {
-	Expression  typedExpression
-	Scope       map[string]RuntimeValue
-	Rule        *RuntimeRule
-	Arguments   []RuntimeValue
-	Reference   *runtimeReference
-	Binary      *typedBinaryContinuation
-	Conditional *typedConditionalContinuation
-	Predicate   *runtimePredicateContinuation
-	Call        *runtimeCallContinuation
-	Unary       *typedUnaryContinuation
-	Index       *typedIndexContinuation
-	For         *typedForContinuation
-	Overlay     *typedOverlayContinuation
-	Removal     *typedRemovalContinuation
+	Expression    typedExpression
+	Scope         map[string]RuntimeValue
+	Rule          *RuntimeRule
+	Arguments     []RuntimeValue
+	Reference     *runtimeReference
+	Binary        *typedBinaryContinuation
+	Conditional   *typedConditionalContinuation
+	ListOperation *runtimeListOperationContinuation
+	Call          *runtimeCallContinuation
+	Unary         *typedUnaryContinuation
+	Index         *typedIndexContinuation
+	For           *typedForContinuation
+	Overlay       *typedOverlayContinuation
+	Removal       *typedRemovalContinuation
 }
 
 type typedUnaryContinuation struct {
@@ -233,7 +233,7 @@ type typedConditionalContinuation struct {
 	Scope      map[string]RuntimeValue
 }
 
-type runtimePredicateContinuation struct {
+type runtimeListOperationContinuation struct {
 	Name      string
 	Arguments []RuntimeValue
 }
@@ -402,6 +402,11 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 			for _, argument := range value.Deferred.Arguments {
 				count += runtimeValueGraphSizeActive(argument, active)
 			}
+			if listOperation := value.Deferred.ListOperation; listOperation != nil {
+				for _, argument := range listOperation.Arguments {
+					count += runtimeValueGraphSizeActive(argument, active)
+				}
+			}
 			for _, captured := range value.Deferred.Scope {
 				count += runtimeValueGraphSizeActive(captured, active)
 			}
@@ -536,13 +541,13 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 				conditional.Scope = maps.Clone(conditional.Scope)
 				deferred.Conditional = &conditional
 			}
-			if deferred.Predicate != nil {
-				predicate := *deferred.Predicate
-				predicate.Arguments = slices.Clone(predicate.Arguments)
-				for index := range predicate.Arguments {
-					predicate.Arguments[index] = state.clone(predicate.Arguments[index])
+			if deferred.ListOperation != nil {
+				listOperation := *deferred.ListOperation
+				listOperation.Arguments = slices.Clone(listOperation.Arguments)
+				for index := range listOperation.Arguments {
+					listOperation.Arguments[index] = state.clone(listOperation.Arguments[index])
 				}
-				deferred.Predicate = &predicate
+				deferred.ListOperation = &listOperation
 			}
 			if deferred.Call != nil {
 				call := *deferred.Call

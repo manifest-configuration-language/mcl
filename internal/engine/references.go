@@ -136,9 +136,9 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 				if err != nil {
 					return sourceDiagnostic(value.Value.SourcePath, value.Value.Span, err)
 				}
-			} else if value.Deferred.Predicate != nil {
+			} else if value.Deferred.ListOperation != nil {
 				var err error
-				resolved, err = resolveRuntimePredicateContinuation(value.Deferred.Predicate, state, resolve)
+				resolved, err = resolveRuntimeListOperationContinuation(value.Deferred.ListOperation, state, resolve)
 				if err != nil {
 					return sourceDiagnostic(value.Value.SourcePath, value.Value.Span, err)
 				}
@@ -402,13 +402,13 @@ func resolveRuntimeCallContinuation(continuation *runtimeCallContinuation, state
 	return result, nil
 }
 
-func resolveRuntimePredicateContinuation(continuation *runtimePredicateContinuation, state *EvaluationState, resolve func(*RuntimeValue) error) (RuntimeValue, error) {
+func resolveRuntimeListOperationContinuation(continuation *runtimeListOperationContinuation, state *EvaluationState, resolve func(*RuntimeValue) error) (RuntimeValue, error) {
 	if len(continuation.Arguments) != 2 {
-		return RuntimeValue{}, errors.New("predicate continuation has invalid arguments")
+		return RuntimeValue{}, errors.New("list operation continuation has invalid arguments")
 	}
 	items, ok := runtimeListValue(continuation.Arguments[0])
 	if !ok {
-		return RuntimeValue{}, errors.New("predicate continuation expects a List")
+		return RuntimeValue{}, errors.New("list operation continuation expects a List")
 	}
 	result := RuntimeValue{Value: runtimeListResultMetadata(continuation.Arguments[0]), List: make([]RuntimeValue, 0, len(items.List))}
 	matches := 0
@@ -417,17 +417,29 @@ func resolveRuntimePredicateContinuation(continuation *runtimePredicateContinuat
 		if err := state.Budget.consumeIteration(); err != nil {
 			return RuntimeValue{}, err
 		}
-		predicate, err := callRuntimeCallable(continuation.Arguments[1], []RuntimeValue{item}, state)
+		transformed, err := callRuntimeCallable(continuation.Arguments[1], []RuntimeValue{item}, state)
 		if err != nil {
 			return RuntimeValue{}, fmt.Errorf("%s item %d: %w", continuation.Name, index, err)
 		}
-		if err := resolve(&predicate); err != nil {
+		if err := resolve(&transformed); err != nil {
 			return RuntimeValue{}, err
 		}
-		if predicate.Kind() != Bool {
-			return RuntimeValue{}, fmt.Errorf("%s predicate for item %d returned %s, expected Bool", continuation.Name, index, kindName(predicate.Kind()))
+		if continuation.Name == fnFlatMap {
+			group, isGroupList := runtimeListValue(transformed)
+			if !isGroupList {
+				return RuntimeValue{}, fmt.Errorf("%s transform for item %d returned %s, expected a List", continuation.Name, index, kindName(transformed.Kind()))
+			}
+			if err := runtimeAllocationBudgetOf(state).consume(len(group.List)); err != nil {
+				return RuntimeValue{}, err
+			}
+			result.List = append(result.List, group.List...)
+
+			continue
 		}
-		if !predicate.BoolValue() {
+		if transformed.Kind() != Bool {
+			return RuntimeValue{}, fmt.Errorf("%s predicate for item %d returned %s, expected Bool", continuation.Name, index, kindName(transformed.Kind()))
+		}
+		if !transformed.BoolValue() {
 			continue
 		}
 		match = item
