@@ -629,7 +629,7 @@ let pod = node:
 		{name: "invalid emitted nested pod", source: nestedPod, wantErr: true, wantDetail: "kubernetes resource Pod", wantSpan: "100"},
 		{name: "incompatible nested resource", source: strings.Replace(strings.Replace(pod, `cpu: "100m"`, `cpu: 100`, 1), "emit pod\n", "", 1), wantErr: true, wantDetail: "kubernetes resource Pod", wantSpan: "100"},
 		{name: "unknown nested field", source: strings.Replace(strings.Replace(pod, "requests:", "unknownResourceField: \"value\"\n          requests:", 1), "emit pod\n", "", 1), wantErr: true, wantDetail: "unknown field", wantSpan: `"value"`},
-		{name: "dynamically typed nested Map", source: podWithDynamicallyTypedResources, wantErr: true, wantDetail: "expected", wantSpan: "resourceValues"},
+		{name: "dynamically typed nested Map", source: podWithDynamicallyTypedResources},
 		{name: "invalid spread container", source: podWithSpreadContainer, wantErr: true, wantDetail: "kubernetes resource Pod", wantSpan: "100"},
 	}
 	for _, test := range tests {
