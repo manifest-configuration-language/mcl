@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
+	"github.com/manifest-configuration-language/mcl/internal/source"
 	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	jsonschemakind "github.com/santhosh-tekuri/jsonschema/v6/kind"
@@ -879,23 +880,7 @@ func schemaValidationMultipleCause(validation *jsonschema.ValidationError) *json
 }
 
 func appendSourceLocations(locations, additions []SourceDiagnosticLocation, path string, span SourceSpan, message string) []SourceDiagnosticLocation {
-	appendLocation := func(location SourceDiagnosticLocation) {
-		if location.Path == "" || location.Span.End <= location.Span.Start {
-			return
-		}
-		if slices.ContainsFunc(locations, func(existing SourceDiagnosticLocation) bool {
-			return existing.Path == location.Path && existing.Span == location.Span
-		}) {
-			return
-		}
-		locations = append(locations, location)
-	}
-	for _, location := range additions {
-		appendLocation(location)
-	}
-	appendLocation(SourceDiagnosticLocation{Path: path, Span: span, Message: message})
-
-	return locations
+	return source.AppendLocations(locations, additions, path, span, message)
 }
 
 func withoutSourceLocation(locations []SourceDiagnosticLocation, path string, span SourceSpan) []SourceDiagnosticLocation {

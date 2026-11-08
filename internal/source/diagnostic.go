@@ -3,6 +3,7 @@ package source
 
 import (
 	"errors"
+	"slices"
 )
 
 // OriginKind identifies how an output value relates to a source location.
@@ -36,6 +37,27 @@ type DiagnosticLocation struct {
 	Origin       OriginKind
 	Multiplicity OriginMultiplicity
 	Occurrences  int
+}
+
+// AppendLocations adds valid source locations while preserving their first-seen order and deduplicating by path and span.
+func AppendLocations(locations, additions []DiagnosticLocation, path string, span Span, message string) []DiagnosticLocation {
+	appendLocation := func(location DiagnosticLocation) {
+		if location.Path == "" || location.Span.End <= location.Span.Start {
+			return
+		}
+		if slices.ContainsFunc(locations, func(existing DiagnosticLocation) bool {
+			return existing.Path == location.Path && existing.Span == location.Span
+		}) {
+			return
+		}
+		locations = append(locations, location)
+	}
+	for _, location := range additions {
+		appendLocation(location)
+	}
+	appendLocation(DiagnosticLocation{Path: path, Span: span, Message: message})
+
+	return locations
 }
 
 // DiagnosticError carries an evaluation error and its source locations.

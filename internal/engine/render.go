@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	outputpkg "github.com/manifest-configuration-language/mcl/internal/output"
 	"gopkg.in/yaml.v3"
 )
 
@@ -173,13 +174,17 @@ func (plan *BundleOutputPlan) RenderPhaseWithSourceMap(phase string) ([]byte, Ma
 	if err := plan.validatePhase(phase); err != nil {
 		return nil, ManifestSourceMap{}, err
 	}
-	output := append([]byte{}, plan.rendered[phase]...)
-	sourceMap, err := manifestSourceMap(output, plan.artifacts[phase])
+	rendered := append([]byte{}, plan.rendered[phase]...)
+	artifacts := make([]Artifact, len(plan.artifacts[phase]))
+	for index, indexed := range plan.artifacts[phase] {
+		artifacts[index] = indexed.artifact
+	}
+	sourceMap, err := outputpkg.ManifestSourceMapForArtifacts(rendered, artifacts)
 	if err != nil {
 		return nil, ManifestSourceMap{}, err
 	}
 
-	return output, sourceMap, nil
+	return rendered, sourceMap, nil
 }
 
 type indexedArtifact struct {
@@ -223,106 +228,20 @@ func validatePhaseArtifacts(artifacts []indexedArtifact, scopes kubernetesResour
 }
 
 func renderArtifacts(artifacts []indexedArtifact) ([]byte, error) {
-	var output bytes.Buffer
-	encoder := yaml.NewEncoder(&output)
-	encoder.SetIndent(2)
-	if len(artifacts) == 0 {
-		return []byte{}, nil
-	}
-	for _, artifact := range artifacts {
-		node, err := yamlNode(artifact.artifact.Value)
-		if err != nil {
-			return nil, err
-		}
-		if err := encoder.Encode(node); err != nil {
-			return nil, err
-		}
-	}
-	if err := encoder.Close(); err != nil {
-		return nil, fmt.Errorf("encode YAML: %w", err)
-	}
-
-	return output.Bytes(), nil
+	return outputpkg.RenderArtifacts(outputArtifacts(artifacts))
 }
 
 func renderArtifactsJSON(artifacts []indexedArtifact) ([]byte, error) {
-	var output bytes.Buffer
-	output.WriteByte('[')
-	for index, artifact := range artifacts {
-		if index > 0 {
-			output.WriteByte(',')
-		}
-		output.WriteByte('\n')
-		output.WriteString("  ")
-		if err := appendJSONValue(&output, artifact.artifact.Value); err != nil {
-			return nil, err
-		}
-	}
-	if len(artifacts) > 0 {
-		output.WriteByte('\n')
-	}
-	output.WriteByte(']')
-	formatted := jsontext.Value(output.Bytes())
-	if err := formatted.Indent(jsontext.WithIndent("  ")); err != nil {
-		return nil, fmt.Errorf("format JSON output: %w", err)
-	}
-
-	return append(formatted, '\n'), nil
+	return outputpkg.RenderArtifactsJSON(outputArtifacts(artifacts))
 }
 
-func appendJSONValue(output *bytes.Buffer, value Value) error {
-	value = nodeContents(value)
-	switch value.Kind {
-	case Null:
-		output.WriteString("null")
-	case Bool:
-		output.WriteString(strconv.FormatBool(value.Bool))
-	case Integer, Decimal:
-		if !numberPattern.MatchString(value.Text) {
-			return fmt.Errorf("cannot render invalid JSON number %q", value.Text)
-		}
-		output.WriteString(value.Text)
-	case String:
-		encoded, err := json.Marshal(value.Text)
-		if err != nil {
-			return fmt.Errorf("encode JSON string: %w", err)
-		}
-		output.Write(encoded)
-	case List, AdapterBundle:
-		output.WriteByte('[')
-		for index, item := range value.List {
-			if index > 0 {
-				output.WriteByte(',')
-			}
-			if err := appendJSONValue(output, item); err != nil {
-				return err
-			}
-		}
-		output.WriteByte(']')
-	case Map:
-		output.WriteByte('{')
-		for index, entry := range value.Map {
-			if index > 0 {
-				output.WriteByte(',')
-			}
-			key, err := json.Marshal(entry.Key)
-			if err != nil {
-				return fmt.Errorf("encode JSON object key: %w", err)
-			}
-			output.Write(key)
-			output.WriteByte(':')
-			if err := appendJSONValue(output, entry.Value); err != nil {
-				return err
-			}
-		}
-		output.WriteByte('}')
-	case Rule:
-		return errors.New("rule values cannot be emitted")
-	default:
-		return fmt.Errorf("cannot render unresolved reference %q", value.Text)
+func outputArtifacts(artifacts []indexedArtifact) []Artifact {
+	values := make([]Artifact, len(artifacts))
+	for index, artifact := range artifacts {
+		values[index] = artifact.artifact
 	}
 
-	return nil
+	return values
 }
 
 type kubernetesResourceIdentity struct {
@@ -576,7 +495,7 @@ func RenderPhaseArtifacts(bundle Bundle, phase string) ([]RenderedArtifact, erro
 	result := make([]RenderedArtifact, 0, len(artifacts))
 	for _, indexed := range artifacts {
 		var resource bytes.Buffer
-		if err := appendJSONValue(&resource, indexed.artifact.Value); err != nil {
+		if err := outputpkg.AppendJSONValue(&resource, indexed.artifact.Value); err != nil {
 			return nil, fmt.Errorf("render artifact %d as JSON: %w", indexed.index+1, err)
 		}
 		lifecycle := indexed.artifact.Lifecycle
@@ -772,49 +691,6 @@ func combineYAMLDocuments(chunks [][]byte) []byte {
 	}
 
 	return output.Bytes()
-}
-
-func yamlNode(value Value) (*yaml.Node, error) {
-	value = nodeContents(value)
-	switch value.Kind {
-	case Null:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlTagNull, Value: schemaTypeNull}, nil
-	case Bool:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlTagBool, Value: strconv.FormatBool(value.Bool)}, nil
-	case Integer:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlTagInt, Value: value.Text}, nil
-	case Decimal:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlTagFloat, Value: value.Text}, nil
-	case String:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlTagString, Value: value.Text, Style: yaml.DoubleQuotedStyle}, nil
-	case List, AdapterBundle:
-		node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-		for _, item := range value.List {
-			child, err := yamlNode(item)
-			if err != nil {
-				return nil, err
-			}
-			node.Content = append(node.Content, child)
-		}
-
-		return node, nil
-	case Map:
-		node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		for _, entry := range value.Map {
-			key := &yaml.Node{Kind: yaml.ScalarNode, Tag: yamlTagString, Value: entry.Key}
-			child, err := yamlNode(entry.Value)
-			if err != nil {
-				return nil, err
-			}
-			node.Content = append(node.Content, key, child)
-		}
-
-		return node, nil
-	case Rule:
-		return nil, errors.New("rule values cannot be emitted")
-	default:
-		return nil, fmt.Errorf("cannot render unresolved reference %q", value.Text)
-	}
 }
 
 func runtimeValueToYAMLNode(value RuntimeValue) (*yaml.Node, error) {
