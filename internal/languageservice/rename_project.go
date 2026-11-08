@@ -1,8 +1,8 @@
 package languageservice
 
 import (
+	"context"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,35 +17,25 @@ func RenameForProjectFS(params NavigationParams, projectFiles fs.FS, newName str
 	if !IsMCLIdentifier(newName) {
 		return nil
 	}
-	sources, files, ok := projectSourceSnapshot(params, projectFiles)
+	snapshot, files, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
 		return nil
 	}
-	resolveImport := func(importer, modulePath string) (string, bool) {
-		if path.IsAbs(modulePath) || strings.Contains(modulePath, `\`) {
-			return "", false
-		}
-		resolved := path.Clean(path.Join(path.Dir(importer), modulePath))
-		if !fs.ValidPath(resolved) {
-			return "", false
-		}
-		_, exists := sources[resolved]
-
-		return resolved, exists
-	}
-	target, found := ReferenceTargetAt(params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, resolveImport, func(sourcePath string) (string, bool) {
-		source, exists := sources[sourcePath]
-
-		return source, exists
-	})
+	sources := snapshot.Sources()
+	resolveImport := ReferenceImportResolver(snapshot.ResolveImport)
+	target, found := referenceTargetAtWithSnapshot(context.Background(), params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, resolveImport, snapshot.Source, snapshot)
 	if !found || target.Name == newName {
 		return nil
 	}
 	if target.ImportAlias {
-		return renameImportAlias(params.Entrypoint, params.Source, target.Declaration, newName)
+		index, exists := snapshot.SemanticIndex(params.Entrypoint)
+		if !exists {
+			return nil
+		}
+		return renameImportAliasWithIndex(params.Entrypoint, params.Source, target.Declaration, newName, index)
 	}
 	if target.FunctionParameter {
-		return renameFunctionParameterForProject(target, newName, sources, resolveImport)
+		return renameFunctionParameterForProjectSnapshot(target, newName, sources, resolveImport, snapshot)
 	}
 	if target.Local || !target.Exported {
 		return RenameForSource(params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, newName)
@@ -54,8 +44,8 @@ func RenameForProjectFS(params NavigationParams, projectFiles fs.FS, newName str
 	if !exists {
 		return nil
 	}
-	index, err := AnalyzeSource(targetSource)
-	if err != nil {
+	index, exists := snapshot.SemanticIndex(target.Path)
+	if !exists {
 		return nil
 	}
 	declarationIndex := declarationIndexAtSpan(index, target.Declaration)
@@ -87,8 +77,8 @@ func RenameForProjectFS(params NavigationParams, projectFiles fs.FS, newName str
 			return nil
 		}
 		relativePath = filepath.ToSlash(relativePath)
-		importerIndex, err := AnalyzeSource(source)
-		if err != nil {
+		importerIndex, exists := snapshot.SemanticIndex(relativePath)
+		if !exists {
 			return nil
 		}
 		aliases, valid := aliasesForTarget(relativePath, importerIndex.Module, target.Path, resolveImport)
@@ -133,13 +123,27 @@ func RenameFunctionParameterForProjectSources(target ReferenceTarget, newName st
 }
 
 func renameFunctionParameterForProject(target ReferenceTarget, newName string, sources map[string]string, resolveImport ReferenceImportResolver) *RenameResult {
+	return renameFunctionParameterForProjectSnapshot(target, newName, sources, resolveImport, nil)
+}
+
+func renameFunctionParameterForProjectSnapshot(target ReferenceTarget, newName string, sources map[string]string, resolveImport ReferenceImportResolver, snapshot *ProjectSemanticSnapshot) *RenameResult {
 	targetSource, exists := sources[target.Path]
 	if !exists {
 		return nil
 	}
-	semanticIndex, err := AnalyzeSource(targetSource)
-	if err != nil {
-		return nil
+	var semanticIndex *SemanticIndex
+	if snapshot != nil {
+		var exists bool
+		semanticIndex, exists = snapshot.SemanticIndex(target.Path)
+		if !exists {
+			return nil
+		}
+	} else {
+		var err error
+		semanticIndex, err = AnalyzeSource(targetSource)
+		if err != nil {
+			return nil
+		}
 	}
 	parameterFunction := ""
 	functionNames := make(map[string]int)
@@ -195,9 +199,19 @@ func renameFunctionParameterForProject(target ReferenceTarget, newName string, s
 	slices.Sort(paths)
 	for _, sourcePath := range paths {
 		source := sources[sourcePath]
-		importerIndex, err := AnalyzeSource(source)
-		if err != nil {
-			return nil
+		var importerIndex *SemanticIndex
+		if snapshot != nil {
+			var exists bool
+			importerIndex, exists = snapshot.SemanticIndex(sourcePath)
+			if !exists {
+				return nil
+			}
+		} else {
+			var err error
+			importerIndex, err = AnalyzeSource(source)
+			if err != nil {
+				return nil
+			}
 		}
 		aliasesToTarget := make(map[string]bool)
 		aliasCounts := make(map[string]int)
@@ -227,7 +241,7 @@ func renameFunctionParameterForProject(target ReferenceTarget, newName string, s
 			return source, exists
 		}
 		var importerSpans []syntax.SourceSpan
-		for _, reference := range namedArgumentReferencesForSource(sourcePath, importerIndex, resolveImport, readSource) {
+		for _, reference := range namedArgumentReferencesForSnapshot(sourcePath, importerIndex, resolveImport, readSource, snapshot) {
 			if reference.DeclarationPath == target.Path && reference.Declaration == target.Declaration {
 				importerSpans = append(importerSpans, reference.Span)
 			}
@@ -262,6 +276,10 @@ func renameImportAlias(sourcePath, source string, declarationSpan syntax.SourceS
 	if err != nil {
 		return nil
 	}
+	return renameImportAliasWithIndex(sourcePath, source, declarationSpan, newName, index)
+}
+
+func renameImportAliasWithIndex(sourcePath, source string, declarationSpan syntax.SourceSpan, newName string, index *SemanticIndex) *RenameResult {
 	var declaration *syntax.ImportDeclaration
 	for _, node := range index.Module.Nodes {
 		candidate, ok := node.(*syntax.ImportDeclaration)

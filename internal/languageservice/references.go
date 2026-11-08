@@ -3,7 +3,6 @@ package languageservice
 import (
 	"context"
 	"io/fs"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -43,12 +42,26 @@ func ReferenceTargetAt(path, source string, position Position, resolveImport Ref
 
 // ReferenceTargetAtWithContext resolves the declaration at a source position with cancellation support.
 func ReferenceTargetAtWithContext(ctx context.Context, path, source string, position Position, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) (ReferenceTarget, bool) {
+	return referenceTargetAtWithSnapshot(ctx, path, source, position, resolveImport, readSource, nil)
+}
+
+func referenceTargetAtWithSnapshot(ctx context.Context, path, source string, position Position, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader, snapshot *ProjectSemanticSnapshot) (ReferenceTarget, bool) {
 	if ctx.Err() != nil {
 		return ReferenceTarget{}, false
 	}
-	index, err := AnalyzeSource(source)
-	if err != nil {
-		return ReferenceTarget{}, false
+	var index *SemanticIndex
+	if snapshot != nil {
+		var exists bool
+		index, exists = snapshot.SemanticIndex(path)
+		if !exists {
+			return ReferenceTarget{}, false
+		}
+	} else {
+		var err error
+		index, err = AnalyzeSource(source)
+		if err != nil {
+			return ReferenceTarget{}, false
+		}
 	}
 	if ctx.Err() != nil {
 		return ReferenceTarget{}, false
@@ -62,7 +75,7 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 			return ReferenceTarget{Path: path, Name: reference.Name, Declaration: reference.Declaration, Local: true, FunctionParameter: true}, true
 		}
 	}
-	for _, reference := range namedArgumentReferencesForSource(path, index, resolveImport, readSource) {
+	for _, reference := range namedArgumentReferencesForSnapshot(path, index, resolveImport, readSource, snapshot) {
 		if spanContains(reference.Span, offset) {
 			return ReferenceTarget{Path: reference.DeclarationPath, Name: reference.Name, Declaration: reference.Declaration, Local: true, FunctionParameter: true}, true
 		}
@@ -112,9 +125,19 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 			if !ok {
 				return ReferenceTarget{}, false
 			}
-			targetModule, err := syntax.ParseAST(targetSource)
-			if err != nil {
-				return ReferenceTarget{}, false
+			var targetModule syntax.ModuleAST
+			if snapshot != nil {
+				var exists bool
+				targetModule, exists = snapshot.Module(targetPath)
+				if !exists {
+					return ReferenceTarget{}, false
+				}
+			} else {
+				var err error
+				targetModule, err = syntax.ParseAST(targetSource)
+				if err != nil {
+					return ReferenceTarget{}, false
+				}
 			}
 			var target ReferenceTarget
 			found := false
@@ -178,6 +201,10 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 
 // ReferencesForProjectWithContext finds references in a project snapshot with cancellation support.
 func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget, sources map[string]string, resolveImport ReferenceImportResolver, includeDeclaration bool) []Reference {
+	return referencesForProjectWithSnapshot(ctx, target, sources, resolveImport, includeDeclaration, nil)
+}
+
+func referencesForProjectWithSnapshot(ctx context.Context, target ReferenceTarget, sources map[string]string, resolveImport ReferenceImportResolver, includeDeclaration bool, snapshot *ProjectSemanticSnapshot) []Reference {
 	paths := make([]string, 0, len(sources))
 	for path := range sources {
 		paths = append(paths, path)
@@ -189,9 +216,19 @@ func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget
 			return nil
 		}
 		source := sources[path]
-		index, err := AnalyzeSource(source)
-		if err != nil {
-			continue
+		var index *SemanticIndex
+		if snapshot != nil {
+			var exists bool
+			index, exists = snapshot.SemanticIndex(path)
+			if !exists {
+				continue
+			}
+		} else {
+			var err error
+			index, err = AnalyzeSource(source)
+			if err != nil {
+				continue
+			}
 		}
 		if ctx.Err() != nil {
 			return nil
@@ -236,7 +273,7 @@ func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget
 
 						return source, exists
 					}
-					for _, reference := range namedArgumentReferencesForSource(path, index, resolveImport, readSource) {
+					for _, reference := range namedArgumentReferencesForSnapshot(path, index, resolveImport, readSource, snapshot) {
 						if reference.DeclarationPath == target.Path && reference.Declaration == target.Declaration {
 							result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
 						}
@@ -272,7 +309,7 @@ func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget
 
 					return source, exists
 				}
-				for _, reference := range namedArgumentReferencesForSource(path, index, resolveImport, readSource) {
+				for _, reference := range namedArgumentReferencesForSnapshot(path, index, resolveImport, readSource, snapshot) {
 					if reference.DeclarationPath == target.Path && reference.Declaration == target.Declaration {
 						result = append(result, Reference{Path: path, Range: SourceRangeAt(source, reference.Span)})
 					}
@@ -331,30 +368,15 @@ func ReferencesForProjectFSWithContext(ctx context.Context, params NavigationPar
 	if ctx.Err() != nil {
 		return nil
 	}
-	sources, _, ok := projectSourceSnapshot(params, projectFiles)
+	snapshot, _, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
 		return nil
 	}
-	resolveImport := func(importer, modulePath string) (string, bool) {
-		if path.IsAbs(modulePath) || strings.Contains(modulePath, `\\`) {
-			return "", false
-		}
-		resolved := path.Clean(path.Join(path.Dir(importer), modulePath))
-		if !fs.ValidPath(resolved) {
-			return "", false
-		}
-		_, exists := sources[resolved]
-
-		return resolved, exists
-	}
-	target, found := ReferenceTargetAtWithContext(ctx, params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, resolveImport, func(path string) (string, bool) {
-		source, exists := sources[path]
-
-		return source, exists
-	})
+	sources := snapshot.Sources()
+	target, found := referenceTargetAtWithSnapshot(ctx, params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, snapshot.ResolveImport, snapshot.Source, snapshot)
 	if !found {
 		return nil
 	}
 
-	return ReferencesForProjectWithContext(ctx, target, sources, resolveImport, includeDeclaration)
+	return referencesForProjectWithSnapshot(ctx, target, sources, snapshot.ResolveImport, includeDeclaration, snapshot)
 }

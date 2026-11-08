@@ -38,7 +38,8 @@ func CompletionsForProjectFS(params CompletionParams, projectFiles fs.FS) []Comp
 
 // CompletionsForProjectFSWithContext returns completion candidates using the supplied context.
 func CompletionsForProjectFSWithContext(ctx context.Context, params CompletionParams, projectFiles fs.FS) []CompletionItem {
-	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "", nil, nil)
+	snapshot, _, _ := projectSourceSnapshot(NavigationParams{Entrypoint: params.Entrypoint, Source: params.Source}, projectFiles)
+	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "", nil, nil, snapshot)
 }
 
 // CompletionForSource returns completion candidates for a document backed by the host filesystem.
@@ -48,15 +49,15 @@ func CompletionForSource(source string, line, character int, sourcePath string) 
 
 // CompletionForSourceWithContext returns completion candidates using the supplied context.
 func CompletionForSourceWithContext(ctx context.Context, source string, line, character int, sourcePath string) []CompletionItem {
-	return complete(ctx, source, Position{Line: line, Character: character}, "", "", nil, sourcePath, nil, nil)
+	return complete(ctx, source, Position{Line: line, Character: character}, "", "", nil, sourcePath, nil, nil, nil)
 }
 
 // CompletionForSourceWithProjectImportsWithContext resolves imported function signatures from the source reader.
 func CompletionForSourceWithProjectImportsWithContext(ctx context.Context, source string, line, character int, sourcePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
-	return complete(ctx, source, Position{Line: line, Character: character}, "", sourcePath, nil, sourcePath, resolveImport, readSource)
+	return complete(ctx, source, Position{Line: line, Character: character}, "", sourcePath, nil, sourcePath, resolveImport, readSource, nil)
 }
 
-func complete(ctx context.Context, source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
+func complete(ctx context.Context, source string, position Position, projectRoot, entrypoint string, projectFiles fs.FS, sourcePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader, projectSnapshot *ProjectSemanticSnapshot) []CompletionItem {
 	items := []CompletionItem{
 		{Label: "let", Kind: 14, Detail: "キーワード", Documentation: "現在のモジュールで値を宣言します。"},
 		{Label: "emit", Kind: 14, Detail: "キーワード", Documentation: "値をレンダリング結果へ追加します。"},
@@ -83,7 +84,11 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 		start--
 	}
 	prefix := string(runes[start:end])
-	index, parseErr := AnalyzeSource(source)
+	index, cached := projectSnapshot.SemanticIndex(entrypoint)
+	var parseErr error
+	if !cached {
+		index, parseErr = AnalyzeSource(source)
+	}
 	if parseErr == nil {
 		for _, name := range index.VisibleDeclarationNames(position.Line + 1) {
 			items = append(items, CompletionItem{Label: name, Kind: 6, Detail: "モジュール宣言"})
@@ -108,7 +113,7 @@ func complete(ctx context.Context, source string, position Position, projectRoot
 			return string(data), err == nil
 		}
 	}
-	if namedArguments := namedArgumentCompletions(source, position, start, entrypoint, resolveImport, readSource); len(namedArguments) != 0 {
+	if namedArguments := namedArgumentCompletions(source, position, start, entrypoint, resolveImport, readSource, projectSnapshot); len(namedArguments) != 0 {
 		items = append(namedArguments, items...)
 	}
 	if offset, err := offsetAtUTF16(source, position); err == nil {
@@ -237,7 +242,7 @@ func completionTypeName(typeExpr engine.ResolvedType) string {
 	return typeExpr.Name
 }
 
-func namedArgumentCompletions(source string, position Position, prefixStart int, entrypoint string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
+func namedArgumentCompletions(source string, position Position, prefixStart int, entrypoint string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader, projectSnapshot *ProjectSemanticSnapshot) []CompletionItem {
 	lines := strings.Split(source, "\n")
 	if position.Line < 0 || position.Line >= len(lines) {
 		return nil
@@ -324,7 +329,33 @@ func namedArgumentCompletions(source string, position Position, prefixStart int,
 		if !foundImport {
 			return nil
 		}
-		function := loadImportedFunctionModuleUsing(entrypoint, modulePath, resolveImport, readSource).functions[member]
+		var function *syntax.FunctionDeclaration
+		if projectSnapshot != nil {
+			if targetPath, resolved := projectSnapshot.ResolveImport(entrypoint, modulePath); resolved {
+				if targetIndex, found := projectSnapshot.SemanticIndex(targetPath); found {
+					ambiguous := false
+					for _, node := range targetIndex.Module.Nodes {
+						candidate, ok := node.(*syntax.FunctionDeclaration)
+						if !ok || !candidate.Exported || candidate.Name != member || candidate.Function == nil {
+							continue
+						}
+						if function != nil {
+							function = nil
+							ambiguous = true
+							break
+						}
+						function = candidate
+					}
+					if ambiguous {
+						return nil
+					}
+				}
+			} else {
+				return nil
+			}
+		} else {
+			function = loadImportedFunctionModuleUsing(entrypoint, modulePath, resolveImport, readSource).functions[member]
+		}
 		if function == nil {
 			return nil
 		}

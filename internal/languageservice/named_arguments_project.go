@@ -42,6 +42,10 @@ func NamedArgumentReferencesForProject(importerPath, source string, projectFiles
 }
 
 func namedArgumentReferencesForSource(sourcePath string, index *SemanticIndex, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []ProjectNamedArgumentReference {
+	return namedArgumentReferencesForSnapshot(sourcePath, index, resolveImport, readSource, nil)
+}
+
+func namedArgumentReferencesForSnapshot(sourcePath string, index *SemanticIndex, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader, snapshot *ProjectSemanticSnapshot) []ProjectNamedArgumentReference {
 	if resolveImport == nil || readSource == nil {
 		return nil
 	}
@@ -80,7 +84,11 @@ func namedArgumentReferencesForSource(sourcePath string, index *SemanticIndex, r
 		}
 		module, loaded := modules[alias]
 		if !loaded {
-			module = loadImportedFunctionModuleUsing(sourcePath, modulePath, resolveImport, readSource)
+			if snapshot != nil {
+				module = loadImportedFunctionModuleFromSnapshot(sourcePath, modulePath, snapshot)
+			} else {
+				module = loadImportedFunctionModuleUsing(sourcePath, modulePath, resolveImport, readSource)
+			}
 			modules[alias] = module
 		}
 		function := module.functions[member]
@@ -107,6 +115,19 @@ func namedArgumentReferencesForSource(sourcePath string, index *SemanticIndex, r
 	return references
 }
 
+func loadImportedFunctionModuleFromSnapshot(importerPath, modulePath string, snapshot *ProjectSemanticSnapshot) importedFunctionModule {
+	targetPath, resolved := snapshot.ResolveImport(importerPath, modulePath)
+	if !resolved {
+		return importedFunctionModule{}
+	}
+	targetIndex, found := snapshot.SemanticIndex(targetPath)
+	if !found {
+		return importedFunctionModule{}
+	}
+
+	return importedFunctionModuleFromAST(targetPath, targetIndex.Module)
+}
+
 func loadImportedFunctionModuleUsing(importerPath, modulePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) importedFunctionModule {
 	targetPath, resolved := resolveImport(importerPath, modulePath)
 	if !resolved {
@@ -120,6 +141,11 @@ func loadImportedFunctionModuleUsing(importerPath, modulePath string, resolveImp
 	if err != nil {
 		return importedFunctionModule{}
 	}
+
+	return importedFunctionModuleFromAST(targetPath, targetModule)
+}
+
+func importedFunctionModuleFromAST(targetPath string, targetModule syntax.ModuleAST) importedFunctionModule {
 	result := importedFunctionModule{path: targetPath, functions: make(map[string]*syntax.FunctionDeclaration)}
 	ambiguousFunctions := make(map[string]bool)
 	for _, node := range targetModule.Nodes {

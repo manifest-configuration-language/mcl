@@ -69,7 +69,7 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 		}
 		documentMap := ManifestDocumentSourceMap{Index: index + 1}
 		outputRanges := yamlNodeOutputRanges(output, lineStarts, lineEnds, document.Content[0])
-		appendManifestValueEntries(&documentMap.Entries, output, lineStarts, lineEnds, outputRanges, document.Content[0], artifact.artifact.Value, "", nil)
+		appendManifestValueEntries(&documentMap.Entries, output, lineEnds, outputRanges, document.Content[0], artifact.artifact.Value, "", nil)
 		result.Documents = append(result.Documents, documentMap)
 	}
 	var extra yaml.Node
@@ -84,11 +84,11 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 	return result, nil
 }
 
-func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte, lineStarts, lineEnds []int, outputRanges map[*yaml.Node]SourceSpan, node *yaml.Node, value Value, path string, inherited []SourceDiagnosticLocation) {
+func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte, lineEnds []int, outputRanges yamlOutputRanges, node *yaml.Node, value Value, path string, inherited []SourceDiagnosticLocation) {
 	sourceValue := value
 	value = nodeContents(value)
 	locations := appendSourceLocations(slices.Clone(inherited), sourceValue.SourceLocations, "", SourceSpan{}, "")
-	appendManifestEntry(entries, outputRanges[node], path, "value", sourceValue.SourcePath, sourceValue.Span, locations)
+	appendManifestEntry(entries, outputRanges.values[node], path, "value", sourceValue.SourcePath, sourceValue.Span, locations)
 	childLocations := appendSourceLocations(slices.Clone(locations), nil, sourceValue.SourcePath, sourceValue.Span, "Containing value")
 
 	//nolint:exhaustive // 部分的なKind判定であり、その他の値は後続の共通処理で扱います。
@@ -98,7 +98,7 @@ func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte
 			if index >= len(node.Content) {
 				break
 			}
-			appendManifestValueEntries(entries, output, lineStarts, lineEnds, outputRanges, node.Content[index], item, path+"/"+strconv.Itoa(index), childLocations)
+			appendManifestValueEntries(entries, output, lineEnds, outputRanges, node.Content[index], item, path+"/"+strconv.Itoa(index), childLocations)
 		}
 	case Map:
 		for index, entry := range value.Map {
@@ -110,8 +110,8 @@ func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte
 			childNode := node.Content[contentIndex+1]
 			childPath := path + "/" + escapeJSONPointer(entry.Key)
 			keyLocations := appendSourceLocations(slices.Clone(childLocations), entry.KeySourceLocations, entry.KeySourcePath, entry.KeySpan, "Map key")
-			appendManifestEntry(entries, mappingKeyOutputRange(output, lineStarts, lineEnds, keyNode), childPath, "key", entry.KeySourcePath, entry.KeySpan, keyLocations)
-			appendManifestValueEntries(entries, output, lineStarts, lineEnds, outputRanges, childNode, entry.Value, childPath, childLocations)
+			appendManifestEntry(entries, mappingKeyOutputRange(output, lineEnds, outputRanges.direct[keyNode], keyNode), childPath, "key", entry.KeySourcePath, entry.KeySpan, keyLocations)
+			appendManifestValueEntries(entries, output, lineEnds, outputRanges, childNode, entry.Value, childPath, childLocations)
 		}
 	}
 }
@@ -188,32 +188,44 @@ func sourceOriginFromMessage(message string) SourceOriginKind {
 	}
 }
 
-func yamlNodeOutputRanges(output []byte, lineStarts, lineEnds []int, root *yaml.Node) map[*yaml.Node]SourceSpan {
-	ranges := make(map[*yaml.Node]SourceSpan)
-	var visit func(*yaml.Node) SourceSpan
-	visit = func(node *yaml.Node) SourceSpan {
+type yamlOutputRanges struct {
+	values map[*yaml.Node]SourceSpan
+	direct map[*yaml.Node]SourceSpan
+}
+
+func yamlNodeOutputRanges(output []byte, lineStarts, lineEnds []int, root *yaml.Node) yamlOutputRanges {
+	ranges := yamlOutputRanges{
+		values: make(map[*yaml.Node]SourceSpan),
+		direct: make(map[*yaml.Node]SourceSpan),
+	}
+	order := []*yaml.Node{root}
+	for index := 0; index < len(order); index++ {
+		node := order[index]
 		span := SourceSpan{
 			Start: yamlNodeStart(output, lineStarts, lineEnds, node),
 			End:   yamlNodeOutputEnd(output, lineStarts, lineEnds, node),
 		}
+		ranges.values[node] = span
+		ranges.direct[node] = span
+		order = append(order, node.Content...)
+	}
+	for index := len(order) - 1; index >= 0; index-- {
+		node := order[index]
+		span := ranges.values[node]
 		for _, child := range node.Content {
-			childSpan := visit(child)
-			if childSpan.End > span.End {
+			if childSpan := ranges.values[child]; childSpan.End > span.End {
 				span.End = childSpan.End
 			}
 		}
-		ranges[node] = span
-
-		return span
+		ranges.values[node] = span
 	}
-	visit(root)
 
 	return ranges
 }
 
-func mappingKeyOutputRange(output []byte, lineStarts, lineEnds []int, node *yaml.Node) SourceSpan {
-	start := yamlNodeStart(output, lineStarts, lineEnds, node)
-	end := yamlNodeOutputEnd(output, lineStarts, lineEnds, node)
+func mappingKeyOutputRange(output []byte, lineEnds []int, outputRange SourceSpan, node *yaml.Node) SourceSpan {
+	start := outputRange.Start
+	end := outputRange.End
 	if start < 0 || start > end || end > len(output) {
 		return SourceSpan{Start: start, End: start}
 	}

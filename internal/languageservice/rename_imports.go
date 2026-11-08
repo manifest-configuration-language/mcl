@@ -40,10 +40,11 @@ func RenameFileImportsForProjectFS(params NavigationParams, projectFiles fs.FS, 
 	if !validMCLProjectPath(oldPath) || !validMCLProjectPath(newPath) || oldPath == newPath {
 		return nil, errors.New("old and new paths must be distinct project-relative MCL paths")
 	}
-	sources, _, ok := projectSourceSnapshot(params, projectFiles)
+	snapshot, _, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
 		return nil, errors.New("could not read the MCL project")
 	}
+	sources := snapshot.Sources()
 	if _, exists := sources[oldPath]; !exists {
 		return nil, fmt.Errorf("MCL source does not exist: %s", oldPath)
 	}
@@ -59,10 +60,15 @@ func RenameFileImportsForProjectFS(params NavigationParams, projectFiles fs.FS, 
 	result := &RenameFileImportsResult{OldPath: oldPath, NewPath: newPath, Edits: make([]RenameEdit, 0)}
 	for _, importer := range paths {
 		source := sources[importer]
-		module, err := syntax.ParseAST(source)
-		if err != nil {
+		index, parsed := snapshot.SemanticIndex(importer)
+		if !parsed {
+			_, err := syntax.ParseAST(source)
+			if err == nil {
+				return nil, &ImportRenameError{Path: importer, Err: errors.New("module is not present in the semantic snapshot")}
+			}
 			return nil, &ImportRenameError{Path: importer, Err: err}
 		}
+		module := index.Module
 		newImporter := importer
 		if importer == oldPath {
 			newImporter = newPath

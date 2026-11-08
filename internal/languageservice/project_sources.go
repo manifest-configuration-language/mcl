@@ -7,7 +7,7 @@ import (
 	"testing/fstest"
 )
 
-func projectSourceSnapshot(params NavigationParams, projectFiles fs.FS) (map[string]string, fstest.MapFS, bool) {
+func projectSourceSnapshot(params NavigationParams, projectFiles fs.FS) (*ProjectSemanticSnapshot, fstest.MapFS, bool) {
 	if projectFiles == nil || !fs.ValidPath(params.Entrypoint) || params.Entrypoint == "." || strings.Contains(params.Entrypoint, `\`) || path.Ext(params.Entrypoint) != ".mcl" {
 		return nil, nil, false
 	}
@@ -34,6 +34,10 @@ func projectSourceSnapshot(params NavigationParams, projectFiles fs.FS) (map[str
 	}
 	sources[params.Entrypoint] = params.Source
 	files[params.Entrypoint] = &fstest.MapFile{Data: []byte(params.Source)}
+	snapshot, err := NewProjectSemanticSnapshotFromSources(sources)
+	if err != nil {
+		return nil, nil, false
+	}
 
-	return sources, files, true
+	return snapshot, files, true
 }

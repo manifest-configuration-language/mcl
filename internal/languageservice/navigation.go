@@ -46,7 +46,11 @@ type StandardLibraryFunctionHover struct {
 
 // DefinitionForProjectFS finds a local or imported declaration without reading host files.
 func DefinitionForProjectFS(params NavigationParams, projectFiles fs.FS) *Definition {
-	resolved, ok := navigationTarget(params, projectFiles)
+	snapshot, files, ok := projectSourceSnapshot(params, projectFiles)
+	if !ok {
+		return nil
+	}
+	resolved, ok := navigationTarget(params, snapshot, files)
 	if !ok {
 		return nil
 	}
@@ -56,9 +60,13 @@ func DefinitionForProjectFS(params NavigationParams, projectFiles fs.FS) *Defini
 
 // HoverForProjectFS returns syntax-level declaration information from the in-memory project.
 func HoverForProjectFS(params NavigationParams, projectFiles fs.FS) *Hover {
-	resolved, ok := navigationTarget(params, projectFiles)
+	snapshot, files, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
-		return standardLibraryHover(params, projectFiles)
+		return nil
+	}
+	resolved, ok := navigationTarget(params, snapshot, files)
+	if !ok {
+		return standardLibraryHover(params, snapshot)
 	}
 	contents := ""
 	if resolved.node != nil {
@@ -74,12 +82,12 @@ func HoverForProjectFS(params NavigationParams, projectFiles fs.FS) *Hover {
 	return &Hover{Contents: contents, Range: SourceRangeAt(resolved.source, resolved.Span)}
 }
 
-func standardLibraryHover(params NavigationParams, projectFiles fs.FS) *Hover {
-	if projectFiles == nil || params.Entrypoint == "" {
+func standardLibraryHover(params NavigationParams, snapshot *ProjectSemanticSnapshot) *Hover {
+	if snapshot == nil || params.Entrypoint == "" {
 		return nil
 	}
-	index, err := AnalyzeSource(params.Source)
-	if err != nil {
+	index, exists := snapshot.SemanticIndex(params.Entrypoint)
+	if !exists {
 		return nil
 	}
 	offset, err := sourceindex.New(params.Source).OffsetAt(sourceindex.Position{
@@ -145,12 +153,12 @@ type navigationResult struct {
 	node   syntax.ASTNode
 }
 
-func navigationTarget(params NavigationParams, projectFiles fs.FS) (navigationResult, bool) {
-	if projectFiles == nil || params.Entrypoint == "" {
+func navigationTarget(params NavigationParams, snapshot *ProjectSemanticSnapshot, projectFiles fs.FS) (navigationResult, bool) {
+	if snapshot == nil || projectFiles == nil || params.Entrypoint == "" {
 		return navigationResult{}, false
 	}
-	index, err := AnalyzeSource(params.Source)
-	if err != nil {
+	index, exists := snapshot.SemanticIndex(params.Entrypoint)
+	if !exists {
 		return navigationResult{}, false
 	}
 	position := sourceindex.Position{Line: params.Line, Character: params.Character}
@@ -163,15 +171,14 @@ func navigationTarget(params NavigationParams, projectFiles fs.FS) (navigationRe
 			return navigationResult{path: params.Entrypoint, source: params.Source, Span: reference.Declaration}, true
 		}
 	}
-	for _, reference := range NamedArgumentReferencesForProject(params.Entrypoint, params.Source, projectFiles) {
+	for _, reference := range namedArgumentReferencesForSnapshot(params.Entrypoint, index, snapshot.ResolveImport, snapshot.Source, snapshot) {
 		if spanContains(reference.Span, offset) {
-			targetBytes, err := fs.ReadFile(projectFiles, reference.DeclarationPath)
-			if err != nil {
+			targetSource, exists := snapshot.Source(reference.DeclarationPath)
+			if !exists {
 				return navigationResult{}, false
 			}
-			targetSource := string(targetBytes)
-			targetModule, err := syntax.ParseAST(targetSource)
-			if err != nil {
+			targetModule, exists := snapshot.Module(reference.DeclarationPath)
+			if !exists {
 				return navigationResult{}, false
 			}
 			for _, node := range targetModule.Nodes {
@@ -187,7 +194,7 @@ func navigationTarget(params NavigationParams, projectFiles fs.FS) (navigationRe
 			return navigationResult{path: reference.DeclarationPath, source: targetSource, Span: reference.Declaration}, true
 		}
 	}
-	if target, found := importedNavigationTarget(params, projectFiles, index, offset); found {
+	if target, found := importedNavigationTarget(params, snapshot, index, offset); found {
 		return target, true
 	}
 	for _, binding := range index.VisibleLocalBindings(offset) {
@@ -221,7 +228,7 @@ func navigationTarget(params NavigationParams, projectFiles fs.FS) (navigationRe
 	return navigationResult{}, false
 }
 
-func importedNavigationTarget(params NavigationParams, projectFiles fs.FS, index *SemanticIndex, offset int) (navigationResult, bool) {
+func importedNavigationTarget(params NavigationParams, snapshot *ProjectSemanticSnapshot, index *SemanticIndex, offset int) (navigationResult, bool) {
 	references := append(append([]QualifiedReference(nil), index.Qualified...), index.QualifiedType...)
 	for _, reference := range references {
 		if !spanContains(reference.Span, offset) || index.LocalAt(reference.Alias, reference.Span.Start).Found {
@@ -232,17 +239,16 @@ func importedNavigationTarget(params NavigationParams, projectFiles fs.FS, index
 			if !ok || declaration.Name != reference.Alias || strings.HasPrefix(declaration.ModulePath, "std:") {
 				continue
 			}
-			targetPath, resolved := ResolveProjectImport(params.Entrypoint, declaration.ModulePath, projectFiles)
+			targetPath, resolved := snapshot.ResolveImport(params.Entrypoint, declaration.ModulePath)
 			if !resolved {
 				return navigationResult{}, false
 			}
-			sourceBytes, err := fs.ReadFile(projectFiles, targetPath)
-			if err != nil {
+			source, exists := snapshot.Source(targetPath)
+			if !exists {
 				return navigationResult{}, false
 			}
-			source := string(sourceBytes)
-			module, err := syntax.ParseAST(source)
-			if err != nil {
+			module, exists := snapshot.Module(targetPath)
+			if !exists {
 				return navigationResult{}, false
 			}
 			var result navigationResult

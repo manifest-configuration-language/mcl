@@ -16,6 +16,8 @@ FormatterのList内Map開始位置を整える後処理では、置換範囲を�
 
 Parserでは、トップレベルの宣言順序判定と、`type`・`param`宣言のトークン解析およびAST構築を分離します。トップレベルにはフェーズ遷移とASTへの追加を残し、各宣言の解析関数は元の診断文、Source Span、parser helperの呼び出し順を維持します。
 
+Language Serviceのproject FS経路では、読み込んだsource一式を`ProjectSemanticSnapshot`に保持し、各モジュールのASTと`SemanticIndex`を必要になった時点で一度だけ生成します。Definition、Hover、References、Rename、名前付き引数補完は、同じsnapshot内の解析結果を再利用します。構文エラーのあるsourceもsnapshotのsource一覧には保持し、機能ごとの既存の失敗・スキップ動作を維持します。現状ではproject FS APIの呼び出しごとにsnapshotを作成するため、LSPリクエスト間でSemanticIndexを再利用する段階には至っていません。
+
 ## 今回変更しない項目
 
 Dependency Module indexの差分更新は、import解決がファイル探索結果にも依存するため、source hashだけで再解決を省く設計にはしません。現状は重複処理を共通化する余地を追加調査し、依存解決のキャッシュキーと無効化条件が明確になるまで挙動を変更しません。
@@ -32,4 +34,4 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言を実装しました。Dependency Module index、Typed IR解析キャッシュ、Typed IR評価器、CLIフラグ、Dependency Lockは、既存の無効化条件・所有権・診断・コマンドごとの挙動を保つ具体的な変更単位を確認できていないため、今回は変更対象に含めていません。
+Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言を実装しました。Language Serviceには遅延解析snapshotを追加し、同一問い合わせ内のASTとSemanticIndexの再解析を除きました。Dependency Module indexの差分更新、LSPリクエスト間のSemanticIndex共有、Typed IR解析キャッシュ、Typed IR評価器、CLIフラグ、Dependency Lockは、既存の無効化条件・所有権・診断・コマンドごとの挙動を保つ具体的な変更単位を確認できていないため、引き続き未対応です。
