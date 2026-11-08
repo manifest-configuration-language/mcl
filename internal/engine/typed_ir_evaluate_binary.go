@@ -19,7 +19,7 @@ func (expression typedExpression) evaluateBinary(context typedEvaluationContext)
 		return RuntimeValue{
 			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 			Deferred: &typedContinuation{Binary: &typedBinaryContinuation{
-				Operator: expression.operator, Left: left, RightExpression: &rightExpression, Scope: context.captureRuntimeScope(),
+				Operator: expression.operator, Left: left, RightExpression: &rightExpression, Frame: context.captureRuntimeFrame(),
 			}},
 		}, nil
 	}
@@ -45,7 +45,7 @@ func (expression typedExpression) evaluateBinary(context typedEvaluationContext)
 		return RuntimeValue{
 			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 			Deferred: &typedContinuation{Binary: &typedBinaryContinuation{
-				Operator: expression.operator, Left: left, Right: right, Scope: context.captureRuntimeScope(),
+				Operator: expression.operator, Left: left, Right: right, Frame: context.captureRuntimeFrame(),
 			}},
 		}, nil
 	}

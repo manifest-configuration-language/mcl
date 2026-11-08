@@ -1,7 +1,5 @@
 package engine
 
-import "maps"
-
 // ExprID is an index into one immutable typed expression unit.
 type ExprID uint32
 
@@ -147,12 +145,12 @@ func (context typedEvaluationContext) runtimeBinding(name string) (RuntimeValue,
 	return value, exists
 }
 
-func (context typedEvaluationContext) captureRuntimeScope() map[string]RuntimeValue {
+func (context typedEvaluationContext) captureRuntimeFrame() *runtimeFrame {
 	if context.frame != nil {
-		return context.frame.flatten()
+		return context.frame
 	}
 
-	return maps.Clone(context.runtimeEnv)
+	return newRuntimeRootFrame(context.runtimeEnv)
 }
 
 func (context typedEvaluationContext) captureLambdaScope() (map[string]RuntimeValue, *runtimeFrame) {

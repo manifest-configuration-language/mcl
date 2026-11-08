@@ -101,6 +101,53 @@ func TestCloningDeferredForSharesImmutableTypedUnit(t *testing.T) {
 	}
 }
 
+func TestCloningDeferredFramePreservesCyclesAndNodeIdentity(t *testing.T) {
+	identity := &NodeIdentity{}
+	frame := &runtimeFrame{bindings: make(map[string]RuntimeValue)}
+	deferred := RuntimeValue{Deferred: &typedContinuation{Frame: frame}}
+	frame.bindings["node"] = RuntimeValue{Value: runtimeValueData{Kind: Node, NodeID: identity}}
+	frame.bindings["deferred"] = deferred
+
+	if size := runtimeValueGraphSize(deferred); size == 0 {
+		t.Fatal("runtimeValueGraphSize() returned zero for a deferred frame cycle")
+	}
+	cloned := cloneRuntimeValueGraph(deferred, nil)
+	clonedFrame := cloned.Deferred.Frame
+	if clonedFrame == nil || clonedFrame == frame {
+		t.Fatalf("cloned frame = %p, want a distinct non-nil frame", clonedFrame)
+	}
+	capturedNode, ok := clonedFrame.lookup("node")
+	if !ok || capturedNode.NodeIdentity() == nil || capturedNode.NodeIdentity() == identity {
+		t.Fatalf("cloned node identity = %p, want a distinct non-nil identity", capturedNode.NodeIdentity())
+	}
+	capturedDeferred, ok := clonedFrame.lookup("deferred")
+	if !ok || capturedDeferred.Deferred == nil || capturedDeferred.Deferred.Frame != clonedFrame {
+		t.Fatalf("cloned frame cycle points to %#v, want its cloned frame", capturedDeferred.Deferred)
+	}
+}
+
+func TestCloningDynamicKeyFramePreservesNodeIdentity(t *testing.T) {
+	identity := &NodeIdentity{}
+	frame := newRuntimeRootFrame(map[string]RuntimeValue{
+		"target": {Value: runtimeValueData{Kind: Node, NodeID: identity}},
+	})
+	expression := typedExpression{kind: typedExpressionReference, text: "target"}
+	value := RuntimeValue{
+		Value: runtimeValueData{Kind: Map},
+		Map:   []RuntimeEntry{{KeyExpression: &expression, KeyFrame: frame}},
+	}
+
+	cloned := cloneRuntimeValueGraph(value, nil)
+	clonedFrame := cloned.Map[0].KeyFrame
+	if clonedFrame == nil || clonedFrame == frame {
+		t.Fatalf("cloned dynamic key frame = %p, want a distinct non-nil frame", clonedFrame)
+	}
+	captured, ok := clonedFrame.lookup("target")
+	if !ok || captured.NodeIdentity() == nil || captured.NodeIdentity() == identity {
+		t.Fatalf("cloned dynamic key target identity = %p, want a distinct non-nil identity", captured.NodeIdentity())
+	}
+}
+
 func runtimeFrameTestValue(text string) RuntimeValue {
 	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: text}}
 }

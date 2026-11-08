@@ -32,7 +32,7 @@ CLIでは`render`、`check`、`explain`、`diff`、`update`、`fetch`がそれ�
 
 Dependency Lockの`loadRemote()`では、ManifestとChartで重複していた最大サイズの選択を`remoteMaximumSize()`へまとめました。locked fetch、update、offline readの処理順、cache errorの扱い、digest診断は分岐ごとに維持しています。
 
-Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。すべてのtyped LambdaはFrameを捕捉し、呼び出し時に引数とlocalをchild frameとして追加するため、呼び出しごとの外側環境Map複製を避けます。runtime value graphをcloneするときは、Frameをmemoizeしてbinding値を既存のclone状態へ通し、Node Identityのclone semanticsを保ちます。Deferred値と動的Map keyは生成時にFrameを既存のMap scopeへflattenするため、これらの継続にFrame pointerは残りません。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
+Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。すべてのtyped LambdaはFrameを捕捉し、呼び出し時に引数とlocalをchild frameとして追加するため、呼び出しごとの外側環境Map複製を避けます。遅延binary・conditional・for継続とdynamic Map keyも、環境をMapへflattenせずFrameを捕捉します。runtime value graphをcloneするときはFrameをmemoizeし、binding値を既存のclone状態へ通してNode Identityのclone semanticsと共有関係を保ちます。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
 
 ## 今回変更しない項目
 
@@ -50,13 +50,15 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR callと`for`式評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化、Dependency Lockのサイズ選択共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。評価器の残りの責務整理は遅延評価、source location、scope captureの境界を確認して段階的に扱います。
+Source Map、CRD判定とdescriptor canonicalization、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call・`for`・binary評価の抽出、`for`反復・Lambda invocation・Deferred scopeのFrame化、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化、Dependency Lockのサイズ選択共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。runtime scopeのMap captureはDeferred値とdynamic Map keyから除去しました。Typed IRの根本的な再設計とCompiler/Runtime分離は未完了です。
 
 ## 2026年11月8日の追加実装
 
 `moduleLoader`が個別に所有していたimport moduleのRuntime export cache、exported type cache、`TypeAnalysisContext`を`ProjectSession`へまとめました。Sessionは評価ごとに生成し、既存のcache key、値のclone、cache lifetime、診断を維持しています。この変更ではworkspace snapshotや型解析結果を評価間で共有しません。
 
 遅延`for`継続は、bodyの再帰式を継続値に直接保持する方式から、`typedUnit`と`ExprID`で参照する方式へ変更しました。Unitは遅延継続を作るときにbodyを一度だけ複製し、RuntimeValue graphのcloneでは同じUnitを共有します。現行評価器にはUnitから従来の再帰式を取得するadapterを残しています。Unitの中身はまだbody全体の再帰式であり、Typed IR全体をarena化した状態ではありません。
+
+Deferred binary・conditional・for継続とdynamic Map keyのscope captureを`map[string]RuntimeValue`から`*runtimeFrame`へ変更しました。Frameは既存のlexical parent chainを保ち、RuntimeValue cloneではmemoized frame cloneによってNode Identityの分離、共有frame参照、cycleを扱います。追加したMCL integration testは関数引数をcaptureする全4経路を評価し、engine testはFrame cycle cloneとNode Identityを確認します。
 
 `typedExpression.evaluate()`のBinary式分岐を`evaluateBinary()`へ移しました。左辺・右辺の評価順、論理演算の短絡、遅延継続が捕捉する式とscope、Source metadata、診断を維持し、budgetとallocationの消費は共通dispatchに残しています。
 

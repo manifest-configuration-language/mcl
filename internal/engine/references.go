@@ -57,7 +57,7 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 			}
 			if entry.KeyExpression != nil && states[index] != 2 {
 				states[index] = 1
-				key, err := evaluateTypedContinuation(&typedContinuation{Expression: *entry.KeyExpression, Scope: entry.KeyScope}, state)
+				key, err := evaluateTypedContinuation(&typedContinuation{Expression: *entry.KeyExpression, Frame: entry.KeyFrame}, state)
 				if err != nil {
 					states[index] = 0
 
@@ -75,7 +75,7 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 				}
 				entry.Key = key.Value.Text
 				entry.KeyExpression = nil
-				entry.KeyScope = nil
+				entry.KeyFrame = nil
 				states[index] = 2
 			}
 			if states[index] == 1 {
@@ -481,7 +481,7 @@ func resolveTypedBinaryContinuation(continuation *typedBinaryContinuation, state
 	right := continuation.Right
 	if continuation.RightExpression != nil {
 		var err error
-		right, err = evaluateTypedContinuation(&typedContinuation{Expression: *continuation.RightExpression, Scope: continuation.Scope}, state)
+		right, err = evaluateTypedContinuation(&typedContinuation{Expression: *continuation.RightExpression, Frame: continuation.Frame}, state)
 		if err != nil {
 			return RuntimeValue{}, err
 		}
@@ -509,7 +509,7 @@ func resolveTypedConditionalContinuation(continuation *typedConditionalContinuat
 	if condition.BoolValue() {
 		branch = continuation.ThenBranch
 	}
-	resolved, err := evaluateTypedContinuation(&typedContinuation{Expression: branch, Scope: continuation.Scope}, state)
+	resolved, err := evaluateTypedContinuation(&typedContinuation{Expression: branch, Frame: continuation.Frame}, state)
 	if err != nil {
 		return RuntimeValue{}, err
 	}
@@ -564,11 +564,13 @@ func resolveTypedForContinuation(continuation *typedForContinuation, state *Eval
 		return RuntimeValue{}, typeDiagnostic(fmt.Errorf("for expression expects a List, got %s", kindName(source.Kind())))
 	}
 	result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: continuation.Span, SourcePath: continuation.SourcePath}, List: make([]RuntimeValue, 0, len(items.List))}
-	environment := continuation.Scope
-	if environment == nil {
-		environment = state.Environment
+	environment := state.Environment
+	parentFrame := continuation.Frame
+	if parentFrame == nil {
+		parentFrame = newRuntimeRootFrame(environment)
+	} else {
+		environment = nil
 	}
-	parentFrame := newRuntimeRootFrame(environment)
 	for _, item := range items.List {
 		if err := state.Budget.consumeIteration(); err != nil {
 			return RuntimeValue{}, err

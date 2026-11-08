@@ -137,7 +137,7 @@ type runtimeReference struct {
 
 type typedContinuation struct {
 	Expression    typedExpression
-	Scope         map[string]RuntimeValue
+	Frame         *runtimeFrame
 	Rule          *RuntimeRule
 	Arguments     []RuntimeValue
 	Reference     *runtimeReference
@@ -205,7 +205,7 @@ type typedForContinuation struct {
 	Unit       *typedUnit
 	Body       ExprID
 	LoopName   string
-	Scope      map[string]RuntimeValue
+	Frame      *runtimeFrame
 	SourcePath string
 	Span       SourceSpan
 }
@@ -229,14 +229,14 @@ type typedBinaryContinuation struct {
 	Left            RuntimeValue
 	Right           RuntimeValue
 	RightExpression *typedExpression
-	Scope           map[string]RuntimeValue
+	Frame           *runtimeFrame
 }
 
 type typedConditionalContinuation struct {
 	Condition  RuntimeValue
 	ThenBranch typedExpression
 	ElseBranch typedExpression
-	Scope      map[string]RuntimeValue
+	Frame      *runtimeFrame
 }
 
 type runtimeListOperationContinuation struct {
@@ -396,6 +396,7 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 	}
 	for _, entry := range value.Map {
 		count += runtimeValueGraphSizeActive(entry.Value, active)
+		count += runtimeFrameGraphSizeActive(entry.KeyFrame, active)
 	}
 	if value.Base != nil {
 		if !active[value.Base] {
@@ -414,8 +415,12 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 					count += runtimeValueGraphSizeActive(argument, active)
 				}
 			}
-			for _, captured := range value.Deferred.Scope {
-				count += runtimeValueGraphSizeActive(captured, active)
+			count += runtimeFrameGraphSizeActive(value.Deferred.Frame, active)
+			if binary := value.Deferred.Binary; binary != nil {
+				count += runtimeFrameGraphSizeActive(binary.Frame, active)
+			}
+			if conditional := value.Deferred.Conditional; conditional != nil {
+				count += runtimeFrameGraphSizeActive(conditional.Frame, active)
 			}
 			if unary := value.Deferred.Unary; unary != nil {
 				count += runtimeValueGraphSizeActive(unary.Operand, active)
@@ -426,9 +431,7 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 			}
 			if loop := value.Deferred.For; loop != nil {
 				count += runtimeValueGraphSizeActive(loop.Source, active)
-				for _, captured := range loop.Scope {
-					count += runtimeValueGraphSizeActive(captured, active)
-				}
+				count += runtimeFrameGraphSizeActive(loop.Frame, active)
 			}
 			if overlay := value.Deferred.Overlay; overlay != nil {
 				count += runtimeValueGraphSizeActive(overlay.Base, active)
@@ -519,7 +522,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 	value.Map = slices.Clone(value.Map)
 	for index := range value.Map {
 		value.Map[index].KeySourceLocations = slices.Clone(value.Map[index].KeySourceLocations)
-		value.Map[index].KeyScope = maps.Clone(value.Map[index].KeyScope)
+		value.Map[index].KeyFrame = state.cloneFrame(value.Map[index].KeyFrame)
 		value.Map[index].Value = state.clone(value.Map[index].Value)
 		if value.Map[index].KeyExpression != nil {
 			keyExpression := *value.Map[index].KeyExpression
@@ -548,7 +551,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 				binary := *deferred.Binary
 				binary.Left = state.clone(binary.Left)
 				binary.Right = state.clone(binary.Right)
-				binary.Scope = maps.Clone(binary.Scope)
+				binary.Frame = state.cloneFrame(binary.Frame)
 				if binary.RightExpression != nil {
 					expression := cloneTypedExpression(*binary.RightExpression)
 					binary.RightExpression = &expression
@@ -560,7 +563,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 				conditional.Condition = state.clone(conditional.Condition)
 				conditional.ThenBranch = cloneTypedExpression(conditional.ThenBranch)
 				conditional.ElseBranch = cloneTypedExpression(conditional.ElseBranch)
-				conditional.Scope = maps.Clone(conditional.Scope)
+				conditional.Frame = state.cloneFrame(conditional.Frame)
 				deferred.Conditional = &conditional
 			}
 			if deferred.ListOperation != nil {
@@ -595,10 +598,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 			if deferred.For != nil {
 				loop := *deferred.For
 				loop.Source = state.clone(loop.Source)
-				loop.Scope = maps.Clone(loop.Scope)
-				for name, captured := range loop.Scope {
-					loop.Scope[name] = state.clone(captured)
-				}
+				loop.Frame = state.cloneFrame(loop.Frame)
 				deferred.For = &loop
 			}
 			if deferred.Overlay != nil {
@@ -626,10 +626,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 				deferred.Reference = &reference
 				*references = append(*references, deferred.Reference)
 			}
-			deferred.Scope = maps.Clone(deferred.Scope)
-			for name, captured := range deferred.Scope {
-				deferred.Scope[name] = state.clone(captured)
-			}
+			deferred.Frame = state.cloneFrame(deferred.Frame)
 			value.Deferred = &deferred
 		}
 	}
@@ -760,7 +757,7 @@ func cloneTypedExpression(expression typedExpression) typedExpression {
 type RuntimeEntry struct {
 	Key                string
 	KeyExpression      *typedExpression
-	KeyScope           map[string]RuntimeValue
+	KeyFrame           *runtimeFrame
 	KeySpan            SourceSpan
 	KeySourcePath      string
 	KeySourceLocations []SourceDiagnosticLocation
@@ -915,9 +912,9 @@ func evaluateTypedContinuation(continuation *typedContinuation, state *Evaluatio
 	}
 	environment := state.Environment
 	frame := state.RuntimeFrame
-	if continuation.Scope != nil {
-		environment = continuation.Scope
-		frame = nil
+	if continuation.Frame != nil {
+		environment = nil
+		frame = continuation.Frame
 	}
 	return evaluateTypedExpressionRuntimeInScope(continuation.Expression, state, environment, frame)
 }

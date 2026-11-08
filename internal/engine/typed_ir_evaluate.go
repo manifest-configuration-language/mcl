@@ -156,7 +156,7 @@ func (expression typedExpression) evaluateFor(context typedEvaluationContext) (R
 			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 			Deferred: &typedContinuation{For: &typedForContinuation{
 				Source: source, Unit: unit, Body: body,
-				LoopName: expression.loopName, Scope: context.captureRuntimeScope(),
+				LoopName: expression.loopName, Frame: context.captureRuntimeFrame(),
 				SourcePath: context.sourcePath, Span: expression.span,
 			}},
 		}, nil
@@ -306,7 +306,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				if key.IsDeferred() {
 					keyExpression := cloneTypedExpression(*entry.keyExpression)
 					result.KeyExpression = &keyExpression
-					result.KeyScope = context.captureRuntimeScope()
+					result.KeyFrame = context.captureRuntimeFrame()
 				} else if key.Kind() == String {
 					result.Key = key.Value.Text
 				} else {
@@ -377,7 +377,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 				Deferred: &typedContinuation{Conditional: &typedConditionalContinuation{
 					Condition: condition, ThenBranch: cloneTypedExpression(*expression.thenBranch),
-					ElseBranch: cloneTypedExpression(*expression.elseBranch), Scope: context.captureRuntimeScope(),
+					ElseBranch: cloneTypedExpression(*expression.elseBranch), Frame: context.captureRuntimeFrame(),
 				}},
 			}, nil
 		}

@@ -922,6 +922,50 @@ emit labels
 	}
 }
 
+func TestDeferredExpressionsCaptureLexicalRuntimeFrames(t *testing.T) {
+	t.Parallel()
+	source := `let config = node:
+  enabled: true
+  items:
+    - "x"
+  key: "picked"
+fn expand(prefix: String) -> List<String> =
+  for item in ref(config).items:
+    prefix + item
+let deferredFor = expand("p")
+fn choose(prefix: String) -> String =
+  if ref(config).enabled:
+    prefix
+  else:
+    "wrong"
+let deferredConditional = choose("c")
+fn enabled(prefix: String) -> Bool =
+  ref(config).enabled and prefix == "b"
+let deferredBinary = enabled("b")
+fn keyed(prefix: String) -> Map<String, String> =
+  key(ref(config).key): prefix
+let deferredKey = keyed("k")
+emit config
+emit deferredFor[0]
+emit deferredConditional
+emit deferredBinary
+emit deferredKey
+`
+	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
+	if err != nil {
+		t.Fatalf("EvaluateSource() error = %v, want deferred lexical scopes to resolve: %v", err, err)
+	}
+	output, err := Render(bundle)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	for _, expected := range []string{"px", `"c"`, "true", `picked: "k"`} {
+		if !strings.Contains(string(output), expected) {
+			t.Errorf("rendered output does not contain %q:\n%s", expected, output)
+		}
+	}
+}
+
 func TestForFrameIsCapturedByLambdas(t *testing.T) {
 	t.Parallel()
 	base := map[string]RuntimeValue{"outer": runtimeFrameTestValue("outer-value")}
