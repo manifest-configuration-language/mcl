@@ -122,6 +122,15 @@ func RenameFunctionParameterForProjectSources(target ReferenceTarget, newName st
 	return renameFunctionParameterForProject(target, newName, sources, resolveImport)
 }
 
+// RenameFunctionParameterForSnapshot renames a parameter using cached semantic indexes.
+func RenameFunctionParameterForSnapshot(target ReferenceTarget, newName string, sources map[string]string, snapshot *ProjectSemanticSnapshot) *RenameResult {
+	if !IsMCLIdentifier(newName) || !target.FunctionParameter || snapshot == nil {
+		return nil
+	}
+
+	return renameFunctionParameterForProjectSnapshot(target, newName, sources, snapshot.ResolveImport, snapshot)
+}
+
 func renameFunctionParameterForProject(target ReferenceTarget, newName string, sources map[string]string, resolveImport ReferenceImportResolver) *RenameResult {
 	return renameFunctionParameterForProjectSnapshot(target, newName, sources, resolveImport, nil)
 }

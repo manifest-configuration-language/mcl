@@ -46,11 +46,20 @@ type StandardLibraryFunctionHover struct {
 
 // DefinitionForProjectFS finds a local or imported declaration without reading host files.
 func DefinitionForProjectFS(params NavigationParams, projectFiles fs.FS) *Definition {
-	snapshot, files, ok := projectSourceSnapshot(params, projectFiles)
+	snapshot, _, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
 		return nil
 	}
-	resolved, ok := navigationTarget(params, snapshot, files)
+	return DefinitionForSnapshot(snapshot, params.Entrypoint, Position{Line: params.Line, Character: params.Character})
+}
+
+// DefinitionForSnapshot finds a local or imported declaration using cached snapshot ASTs.
+func DefinitionForSnapshot(snapshot *ProjectSemanticSnapshot, path string, position Position) *Definition {
+	params, ok := navigationParamsForSnapshot(snapshot, path, position)
+	if !ok {
+		return nil
+	}
+	resolved, ok := navigationTarget(params, snapshot)
 	if !ok {
 		return nil
 	}
@@ -60,11 +69,20 @@ func DefinitionForProjectFS(params NavigationParams, projectFiles fs.FS) *Defini
 
 // HoverForProjectFS returns syntax-level declaration information from the in-memory project.
 func HoverForProjectFS(params NavigationParams, projectFiles fs.FS) *Hover {
-	snapshot, files, ok := projectSourceSnapshot(params, projectFiles)
+	snapshot, _, ok := projectSourceSnapshot(params, projectFiles)
 	if !ok {
 		return nil
 	}
-	resolved, ok := navigationTarget(params, snapshot, files)
+	return HoverForSnapshot(snapshot, params.Entrypoint, Position{Line: params.Line, Character: params.Character})
+}
+
+// HoverForSnapshot returns syntax-level declaration information using cached snapshot ASTs.
+func HoverForSnapshot(snapshot *ProjectSemanticSnapshot, path string, position Position) *Hover {
+	params, ok := navigationParamsForSnapshot(snapshot, path, position)
+	if !ok {
+		return nil
+	}
+	resolved, ok := navigationTarget(params, snapshot)
 	if !ok {
 		return standardLibraryHover(params, snapshot)
 	}
@@ -80,6 +98,17 @@ func HoverForProjectFS(params NavigationParams, projectFiles fs.FS) *Hover {
 	}
 
 	return &Hover{Contents: contents, Range: SourceRangeAt(resolved.source, resolved.Span)}
+}
+
+func navigationParamsForSnapshot(snapshot *ProjectSemanticSnapshot, path string, position Position) (NavigationParams, bool) {
+	if snapshot == nil {
+		return NavigationParams{}, false
+	}
+	source, exists := snapshot.Source(path)
+	if !exists {
+		return NavigationParams{}, false
+	}
+	return NavigationParams{Entrypoint: path, Source: source, Line: position.Line, Character: position.Character}, true
 }
 
 func standardLibraryHover(params NavigationParams, snapshot *ProjectSemanticSnapshot) *Hover {
@@ -153,8 +182,8 @@ type navigationResult struct {
 	node   syntax.ASTNode
 }
 
-func navigationTarget(params NavigationParams, snapshot *ProjectSemanticSnapshot, projectFiles fs.FS) (navigationResult, bool) {
-	if snapshot == nil || projectFiles == nil || params.Entrypoint == "" {
+func navigationTarget(params NavigationParams, snapshot *ProjectSemanticSnapshot) (navigationResult, bool) {
+	if snapshot == nil || params.Entrypoint == "" {
 		return navigationResult{}, false
 	}
 	index, exists := snapshot.SemanticIndex(params.Entrypoint)

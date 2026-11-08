@@ -28,6 +28,29 @@ func RenameForSource(path, source string, position Position, newName string) *Re
 	if err != nil {
 		return nil
 	}
+	return renameForSourceWithIndex(path, source, position, newName, index)
+}
+
+// RenameForSnapshot renames a local or non-exported declaration using a cached project index.
+func RenameForSnapshot(snapshot *ProjectSemanticSnapshot, path string, position Position, newName string) *RenameResult {
+	if !IsMCLIdentifier(newName) || snapshot == nil {
+		return nil
+	}
+	source, exists := snapshot.Source(path)
+	if !exists {
+		return nil
+	}
+	index, exists := snapshot.SemanticIndex(path)
+	if !exists {
+		return nil
+	}
+	return renameForSourceWithIndex(path, source, position, newName, index)
+}
+
+func renameForSourceWithIndex(path, source string, position Position, newName string, index *SemanticIndex) *RenameResult {
+	if !IsMCLIdentifier(newName) {
+		return nil
+	}
 	offset, err := sourceindex.New(source).OffsetAt(sourceindex.Position{Line: position.Line, Character: position.Character})
 	if err != nil {
 		return nil

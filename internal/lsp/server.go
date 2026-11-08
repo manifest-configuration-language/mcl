@@ -21,6 +21,7 @@ type server struct {
 	documents                map[string]documentState
 	workspaceRoots           []string
 	renameIndex              *engine.DependentMCLSourceIndex
+	semanticCache            *projectSemanticSnapshotCache
 	canWatchMCLFiles         bool
 	watchRegistrationPending bool
 	watchRegistered          bool

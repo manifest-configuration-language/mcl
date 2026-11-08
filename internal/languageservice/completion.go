@@ -39,7 +39,27 @@ func CompletionsForProjectFS(params CompletionParams, projectFiles fs.FS) []Comp
 // CompletionsForProjectFSWithContext returns completion candidates using the supplied context.
 func CompletionsForProjectFSWithContext(ctx context.Context, params CompletionParams, projectFiles fs.FS) []CompletionItem {
 	snapshot, _, _ := projectSourceSnapshot(NavigationParams{Entrypoint: params.Entrypoint, Source: params.Source}, projectFiles)
-	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, "", nil, nil, snapshot)
+	return completionsForSnapshot(ctx, snapshot, params, projectFiles, "", nil, nil)
+}
+
+// CompletionsForSnapshotWithContext returns completion candidates from a cached project snapshot.
+func CompletionsForSnapshotWithContext(ctx context.Context, snapshot *ProjectSemanticSnapshot, params CompletionParams, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
+	return completionsForSnapshot(ctx, snapshot, params, nil, params.Entrypoint, resolveImport, readSource)
+}
+
+func completionsForSnapshot(ctx context.Context, snapshot *ProjectSemanticSnapshot, params CompletionParams, projectFiles fs.FS, sourcePath string, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader) []CompletionItem {
+	if snapshot != nil {
+		if source, exists := snapshot.Source(params.Entrypoint); exists {
+			params.Source = source
+		}
+		if resolveImport == nil {
+			resolveImport = snapshot.ResolveImport
+		}
+		if readSource == nil {
+			readSource = snapshot.Source
+		}
+	}
+	return complete(ctx, params.Source, Position{Line: params.Line, Character: params.Character}, params.ProjectRoot, params.Entrypoint, projectFiles, sourcePath, resolveImport, readSource, snapshot)
 }
 
 // CompletionForSource returns completion candidates for a document backed by the host filesystem.

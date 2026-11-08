@@ -38,15 +38,19 @@ func (s *server) readOnlySnapshot() *server {
 	if s.renameIndex == nil {
 		s.renameIndex = &engine.DependentMCLSourceIndex{}
 	}
+	if s.semanticCache == nil {
+		s.semanticCache = &projectSemanticSnapshotCache{}
+	}
 	documents := make(map[string]documentState, len(s.documents))
 	maps.Copy(documents, s.documents)
 	workspaceRoots := slices.Clone(s.workspaceRoots)
 	watchRegistered := s.watchRegistered
 	renameIndex := s.renameIndex
+	semanticCache := s.semanticCache
 	stateGeneration := s.stateGeneration
 	s.mu.Unlock()
 
-	return &server{documents: documents, workspaceRoots: workspaceRoots, watchRegistered: watchRegistered, renameIndex: renameIndex, stateGeneration: stateGeneration}
+	return &server{documents: documents, workspaceRoots: workspaceRoots, watchRegistered: watchRegistered, renameIndex: renameIndex, semanticCache: semanticCache, stateGeneration: stateGeneration}
 }
 
 func (s *server) snapshotForRequest(ctx context.Context) *server {

@@ -282,6 +282,89 @@ func TestDependentMCLSourceIndexSupportsProjectFSUpdatesAndOverlays(t *testing.T
 	}
 }
 
+func TestDependentMCLSourceIndexReusesUnchangedWorkspaceSnapshot(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual-project"
+	files := fstest.MapFS{
+		targetFilename:   &fstest.MapFile{Data: []byte("export let value = 1\n")},
+		importerFilename: &fstest.MapFile{Data: []byte(importerSourceText)},
+	}
+	index := &DependentMCLSourceIndex{}
+	if snapshot := index.WorkspaceSnapshot(); snapshot != nil {
+		t.Fatal("workspace snapshot is non-nil before initialization")
+	}
+	if _, err := index.SourcesForProjectFS(root, targetFilename, files, nil); err != nil {
+		t.Fatal(err)
+	}
+	first := index.WorkspaceSnapshot()
+	if first == nil {
+		t.Fatal("workspace snapshot is nil after initialization")
+	}
+	if _, err := index.SourcesForProjectFS(root, targetFilename, files, nil); err != nil {
+		t.Fatal(err)
+	}
+	current := index.WorkspaceSnapshot()
+	if current == nil || current != first {
+		t.Fatalf("unchanged refresh snapshot = %p, want same pointer %p", current, first)
+	}
+	if current.Generation() != first.Generation() {
+		t.Fatalf("unchanged refresh generation = %d, want %d", current.Generation(), first.Generation())
+	}
+
+	otherFilename := "other.mcl"
+	files[otherFilename] = &fstest.MapFile{Data: []byte("export let value = 2\n")}
+	files[importerFilename].Data = []byte("import \"./other.mcl\" as other\nemit other.value\n")
+	if _, err := index.SourcesForProjectFS(root, targetFilename, files, nil); err != nil {
+		t.Fatal(err)
+	}
+	current = index.WorkspaceSnapshot()
+	if current == nil || current == first || current.Generation() != first.Generation()+1 {
+		var generation uint64
+		if current != nil {
+			generation = current.Generation()
+		}
+		t.Fatalf("changed refresh snapshot = %p generation %d, want new pointer at generation %d", current, generation, first.Generation()+1)
+	}
+	if got, want := current.Dependencies(filepath.Join(root, importerFilename)), []string{filepath.Join(root, otherFilename)}; !slices.Equal(got, want) {
+		t.Fatalf("importer dependencies = %v, want %v", got, want)
+	}
+
+	index.Invalidate()
+	if snapshot := index.WorkspaceSnapshot(); snapshot != nil {
+		t.Fatal("workspace snapshot is non-nil after invalidation")
+	}
+}
+
+func TestDependentMCLSourceIndexReturnsSnapshotWithSources(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for path, source := range map[string]string{
+		projectConfigFileName: "",
+		targetFilename:        "export let value = 1\n",
+		importerFilename:      importerSourceText,
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index := &DependentMCLSourceIndex{}
+	target := filepath.Join(root, targetFilename)
+	importer, err := filepath.EvalSymlinks(filepath.Join(root, importerFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, snapshot, err := index.SourcesWithSnapshotWithContext(t.Context(), target, []string{root}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sources[importer]; got != importerSourceText {
+		t.Fatalf("dependent importer source = %q, want %q", got, importerSourceText)
+	}
+	if snapshot == nil || snapshot != index.WorkspaceSnapshot() {
+		t.Fatalf("returned workspace snapshot = %p, current snapshot = %p", snapshot, index.WorkspaceSnapshot())
+	}
+}
+
 func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -28,6 +28,24 @@ func TestDeclarationHoverShowsFunctionParameterDefaults(t *testing.T) {
 	}
 }
 
+func TestSnapshotDefinitionAndHoverUseCachedProjectState(t *testing.T) {
+	snapshot, err := NewProjectSemanticSnapshotFromSources(map[string]string{
+		"main.mcl": "let value = 1\nemit value\n",
+	})
+	if err != nil {
+		t.Fatalf("NewProjectSemanticSnapshotFromSources() error = %v", err)
+	}
+	position := Position{Line: 1, Character: 6}
+	definition := DefinitionForSnapshot(snapshot, "main.mcl", position)
+	if definition == nil || definition.Path != "main.mcl" {
+		t.Fatalf("DefinitionForSnapshot() = %+v, want main.mcl definition", definition)
+	}
+	hover := HoverForSnapshot(snapshot, "main.mcl", position)
+	if hover == nil || hover.Contents != "let value" {
+		t.Fatalf("HoverForSnapshot() = %+v, want let value hover", hover)
+	}
+}
+
 func TestEarlierFunctionParameterResolvesInsideDefault(t *testing.T) {
 	t.Parallel()
 

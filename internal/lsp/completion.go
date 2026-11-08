@@ -28,6 +28,12 @@ func (s *server) completions(ctx context.Context, params completionParams) []lan
 		return languageservice.CompletionForSourceWithContext(ctx, state.Text, params.Position.Line, params.Position.Character, "")
 	}
 	resolver, readSource := projectReferenceResolvers(s)
+	semantic, err := s.semanticSnapshotForDocument(ctx, path, state.Text)
+	if err != nil {
+		return nil
+	}
 
-	return languageservice.CompletionForSourceWithProjectImportsWithContext(ctx, state.Text, params.Position.Line, params.Position.Character, path, resolver, readSource)
+	return languageservice.CompletionsForSnapshotWithContext(ctx, semantic, languageservice.CompletionParams{
+		Entrypoint: path, Source: state.Text, Line: params.Position.Line, Character: params.Position.Character,
+	}, resolver, readSource)
 }

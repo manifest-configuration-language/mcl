@@ -54,10 +54,16 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 	if path == "" {
 		return []protocol.Location{}, nil
 	}
-	resolver, readSource := projectReferenceResolvers(snapshot)
-	target, ok := languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
+	semantic, err := snapshot.semanticSnapshotForDocument(ctx, path, state.Text)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, protocol.ErrRequestCancelled
+		}
+		return []protocol.Location{}, nil
+	}
+	target, ok := languageservice.ReferenceTargetAtSnapshotWithContext(ctx, semantic, path, languageservice.Position{
 		Line: int(params.Position.Line), Character: int(params.Position.Character),
-	}, resolver, readSource)
+	})
 	if ctx.Err() != nil {
 		return nil, protocol.ErrRequestCancelled
 	}
@@ -77,33 +83,21 @@ func (s *server) References(ctx context.Context, params *protocol.ReferenceParam
 		return []protocol.Location{}, nil
 	}
 	target.Path = canonicalTarget
-	sources := map[string]string{path: state.Text}
-	if target.Path != path {
-		if source, ok := readSource(target.Path); ok {
-			sources[target.Path] = source
-		}
-	}
+	projectSemantic := semantic
+	var resolved []languageservice.Reference
 	if (target.Exported && !target.Local) || target.FunctionParameter {
-		overlays, _ := snapshot.renameOverlays()
-		if snapshot.renameIndex == nil {
-			snapshot.renameIndex = &engine.DependentMCLSourceIndex{}
-		}
-		var dependent map[string]string
-		var err error
-		if snapshot.watchRegistered {
-			dependent, err = snapshot.renameIndex.SourcesFromIndexWithContext(ctx, target.Path, snapshot.workspaceRoots, overlays)
-		} else {
-			dependent, err = snapshot.renameIndex.SourcesWithContext(ctx, target.Path, snapshot.workspaceRoots, overlays)
-		}
+		workspaceSources, workspaceSemantic, workspaceErr := snapshot.semanticSnapshotForWorkspace(ctx, target.Path)
 		if ctx.Err() != nil {
 			return nil, protocol.ErrRequestCancelled
 		}
-		if err != nil {
+		if workspaceErr != nil {
 			return nil, jsonrpc2.NewError(jsonrpc2.InternalError, "Unable to collect complete workspace sources for references")
 		}
-		sources = dependent
+		projectSemantic = workspaceSemantic
+		resolved = languageservice.ReferencesForSnapshotSourcesWithContext(ctx, projectSemantic, target, workspaceSources, params.Context.IncludeDeclaration)
+	} else {
+		resolved = languageservice.ReferencesForSnapshotWithContext(ctx, projectSemantic, target, params.Context.IncludeDeclaration)
 	}
-	resolved := languageservice.ReferencesForProjectWithContext(ctx, target, sources, resolver, params.Context.IncludeDeclaration)
 	if ctx.Err() != nil {
 		return nil, protocol.ErrRequestCancelled
 	}

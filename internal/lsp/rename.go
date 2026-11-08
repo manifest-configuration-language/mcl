@@ -63,6 +63,34 @@ func (s *server) definition(ctx context.Context, params definitionParams) *defin
 	if !exists {
 		return nil
 	}
+	if path, ok := canonicalSourcePath(documentPath(params.TextDocument.URI)); ok {
+		semantic, err := s.semanticSnapshotForDocument(ctx, path, state.Text)
+		if err == nil {
+			if _, parsed := semantic.Module(path); parsed {
+				definition := languageservice.DefinitionForSnapshot(semantic, path, languageservice.Position{
+					Line: params.Position.Line, Character: params.Position.Character,
+				})
+				if definition == nil {
+					return nil
+				}
+				if _, exists := semantic.Source(definition.Path); !exists {
+					return nil
+				}
+				uri := s.diagnosticURIForPath(definition.Path)
+				if openURI, _, open := s.openDocumentForPath(definition.Path); open {
+					uri = openURI
+				}
+				result := &definitionLocation{URI: uri}
+				result.Range.Start = location{Line: definition.Range.Start.Line, Character: definition.Range.Start.Character}
+				result.Range.End = location{Line: definition.Range.End.Line, Character: definition.Range.End.Character}
+
+				return result
+			}
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+	}
 	lines := strings.Split(state.Text, "\n")
 	if params.Position.Line < 0 || params.Position.Line >= len(lines) {
 		return nil
@@ -828,25 +856,47 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	if err != nil {
 		return nil
 	}
-	index, err := analyzeSource(state.Text)
-	if err != nil {
-		return nil
+	var semantic *languageservice.ProjectSemanticSnapshot
+	var index *moduleSemanticIndex
+	path, hasPath := canonicalSourcePath(documentPath(params.TextDocument.URI))
+	if hasPath {
+		if snapshot, snapshotErr := s.semanticSnapshotForDocument(ctx, path, state.Text); snapshotErr == nil {
+			if cachedIndex, ok := snapshot.SemanticIndex(path); ok {
+				semantic, index = snapshot, cachedIndex
+			}
+		}
+	}
+	if index == nil {
+		var err error
+		index, err = analyzeSource(state.Text)
+		if err != nil {
+			return nil
+		}
 	}
 	if ctx.Err() != nil {
 		return nil
 	}
 	module := index.Module
-	if path, ok := canonicalSourcePath(documentPath(params.TextDocument.URI)); ok {
+	if hasPath {
 		resolver, readSource := projectReferenceResolvers(s)
-		target, found := languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
-			Line: params.Position.Line, Character: params.Position.Character,
-		}, resolver, readSource)
+		var target languageservice.ReferenceTarget
+		var found bool
+		if semantic != nil {
+			target, found = languageservice.ReferenceTargetAtSnapshotWithContext(ctx, semantic, path, languageservice.Position{Line: params.Position.Line, Character: params.Position.Character})
+		} else {
+			target, found = languageservice.ReferenceTargetAtWithContext(ctx, path, state.Text, languageservice.Position{
+				Line: params.Position.Line, Character: params.Position.Character,
+			}, resolver, readSource)
+		}
 		if found && target.FunctionParameter {
 			if target.Path == path && len(s.workspaceRoots) == 0 {
+				if semantic != nil {
+					return renameFunctionParameterInSnapshot(ctx, params, semantic, path)
+				}
 				return renameFunctionParameterInSource(ctx, params, state.Text)
 			}
 
-			return s.renameFunctionParameterWithContext(ctx, params, target, resolver)
+			return s.renameFunctionParameterWithContext(ctx, params, target)
 		}
 	}
 	if edit, handled := s.renameImportedExport(ctx, params, name, offset, module, index); handled {
@@ -863,12 +913,17 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 		}
 	}
 	if localReference {
-		result := languageservice.RenameForSource(
-			params.TextDocument.URI,
-			state.Text,
-			languageservice.Position{Line: params.Position.Line, Character: params.Position.Character},
-			params.NewName,
-		)
+		var result *languageservice.RenameResult
+		if semantic != nil {
+			result = languageservice.RenameForSnapshot(semantic, path, languageservice.Position{Line: params.Position.Line, Character: params.Position.Character}, params.NewName)
+		} else {
+			result = languageservice.RenameForSource(
+				params.TextDocument.URI,
+				state.Text,
+				languageservice.Position{Line: params.Position.Line, Character: params.Position.Character},
+				params.NewName,
+			)
+		}
 		if result == nil || len(result.Edits) == 0 {
 			return nil
 		}
@@ -989,25 +1044,17 @@ func (s *server) renameWithContext(ctx context.Context, params renameParams) *wo
 	return &workspaceEdit{Changes: map[string][]textEdit{params.TextDocument.URI: edits}}
 }
 
-func (s *server) renameFunctionParameterWithContext(ctx context.Context, params renameParams, target languageservice.ReferenceTarget, resolveImport languageservice.ReferenceImportResolver) *workspaceEdit {
+func (s *server) renameFunctionParameterWithContext(ctx context.Context, params renameParams, target languageservice.ReferenceTarget) *workspaceEdit {
 	if ctx.Err() != nil {
 		return nil
 	}
-	overlays, openURIs := s.renameOverlays()
-	if s.renameIndex == nil {
-		s.renameIndex = &engine.DependentMCLSourceIndex{}
-	}
-	var sources map[string]string
-	var err error
-	if s.watchRegistered {
-		sources, err = s.renameIndex.SourcesFromIndexWithContext(ctx, target.Path, s.workspaceRoots, overlays)
-	} else {
-		sources, err = s.renameIndex.SourcesWithContext(ctx, target.Path, s.workspaceRoots, overlays)
-	}
+	_, openURIs := s.renameOverlays()
+	snapshot := s.readOnlySnapshot()
+	sources, workspaceSemantic, err := snapshot.semanticSnapshotForWorkspace(ctx, target.Path)
 	if err != nil || ctx.Err() != nil {
 		return nil
 	}
-	result := languageservice.RenameFunctionParameterForProjectSources(target, params.NewName, sources, resolveImport)
+	result := languageservice.RenameFunctionParameterForSnapshot(target, params.NewName, sources, workspaceSemantic)
 	if result == nil || len(result.Edits) == 0 {
 		return nil
 	}
@@ -1034,6 +1081,11 @@ func (s *server) renameFunctionParameterWithContext(ctx context.Context, params 
 	return &workspaceEdit{Changes: changes}
 }
 
+func renameFunctionParameterInSnapshot(ctx context.Context, params renameParams, snapshot *languageservice.ProjectSemanticSnapshot, path string) *workspaceEdit {
+	result := languageservice.RenameForSnapshot(snapshot, path, languageservice.Position{Line: params.Position.Line, Character: params.Position.Character}, params.NewName)
+	return workspaceEditForSingleRenameResult(ctx, params, result)
+}
+
 func renameFunctionParameterInSource(ctx context.Context, params renameParams, source string) *workspaceEdit {
 	result := languageservice.RenameForSource(
 		params.TextDocument.URI,
@@ -1041,12 +1093,17 @@ func renameFunctionParameterInSource(ctx context.Context, params renameParams, s
 		languageservice.Position{Line: params.Position.Line, Character: params.Position.Character},
 		params.NewName,
 	)
+	return workspaceEditForSingleRenameResult(ctx, params, result)
+}
+
+func workspaceEditForSingleRenameResult(ctx context.Context, params renameParams, result *languageservice.RenameResult) *workspaceEdit {
 	if result == nil || len(result.Edits) == 0 {
 		return nil
 	}
+	documentPath, hasDocumentPath := canonicalSourcePath(documentPath(params.TextDocument.URI))
 	edits := make([]textEdit, len(result.Edits))
 	for index, edit := range result.Edits {
-		if ctx.Err() != nil || edit.Path != params.TextDocument.URI {
+		if ctx.Err() != nil || edit.Path != params.TextDocument.URI && (!hasDocumentPath || edit.Path != documentPath) {
 			return nil
 		}
 		edits[index].Range.Start = location{Line: edit.Range.Start.Line, Character: edit.Range.Start.Character}
@@ -1129,47 +1186,16 @@ func (s *server) renameImportedExport(ctx context.Context, params renameParams, 
 	if targetPath == "" {
 		return nil, false
 	}
-	overlays := make(map[string]string, len(s.documents))
-	openURIs := make(map[string]string, len(s.documents))
-	openDocumentURIs := slices.Sorted(maps.Keys(s.documents))
-	for _, uri := range openDocumentURIs {
-		if ctx.Err() != nil {
-			return nil, true
-		}
-		document := s.documents[uri]
-		path := documentPath(uri)
-		if path == "" {
-			continue
-		}
-		path, err := filepath.Abs(path)
-		if err != nil {
-			continue
-		}
-		if resolved, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
-			path = resolved
-		}
-		path = filepath.Clean(path)
-		overlays[path] = document.Text
-		openURIs[path] = uri
-	}
-	if s.renameIndex == nil {
-		s.renameIndex = &engine.DependentMCLSourceIndex{}
-	}
-	var sources map[string]string
-	var err error
-	if s.watchRegistered {
-		sources, err = s.renameIndex.SourcesFromIndexWithContext(ctx, targetPath, s.workspaceRoots, overlays)
-	} else {
-		sources, err = s.renameIndex.SourcesWithContext(ctx, targetPath, s.workspaceRoots, overlays)
-	}
+	_, openURIs := s.renameOverlays()
+	workspaceSources, workspaceSemantic, err := s.semanticSnapshotForWorkspace(ctx, targetPath)
 	if err != nil {
 		return nil, true
 	}
-	parsedDocuments := make(map[string]syntax.ModuleAST, len(sources))
-	semanticDocuments := make(map[string]*moduleSemanticIndex, len(sources))
-	paths := make(map[string]string, len(sources))
-	texts := make(map[string]string, len(sources))
-	for path, source := range sources {
+	parsedDocuments := make(map[string]syntax.ModuleAST, len(workspaceSources))
+	semanticDocuments := make(map[string]*moduleSemanticIndex, len(workspaceSources))
+	paths := make(map[string]string, len(workspaceSources))
+	texts := make(map[string]string, len(workspaceSources))
+	for path, source := range workspaceSources {
 		if ctx.Err() != nil {
 			return nil, true
 		}
@@ -1177,12 +1203,13 @@ func (s *server) renameImportedExport(ctx context.Context, params renameParams, 
 		if uri == "" {
 			uri = filePathToURI(path)
 		}
-		parsed, err := syntax.ParseAST(source)
-		if err != nil {
-			continue
+		parsed, parsedOK := workspaceSemantic.Module(path)
+		semanticIndex, indexOK := workspaceSemantic.SemanticIndex(path)
+		if !parsedOK || !indexOK {
+			return nil, true
 		}
 		parsedDocuments[uri] = parsed
-		semanticDocuments[uri] = analyzeModule(parsed)
+		semanticDocuments[uri] = semanticIndex
 		paths[uri] = path
 		texts[uri] = source
 	}

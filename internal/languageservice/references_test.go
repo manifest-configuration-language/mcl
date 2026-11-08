@@ -65,6 +65,23 @@ func TestReferencesForProjectFSFindsImportedExport(t *testing.T) {
 	}
 }
 
+func TestSnapshotReferenceTargetAndReferencesUseCachedProjectState(t *testing.T) {
+	snapshot, err := NewProjectSemanticSnapshotFromSources(map[string]string{
+		"main.mcl": "let value = 1\nemit value\n",
+	})
+	if err != nil {
+		t.Fatalf("NewProjectSemanticSnapshotFromSources() error = %v", err)
+	}
+	target, ok := ReferenceTargetAtSnapshot(snapshot, "main.mcl", Position{Line: 1, Character: 6})
+	if !ok || target.Name != "value" {
+		t.Fatalf("ReferenceTargetAtSnapshot() = (%+v, %v), want value target", target, ok)
+	}
+	references := ReferencesForSnapshotWithContext(t.Context(), snapshot, target, true)
+	if len(references) != 2 || references[0].Path != "main.mcl" || references[1].Path != "main.mcl" {
+		t.Fatalf("ReferencesForSnapshotWithContext() = %+v, want declaration and use", references)
+	}
+}
+
 func TestReferencesForProjectFSFindsImportAliasReferences(t *testing.T) {
 	t.Parallel()
 	const source = "import \"./defs.mcl\" as defs\nlet config: defs.Config = {}\nemit defs.value\n"

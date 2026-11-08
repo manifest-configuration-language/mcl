@@ -45,6 +45,23 @@ func ReferenceTargetAtWithContext(ctx context.Context, path, source string, posi
 	return referenceTargetAtWithSnapshot(ctx, path, source, position, resolveImport, readSource, nil)
 }
 
+// ReferenceTargetAtSnapshot resolves the declaration at a position using a project snapshot.
+func ReferenceTargetAtSnapshot(snapshot *ProjectSemanticSnapshot, path string, position Position) (ReferenceTarget, bool) {
+	return ReferenceTargetAtSnapshotWithContext(context.Background(), snapshot, path, position)
+}
+
+// ReferenceTargetAtSnapshotWithContext resolves a declaration from cached snapshot ASTs with cancellation support.
+func ReferenceTargetAtSnapshotWithContext(ctx context.Context, snapshot *ProjectSemanticSnapshot, path string, position Position) (ReferenceTarget, bool) {
+	if snapshot == nil {
+		return ReferenceTarget{}, false
+	}
+	source, exists := snapshot.Source(path)
+	if !exists {
+		return ReferenceTarget{}, false
+	}
+	return referenceTargetAtWithSnapshot(ctx, path, source, position, snapshot.ResolveImport, snapshot.Source, snapshot)
+}
+
 func referenceTargetAtWithSnapshot(ctx context.Context, path, source string, position Position, resolveImport ReferenceImportResolver, readSource ReferenceSourceReader, snapshot *ProjectSemanticSnapshot) (ReferenceTarget, bool) {
 	if ctx.Err() != nil {
 		return ReferenceTarget{}, false
@@ -202,6 +219,22 @@ func ReferencesForProject(target ReferenceTarget, sources map[string]string, res
 // ReferencesForProjectWithContext finds references in a project snapshot with cancellation support.
 func ReferencesForProjectWithContext(ctx context.Context, target ReferenceTarget, sources map[string]string, resolveImport ReferenceImportResolver, includeDeclaration bool) []Reference {
 	return referencesForProjectWithSnapshot(ctx, target, sources, resolveImport, includeDeclaration, nil)
+}
+
+// ReferencesForSnapshotWithContext finds references using cached indexes from a project snapshot.
+func ReferencesForSnapshotWithContext(ctx context.Context, snapshot *ProjectSemanticSnapshot, target ReferenceTarget, includeDeclaration bool) []Reference {
+	if snapshot == nil {
+		return nil
+	}
+	return ReferencesForSnapshotSourcesWithContext(ctx, snapshot, target, snapshot.Sources(), includeDeclaration)
+}
+
+// ReferencesForSnapshotSourcesWithContext searches only the supplied source set while reusing snapshot indexes.
+func ReferencesForSnapshotSourcesWithContext(ctx context.Context, snapshot *ProjectSemanticSnapshot, target ReferenceTarget, sources map[string]string, includeDeclaration bool) []Reference {
+	if snapshot == nil {
+		return nil
+	}
+	return referencesForProjectWithSnapshot(ctx, target, sources, snapshot.ResolveImport, includeDeclaration, snapshot)
 }
 
 func referencesForProjectWithSnapshot(ctx context.Context, target ReferenceTarget, sources map[string]string, resolveImport ReferenceImportResolver, includeDeclaration bool, snapshot *ProjectSemanticSnapshot) []Reference {
@@ -372,11 +405,10 @@ func ReferencesForProjectFSWithContext(ctx context.Context, params NavigationPar
 	if !ok {
 		return nil
 	}
-	sources := snapshot.Sources()
-	target, found := referenceTargetAtWithSnapshot(ctx, params.Entrypoint, params.Source, Position{Line: params.Line, Character: params.Character}, snapshot.ResolveImport, snapshot.Source, snapshot)
+	target, found := ReferenceTargetAtSnapshotWithContext(ctx, snapshot, params.Entrypoint, Position{Line: params.Line, Character: params.Character})
 	if !found {
 		return nil
 	}
 
-	return referencesForProjectWithSnapshot(ctx, target, sources, snapshot.ResolveImport, includeDeclaration, snapshot)
+	return ReferencesForSnapshotWithContext(ctx, snapshot, target, includeDeclaration)
 }

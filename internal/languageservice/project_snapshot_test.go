@@ -1,6 +1,7 @@
 package languageservice
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -16,7 +17,6 @@ func TestProjectSemanticSnapshotReusesWorkspaceASTAndIndex(t *testing.T) {
 		t.Fatalf("NewWorkspaceSnapshot() error = %v", err)
 	}
 	snapshot := NewProjectSemanticSnapshot(workspace)
-
 	if got := snapshot.Generation(); got != 12 {
 		t.Fatalf("Generation() = %d, want 12", got)
 	}
@@ -35,14 +35,13 @@ func TestProjectSemanticSnapshotReusesWorkspaceASTAndIndex(t *testing.T) {
 	if len(module.Nodes) == 0 || &module.Nodes[0] != &workspaceModule.Nodes[0] {
 		t.Fatal("Module() did not return the workspace AST")
 	}
-
 	firstIndex, exists := snapshot.SemanticIndex("lib.mcl")
 	if !exists {
 		t.Fatal("SemanticIndex() did not find lib.mcl")
 	}
 	secondIndex, exists := snapshot.SemanticIndex("./lib.mcl")
 	if !exists || firstIndex != secondIndex {
-		t.Fatal("SemanticIndex() did not return the precomputed index")
+		t.Fatal("SemanticIndex() did not return the cached index")
 	}
 	if len(firstIndex.Module.Nodes) == 0 || &firstIndex.Module.Nodes[0] != &workspaceModule.Nodes[0] {
 		t.Fatal("SemanticIndex() does not reference the workspace AST")
@@ -50,6 +49,29 @@ func TestProjectSemanticSnapshotReusesWorkspaceASTAndIndex(t *testing.T) {
 
 	if got, exists := snapshot.Source("./lib.mcl"); !exists || got != "let value = 42\n" {
 		t.Fatalf("Source() = (%q, %v), want lib.mcl source", got, exists)
+	}
+}
+
+func TestProjectSemanticSnapshotResolvesImportsForAbsoluteImporters(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "app", "main.mcl")
+	libPath := filepath.Join(root, "shared", "lib.mcl")
+	snapshot, err := NewProjectSemanticSnapshotFromSources(map[string]string{
+		mainPath: "import \"../shared/lib.mcl\" as lib\n",
+		libPath:  "let value = 42\n",
+	})
+	if err != nil {
+		t.Fatalf("NewProjectSemanticSnapshotFromSources() error = %v", err)
+	}
+
+	got, ok := snapshot.ResolveImport(mainPath, "../shared/lib.mcl")
+	if !ok || got != libPath {
+		t.Fatalf("ResolveImport() = (%q, %v), want (%q, true)", got, ok, libPath)
+	}
+	for _, modulePath := range []string{"/absolute/import.mcl", `..\shared\lib.mcl`} {
+		if got, ok := snapshot.ResolveImport(mainPath, modulePath); ok {
+			t.Errorf("ResolveImport(%q) = (%q, true), want unresolved", modulePath, got)
+		}
 	}
 }
 
