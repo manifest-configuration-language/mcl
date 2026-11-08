@@ -68,6 +68,81 @@ func evaluateRuntimeOptionalReference(text string, context typedEvaluationContex
 	return value, nil
 }
 
+func (expression typedExpression) evaluateCall(context typedEvaluationContext) (RuntimeValue, error) {
+	if expression.builtinID == "" && expression.callee == nil {
+		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid function call"))
+	}
+	var callee RuntimeValue
+	var err error
+	if expression.builtinID != "" {
+		callee = RuntimeValue{Value: runtimeValueData{Kind: Function, Text: string(expression.builtinID)}}
+	} else {
+		callee, err = expression.callee.evaluate(context)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+	}
+	arguments := make([]RuntimeValue, len(expression.args))
+	for index, argument := range expression.args {
+		arguments[index], err = argument.evaluate(context)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+	}
+	state := &EvaluationState{
+		EvaluationSession: &EvaluationSession{Budget: context.budget, Allocations: context.allocations},
+		Environment:       context.runtimeEnv, StaticTypes: context.staticTypes, Types: context.types,
+		Stack:      context.stack,
+		SourcePath: context.sourcePath, Module: context.module,
+	}
+	if callee.Rule != nil {
+		ordered, _, ok := functionCallRuntimeArguments(callee.Rule.Parameters(), arguments, expression.argNames)
+		if !ok || len(ordered) != 1 {
+			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("rule call expects exactly one argument"))
+		}
+
+		return RuntimeValue{
+			Value:    runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
+			Deferred: &typedContinuation{Rule: callee.Rule, Arguments: ordered},
+		}, nil
+	}
+	if (callee.Lambda != nil || callee.Kind() == Function) && slices.ContainsFunc(arguments, runtimeValueHasDeferred) {
+		return RuntimeValue{
+			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
+			Deferred: &typedContinuation{Call: &runtimeCallContinuation{
+				Callee: callee, Arguments: slices.Clone(arguments), Names: slices.Clone(expression.argNames),
+			}},
+		}, nil
+	}
+	if callee.Lambda != nil {
+		result, err := callRuntimeLambda(callee, arguments, expression.argNames, state)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+
+		calleeReference := RuntimeValue{Value: runtimeValueData{Span: expression.callee.span, SourcePath: context.sourcePath}}
+		dependencies := append([]RuntimeValue{callee, calleeReference}, arguments...)
+
+		return runtimeValueWithExpressionSources(result, context.sourcePath, expression.span, dependencies...), nil
+	}
+	if callee.Kind() == Function {
+		if callee.ModuleContext != nil {
+			state.Module = callee.ModuleContext
+		}
+		result, err := callRuntimeStandard(callee.Value.Text, arguments, expression.argNames, state)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+
+		calleeReference := RuntimeValue{Value: runtimeValueData{Span: expression.callee.span, SourcePath: context.sourcePath}}
+		dependencies := append([]RuntimeValue{callee, calleeReference}, arguments...)
+
+		return runtimeValueWithExpressionSources(result, context.sourcePath, expression.span, dependencies...), nil
+	}
+
+	return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("cannot call a %s value", kindName(callee.Kind()))))
+}
+
 func runtimeValueWithExpressionSources(value RuntimeValue, sourcePath string, sourceSpan SourceSpan, dependencies ...RuntimeValue) RuntimeValue {
 	result := value
 	locations := slices.Clone(result.Value.SourceLocations)
@@ -344,78 +419,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			},
 		}, nil
 	case typedExpressionCall:
-		if expression.builtinID == "" && expression.callee == nil {
-			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid function call"))
-		}
-		var callee RuntimeValue
-		var err error
-		if expression.builtinID != "" {
-			callee = RuntimeValue{Value: runtimeValueData{Kind: Function, Text: string(expression.builtinID)}}
-		} else {
-			callee, err = expression.callee.evaluate(context)
-			if err != nil {
-				return RuntimeValue{}, err
-			}
-		}
-		arguments := make([]RuntimeValue, len(expression.args))
-		for index, argument := range expression.args {
-			arguments[index], err = argument.evaluate(context)
-			if err != nil {
-				return RuntimeValue{}, err
-			}
-		}
-		state := &EvaluationState{
-			EvaluationSession: &EvaluationSession{Budget: context.budget, Allocations: context.allocations},
-			Environment:       context.runtimeEnv, StaticTypes: context.staticTypes, Types: context.types,
-			Stack:      context.stack,
-			SourcePath: context.sourcePath, Module: context.module,
-		}
-		if callee.Rule != nil {
-			ordered, _, ok := functionCallRuntimeArguments(callee.Rule.Parameters(), arguments, expression.argNames)
-			if !ok || len(ordered) != 1 {
-				return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("rule call expects exactly one argument"))
-			}
-
-			return RuntimeValue{
-				Value:    runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
-				Deferred: &typedContinuation{Rule: callee.Rule, Arguments: ordered},
-			}, nil
-		}
-		if (callee.Lambda != nil || callee.Kind() == Function) && slices.ContainsFunc(arguments, runtimeValueHasDeferred) {
-			return RuntimeValue{
-				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
-				Deferred: &typedContinuation{Call: &runtimeCallContinuation{
-					Callee: callee, Arguments: slices.Clone(arguments), Names: slices.Clone(expression.argNames),
-				}},
-			}, nil
-		}
-		if callee.Lambda != nil {
-			result, err := callRuntimeLambda(callee, arguments, expression.argNames, state)
-			if err != nil {
-				return RuntimeValue{}, err
-			}
-
-			calleeReference := RuntimeValue{Value: runtimeValueData{Span: expression.callee.span, SourcePath: context.sourcePath}}
-			dependencies := append([]RuntimeValue{callee, calleeReference}, arguments...)
-
-			return runtimeValueWithExpressionSources(result, context.sourcePath, expression.span, dependencies...), nil
-		}
-		if callee.Kind() == Function {
-			if callee.ModuleContext != nil {
-				state.Module = callee.ModuleContext
-			}
-			result, err := callRuntimeStandard(callee.Value.Text, arguments, expression.argNames, state)
-			if err != nil {
-				return RuntimeValue{}, err
-			}
-
-			calleeReference := RuntimeValue{Value: runtimeValueData{Span: expression.callee.span, SourcePath: context.sourcePath}}
-			dependencies := append([]RuntimeValue{callee, calleeReference}, arguments...)
-
-			return runtimeValueWithExpressionSources(result, context.sourcePath, expression.span, dependencies...), nil
-		}
-
-		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("cannot call a %s value", kindName(callee.Kind()))))
+		return expression.evaluateCall(context)
 	case typedExpressionOptionalReference:
 		value, err := evaluateRuntimeOptionalReference(expression.text, context)
 		if err != nil {
