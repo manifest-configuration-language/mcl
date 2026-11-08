@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
@@ -27,7 +26,7 @@ func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, names
 	if err != nil {
 		return err
 	}
-	resourceScope, knownScope, err := engine.KubernetesResourceScopeForBundle(bundle, mcl.DefaultKubernetesResourceCatalog(), apiVersion, kind)
+	resourceScope, knownScope, err := mcl.KubernetesResourceScopeForBundle(bundle, mcl.DefaultKubernetesResourceCatalog(), apiVersion, kind)
 	if err != nil {
 		return err
 	}

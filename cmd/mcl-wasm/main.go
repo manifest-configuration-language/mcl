@@ -21,8 +21,8 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/app"
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
+	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
 const (
@@ -151,7 +151,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 		}
 	}
 	if input.Operation == "format" {
-		formatted, err := engine.FormatSource(input.Source)
+		formatted, err := mcl.FormatSource(input.Source)
 		if err != nil {
 			result.Error = diagnosticError(input.Source, entrypoint, nil, err)
 		} else if len(formatted) > wasmprotocol.MaxOutputBytes {
@@ -165,7 +165,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 	if handleLanguageServiceOperation(input, &result, binaryArgument, sessionFiles, entrypoint) {
 		return marshal(result)
 	}
-	module, err := engine.ParseAST(input.Source)
+	module, err := mcl.ParseAST(input.Source)
 	if err != nil {
 		result.Error = diagnosticError(input.Source, entrypoint, nil, err)
 		return marshal(result)
@@ -409,7 +409,7 @@ func diagnosticError(source, entrypoint string, files fs.FS, err error) *respons
 	locationPath := entrypoint
 	message := err.Error()
 	var related []wasmprotocol.RelatedLocation
-	if diagnostic, ok := engine.SourceDiagnosticFromError(err); ok {
+	if diagnostic, ok := mcl.SourceDiagnosticFromError(err); ok {
 		code = diagnostic.Code
 		locationPath = projectRelativeDiagnosticPath(diagnostic.Path, entrypoint)
 		locationSource := projectFileSource(files, locationPath, entrypoint, source)

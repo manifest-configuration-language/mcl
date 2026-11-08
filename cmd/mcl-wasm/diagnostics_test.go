@@ -4,15 +4,15 @@ import (
 	"testing"
 	"unicode/utf16"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
+	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
 func TestDiagnosticsMapsUnreachableDefinitionCodeAction(t *testing.T) {
 	t.Parallel()
 
 	source := "let kept = \"🦦\"\nlet unused = \"💩\"\nemit kept\n"
-	module, err := engine.ParseAST(source)
+	module, err := mcl.ParseAST(source)
 	if err != nil {
 		t.Fatal(err)
 	}

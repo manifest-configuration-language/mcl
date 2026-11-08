@@ -8,12 +8,12 @@ import (
 	"path"
 	"strings"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
+	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
-func wasmSourceMap(sourceMap engine.ManifestSourceMap, output []byte, files fs.FS, entrypoint, entrypointSource string) wasmprotocol.SourceMap {
+func wasmSourceMap(sourceMap mcl.ManifestSourceMap, output []byte, files fs.FS, entrypoint, entrypointSource string) wasmprotocol.SourceMap {
 	result := wasmprotocol.SourceMap{Complete: true, Entries: make([]wasmprotocol.SourceMapEntry, 0)}
 	outputIndex := sourceindex.New(string(output))
 	sourceIndices := make(map[string]*sourceindex.Index)
@@ -143,31 +143,31 @@ func sourceMapSource(files fs.FS, sourcePath, entrypoint, entrypointSource strin
 	return string(source), true
 }
 
-func mclSourceOrigin(kind engine.SourceOriginKind) bool {
+func mclSourceOrigin(kind mcl.SourceOriginKind) bool {
 	_, ok := wasmSourceOriginKind(kind)
 	return ok
 }
 
-func wasmSourceOriginKind(kind engine.SourceOriginKind) (wasmprotocol.SourceMapOriginKind, bool) {
+func wasmSourceOriginKind(kind mcl.SourceOriginKind) (wasmprotocol.SourceMapOriginKind, bool) {
 	switch kind {
-	case engine.SourceOriginMCL:
+	case mcl.SourceOriginMCL:
 		return wasmprotocol.SourceMapOriginKindMcl, true
-	case engine.SourceOriginMCLOverlayBase:
+	case mcl.SourceOriginMCLOverlayBase:
 		return wasmprotocol.SourceMapOriginKindMclOverlayBase, true
-	case engine.SourceOriginMCLOverlayPatch:
+	case mcl.SourceOriginMCLOverlayPatch:
 		return wasmprotocol.SourceMapOriginKindMclOverlayPatch, true
 	default:
 		return "", false
 	}
 }
 
-func wasmSourceOriginMultiplicity(multiplicity engine.SourceOriginMultiplicity) (wasmprotocol.SourceMapOriginMultiplicity, bool) {
+func wasmSourceOriginMultiplicity(multiplicity mcl.SourceOriginMultiplicity) (wasmprotocol.SourceMapOriginMultiplicity, bool) {
 	switch multiplicity {
-	case engine.SourceOriginUnique:
+	case mcl.SourceOriginUnique:
 		return wasmprotocol.SourceMapOriginMultiplicityUnique, true
-	case engine.SourceOriginRepeated:
+	case mcl.SourceOriginRepeated:
 		return wasmprotocol.SourceMapOriginMultiplicityRepeated, true
-	case engine.SourceOriginAmbiguous:
+	case mcl.SourceOriginAmbiguous:
 		return wasmprotocol.SourceMapOriginMultiplicityAmbiguous, true
 	default:
 		return "", false

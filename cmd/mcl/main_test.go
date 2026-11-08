@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
+	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
 func TestDiffParsesInterspersedFlagsWithBundleCRDs(t *testing.T) {
@@ -74,7 +74,7 @@ emit hook
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := engine.EvaluateSource(path, source)
+	bundle, err := mcl.EvaluateSource(path, source)
 	if err != nil {
 		t.Fatalf("EvaluateSource() error = %v", err)
 	}
@@ -89,7 +89,7 @@ emit hook
 			if err := command.ExecuteContext(t.Context()); err != nil {
 				t.Fatalf("render command error = %v", err)
 			}
-			want, err := engine.RenderPhase(bundle, phase)
+			want, err := mcl.RenderPhase(bundle, phase)
 			if err != nil {
 				t.Fatalf("RenderPhase(%q) error = %v", phase, err)
 			}
@@ -186,12 +186,12 @@ func TestCheckUsesParameterFileAndEnforcesType(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "expected: String") || !strings.Contains(err.Error(), "actual: Int") || !strings.Contains(err.Error(), "pointer: /cluster") {
 		t.Fatalf("run(check --parameter-file) error = %v, want parameter type error", err)
 	}
-	diagnostic, ok := engine.SourceDiagnosticFromError(err)
+	diagnostic, ok := mcl.SourceDiagnosticFromError(err)
 	if !ok {
 		t.Fatalf("SourceDiagnosticFromError(%v) = false", err)
 	}
 	valueStart := strings.Index(parameterSource, "42")
-	if diagnostic.Path != parameterPath || diagnostic.Span != (engine.SourceSpan{Start: valueStart, End: valueStart + 2}) {
+	if diagnostic.Path != parameterPath || diagnostic.Span != (mcl.SourceSpan{Start: valueStart, End: valueStart + 2}) {
 		t.Fatalf("parameter diagnostic location = (%q, %+v), want (%q, %d-%d)", diagnostic.Path, diagnostic.Span, parameterPath, valueStart, valueStart+2)
 	}
 	if !strings.Contains(diagnostic.Message, "source: "+parameterPath) || !strings.Contains(diagnostic.Message, "path: cluster") {
@@ -220,7 +220,7 @@ func TestParameterDiagnosticPrintsLocationWithoutSourceSnippet(t *testing.T) {
 	if err == nil {
 		t.Fatal("run(check --parameter-file) succeeded with an invalid parameter type")
 	}
-	diagnostic, ok := engine.SourceDiagnosticFromError(err)
+	diagnostic, ok := mcl.SourceDiagnosticFromError(err)
 	if !ok {
 		t.Fatalf("SourceDiagnosticFromError(%v) = false", err)
 	}
@@ -284,7 +284,7 @@ func TestOperationOutputPermissionsAndRefusalPreserveExistingFiles(t *testing.T)
 	t.Parallel()
 
 	outputDir := filepath.Join(t.TempDir(), "output")
-	files := []engine.RenderedFile{{Name: "resource.yaml", Content: []byte("kind: ConfigMap\n")}}
+	files := []mcl.RenderedFile{{Name: "resource.yaml", Content: []byte("kind: ConfigMap\n")}}
 	if err := writeOperationFiles(outputDir, files); err != nil {
 		t.Fatalf("writeOperationFiles() error = %v", err)
 	}
@@ -309,7 +309,7 @@ func TestOperationOutputPermissionsAndRefusalPreserveExistingFiles(t *testing.T)
 	if err := os.WriteFile(resourcePath, []byte("locally modified\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOperationFiles(outputDir, []engine.RenderedFile{{Name: "resource.yaml", Content: []byte("kind: Secret\n")}}); err == nil {
+	if err := writeOperationFiles(outputDir, []mcl.RenderedFile{{Name: "resource.yaml", Content: []byte("kind: Secret\n")}}); err == nil {
 		t.Fatal("writeOperationFiles() replaced a modified managed output")
 	}
 	content, err := os.ReadFile(resourcePath)

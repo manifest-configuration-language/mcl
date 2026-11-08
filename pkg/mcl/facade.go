@@ -54,6 +54,12 @@ type ParameterSource = engine.ParameterSource
 
 type ParameterLocation = engine.ParameterLocation
 
+type ModuleAST = engine.ModuleAST
+
+type SourceSpan = engine.SourceSpan
+
+type StandardLibraryFunction = engine.StandardLibraryFunction
+
 type Artifact = engine.Artifact
 
 type Lifecycle = engine.Lifecycle
@@ -63,6 +69,36 @@ type Diagnostic = engine.Diagnostic
 type DiagnosticAction = engine.DiagnosticAction
 
 type DiagnosticTextEdit = engine.DiagnosticTextEdit
+
+// ParseAST parses MCL source and returns its syntax tree.
+func ParseAST(source string) (ModuleAST, error) {
+	return engine.ParseAST(source)
+}
+
+// FormatSource formats MCL source using the language formatter.
+func FormatSource(source string) (string, error) {
+	return engine.FormatSource(source)
+}
+
+// LintAST returns diagnostics for an already parsed module.
+func LintAST(module ModuleAST) []Diagnostic {
+	return engine.LintAST(module)
+}
+
+// SourcePositionUTF16 returns one-based line and column positions for a byte offset.
+func SourcePositionUTF16(source string, offset int) (int, int) {
+	return engine.SourcePositionUTF16(source, offset)
+}
+
+// ParseParameterFile parses a JSON parameter file and records the source location for each parameter.
+func ParseParameterFile(path string, source []byte) (map[string]jsontext.Value, map[string]ParameterSource, error) {
+	return engine.ParseParameterFile(path, source)
+}
+
+// StandardLibraryFunctions returns the registered standard library function metadata.
+func StandardLibraryFunctions() []StandardLibraryFunction {
+	return engine.StandardLibraryFunctions()
+}
 
 const DiagnosticActionRemoveUnreachableDefinition = engine.DiagnosticActionRemoveUnreachableDefinition
 
@@ -107,6 +143,11 @@ func NewKubernetesResourceIdentityResolverWithCatalog(bundle Bundle, catalog Kub
 // ResolveKubernetesResourceIdentity applies Kubernetes scope and Argo CD namespace defaults to a resource identity.
 func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespace, name, destinationNamespace string) (KubernetesResourceIdentity, error) {
 	return engine.ResolveKubernetesResourceIdentity(bundle, apiVersion, kind, namespace, name, destinationNamespace)
+}
+
+// KubernetesResourceScopeForBundle resolves a resource scope using the bundle's CRDs and catalog.
+func KubernetesResourceScopeForBundle(bundle Bundle, catalog KubernetesResourceCatalog, apiVersion, kind string) (KubernetesResourceScope, bool, error) {
+	return engine.KubernetesResourceScopeForBundle(bundle, catalog, apiVersion, kind)
 }
 
 func EvaluateFile(path string) (Bundle, error) {

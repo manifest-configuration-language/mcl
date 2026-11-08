@@ -18,10 +18,8 @@ import (
 	"syscall"
 
 	"github.com/manifest-configuration-language/mcl/internal/app"
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/lsp"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
-	"github.com/manifest-configuration-language/mcl/internal/syntax"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 	"github.com/rivo/uniseg"
 	"github.com/spf13/cobra"
@@ -519,7 +517,7 @@ func addEvaluationInputFlags(command *cobra.Command) {
 	command.Flags().Bool("allow-nondeterministic-output", false, "allow nondeterministic Helm output")
 }
 
-func commandEvaluationInputs(command *cobra.Command) (map[string]jsontext.Value, map[string]engine.ParameterSource, bool, error) {
+func commandEvaluationInputs(command *cobra.Command) (map[string]jsontext.Value, map[string]mcl.ParameterSource, bool, error) {
 	parameterValues, _ := command.Flags().GetStringArray("parameter")
 	parameterFiles, _ := command.Flags().GetStringArray("parameter-file")
 	allowNondeterministicOutput, _ := command.Flags().GetBool("allow-nondeterministic-output")
@@ -528,22 +526,22 @@ func commandEvaluationInputs(command *cobra.Command) (map[string]jsontext.Value,
 	return parameters, sources, allowNondeterministicOutput, err
 }
 
-func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, map[string]engine.ParameterSource, error) {
+func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, map[string]mcl.ParameterSource, error) {
 	parameters, err := parseParameters(values)
 	if err != nil {
 		return nil, nil, err
 	}
-	sources := make(map[string]engine.ParameterSource, len(parameters))
+	sources := make(map[string]mcl.ParameterSource, len(parameters))
 	for _, value := range values {
 		name, _, _ := strings.Cut(value, "=")
-		sources[name] = engine.ParameterSource{Label: "--parameter " + name}
+		sources[name] = mcl.ParameterSource{Label: "--parameter " + name}
 	}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read parameter file %q: %w", path, err)
 		}
-		fileParameters, fileSources, err := engine.ParseParameterFile(path, data)
+		fileParameters, fileSources, err := mcl.ParseParameterFile(path, data)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse parameter file %q: %w", path, err)
 		}
@@ -568,11 +566,11 @@ func parseParameterInputs(values, paths []string) (map[string]jsontext.Value, ma
 	return parameters, sources, nil
 }
 
-func evaluationOptions(allowNondeterministicOutput bool, sources map[string]engine.ParameterSource) mcl.EvaluationOptions {
+func evaluationOptions(allowNondeterministicOutput bool, sources map[string]mcl.ParameterSource) mcl.EvaluationOptions {
 	return mcl.EvaluationOptions{AllowNondeterministicOutput: allowNondeterministicOutput, ParameterSources: sources}
 }
 
-func commandEvaluationOptions(command *cobra.Command, allowNondeterministicOutput bool, sources map[string]engine.ParameterSource) mcl.EvaluationOptions {
+func commandEvaluationOptions(command *cobra.Command, allowNondeterministicOutput bool, sources map[string]mcl.ParameterSource) mcl.EvaluationOptions {
 	options := evaluationOptions(allowNondeterministicOutput, sources)
 	options.KubernetesVersion, _ = command.Flags().GetString("kubernetes-version")
 
@@ -590,11 +588,11 @@ func lintFiles(denyWarnings bool, paths []string) error {
 		if err != nil {
 			return err
 		}
-		module, err := syntax.ParseAST(string(source))
+		module, err := mcl.ParseAST(string(source))
 		if err != nil {
 			return sourceDiagnosticWithPath(err, path)
 		}
-		diagnostics := engine.LintAST(module)
+		diagnostics := mcl.LintAST(module)
 		warnings += len(diagnostics)
 		index := sourceindex.New(string(source))
 		for _, diagnostic := range diagnostics {
@@ -715,7 +713,7 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	if err != nil {
 		return err
 	}
-	plan := engine.NewBundleOutputPlan(bundle)
+	plan := mcl.NewBundleOutputPlan(bundle)
 	if err := plan.Validate(); err != nil {
 		return err
 	}
@@ -943,7 +941,7 @@ func formatFile(path string, write, check bool) error {
 	if err != nil {
 		return err
 	}
-	formatted, err := syntax.FormatSource(string(source))
+	formatted, err := mcl.FormatSource(string(source))
 	if err != nil {
 		return sourceDiagnosticWithPath(err, path)
 	}

@@ -1,12 +1,12 @@
 package main
 
 import (
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
+	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 )
 
-func diagnostics(module engine.ModuleAST, source, sourcePath string) wasmprotocol.LintResult {
-	items := engine.LintAST(module)
+func diagnostics(module mcl.ModuleAST, source, sourcePath string) wasmprotocol.LintResult {
+	items := mcl.LintAST(module)
 	result := make(wasmprotocol.LintResult, 0, len(items))
 	for _, item := range items {
 		line, column := sourcePosition(source, item.Span.Start)
@@ -58,7 +58,7 @@ func lintSeverity(severity int) string {
 }
 
 func sourcePosition(source string, offset int) (int, int) {
-	return engine.SourcePositionUTF16(source, offset)
+	return mcl.SourcePositionUTF16(source, offset)
 }
 
 func sourcePositionValue(position int) uint64 {

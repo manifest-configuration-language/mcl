@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
@@ -64,7 +64,7 @@ func standardLibraryReference(version string) string {
 	fmt.Fprintf(&output, "# Standard library function reference\n\nMCL version: `%s`\n\n", version)
 	output.WriteString("Function names, modules, and parameter names are generated from the standard-library registry. Function behavior and type semantics are documented in the hand-written language reference.\n\n")
 	output.WriteString("| Module | Function | Parameters |\n| --- | --- | --- |\n")
-	for _, function := range engine.StandardLibraryFunctions() {
+	for _, function := range mcl.StandardLibraryFunctions() {
 		parameters := make([]string, len(function.Parameters))
 		for index, parameter := range function.Parameters {
 			parameters[index] = "`" + parameter + "`"
