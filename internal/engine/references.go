@@ -1051,7 +1051,7 @@ func runtimeKubernetesResourceTarget(value RuntimeValue) string {
 		}
 		namespace = namespaceValue.TextValue()
 	}
-	if descriptor, known := builtinKubernetesResourceDescriptors[kubernetesResourceKey{group: group, kind: kind}]; known && descriptor.scope == kubernetesResourceCluster {
+	if descriptor, known := builtinKubernetesResourceDescriptors[kubernetesResourceKey{Group: group, Kind: kind}]; known && descriptor.Scope == kubernetesResourceCluster {
 		namespace = ""
 	}
 	if namespace == "" {

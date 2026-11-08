@@ -66,7 +66,7 @@ func runtimeBundleRequiresCRDSchemaCatalog(bundle *RuntimeBundle) bool {
 		if !hasAPIVersion || !grouped || group == "" || version == "" || strings.Contains(version, "/") {
 			continue
 		}
-		key := kubernetesResourceKey{group: group, kind: kind}
+		key := kubernetesResourceKey{Group: group, Kind: kind}
 		if _, known := builtinKubernetesResourceDescriptors[key]; !known {
 			return true
 		}
@@ -429,7 +429,7 @@ func kubernetesResourceDescriptorsFromCRDSchemas(schemas map[customResourceDefin
 		if descriptor.Kind == "" {
 			descriptor.Kind = key.kind
 		}
-		resourceKey := kubernetesResourceKey{group: descriptor.APIGroup, kind: descriptor.Kind}
+		resourceKey := kubernetesResourceKey{Group: descriptor.APIGroup, Kind: descriptor.Kind}
 		if existing, exists := byKind[resourceKey]; exists {
 			if existing != descriptor {
 				return nil, fmt.Errorf("CRD versions have conflicting resource descriptors for %s", kubernetesResourceKeyName(resourceKey))

@@ -729,16 +729,19 @@ func helmLookupResourceDescriptors(artifacts []Artifact) ([]helmrender.LookupRes
 		if !isResource {
 			return nil, fmt.Errorf("helm.render lookupResources entry %d must be a Kubernetes resource", index+1)
 		}
-		key := kubernetesResourceKey{group: identity.group, kind: identity.kind}
-		descriptor := scopes[key]
-		if descriptor.scope == kubernetesResourceCluster && identity.rawNamespace != "" {
+		key := kubernetesResourceKey{Group: identity.group, Kind: identity.kind}
+		descriptor, known := scopes[key]
+		if !known {
+			descriptor.Scope = kubernetesResourceUnknown
+		}
+		if descriptor.Scope == kubernetesResourceCluster && identity.rawNamespace != "" {
 			return nil, fmt.Errorf("helm.render lookupResources entry %d is cluster-scoped and must not set metadata.namespace", index+1)
 		}
-		if descriptor.scope == kubernetesResourceUnknown && identity.rawNamespace == "" {
+		if descriptor.Scope == kubernetesResourceUnknown && identity.rawNamespace == "" {
 			return nil, fmt.Errorf("helm.render lookupResources entry %d has unknown namespace scope and must set metadata.namespace", index+1)
 		}
 		publicScope := helmrender.LookupResourceScopeUnknown
-		switch descriptor.scope {
+		switch descriptor.Scope {
 		case kubernetesResourceNamespaced:
 			publicScope = helmrender.LookupResourceScopeNamespaced
 		case kubernetesResourceCluster:

@@ -153,7 +153,7 @@ func bundleResourceIdentity(value Value, scopes kubernetesResourceScopeIndex) (s
 	}
 	namespace := resourceIdentity.namespace
 	//nolint:exhaustive // 部分的なKind判定であり、その他の値は後続の共通処理で扱います。
-	switch scopes[kubernetesResourceKey{group: resourceIdentity.group, kind: resourceIdentity.kind}].scope {
+	switch scopes[kubernetesResourceKey{Group: resourceIdentity.group, Kind: resourceIdentity.kind}].Scope {
 	case kubernetesResourceNamespaced:
 		if namespace == "" {
 			namespace = "default"

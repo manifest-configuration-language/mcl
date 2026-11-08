@@ -255,8 +255,6 @@ type kubernetesResourceIdentity struct {
 	generatedName bool
 }
 
-const defaultKubernetesNamespace = "default"
-
 func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesResourceScopeIndex) error {
 	seen := make(map[kubernetesResourceIdentity]int, len(artifacts))
 	for index, artifact := range artifacts {
@@ -267,23 +265,26 @@ func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesR
 		if !isResource {
 			continue
 		}
-		descriptor := scopes[kubernetesResourceKey{group: identity.group, kind: identity.kind}]
-		if descriptor.scope == kubernetesResourceCluster && identity.rawNamespace != "" {
-			resource := descriptor.resourceName
+		descriptor, known := scopes[kubernetesResourceKey{Group: identity.group, Kind: identity.kind}]
+		if !known {
+			descriptor.Scope = kubernetesResourceUnknown
+		}
+		if descriptor.Scope == kubernetesResourceCluster && identity.rawNamespace != "" {
+			resource := descriptor.ResourceName
 			if identity.group != "" {
 				resource = identity.group + "/" + resource
 			}
 
 			return fmt.Errorf("cluster-scoped Kubernetes resource %s with name %q must not set metadata.namespace (artifact %d)", resource, identity.name, index+1)
 		}
-		identity.resourceName = descriptor.resourceName
-		if descriptor.scope == kubernetesResourceUnknown {
+		identity.resourceName = descriptor.ResourceName
+		if descriptor.Scope == kubernetesResourceUnknown {
 			identity.resourceName = identity.kind
 		}
-		identity.scope = descriptor.scope
+		identity.scope = descriptor.Scope
 		identity.kind = ""
 		identity.rawNamespace = ""
-		switch descriptor.scope {
+		switch descriptor.Scope {
 		case kubernetesResourceNamespaced:
 			if identity.namespace == "" {
 				identity.namespace = "default"
@@ -325,88 +326,12 @@ func kubernetesResourceIdentityOf(value Value) (kubernetesResourceIdentity, bool
 	return identity, isResource
 }
 
-func normalizeKubernetesResourceIdentity(identity kubernetesResourceIdentity) kubernetesResourceIdentity {
-	descriptor, known := builtinKubernetesResourceDescriptors[kubernetesResourceKey{group: identity.group, kind: identity.kind}]
-	if !known {
-		return identity
-	}
-	if descriptor.scope == kubernetesResourceCluster {
-		identity.namespace = ""
-	} else if descriptor.scope == kubernetesResourceNamespaced && identity.namespace == "" {
-		identity.namespace = defaultKubernetesNamespace
-	}
-	identity.rawNamespace = ""
-
-	return identity
-}
-
 func validatedKubernetesResourceIdentityOf(value Value) (kubernetesResourceIdentity, bool, error) {
 	return validatedKubernetesResourceIdentityOfWithGeneratedName(value, false)
 }
 
 func validatedKubernetesResourceIdentityOfWithGeneratedName(value Value, allowGeneratedName bool) (kubernetesResourceIdentity, bool, error) {
-	value = nodeContents(value)
-	if value.Kind != Map {
-		return kubernetesResourceIdentity{}, false, nil
-	}
-	apiVersion, hasAPIVersion := mapValue(value, "apiVersion")
-	kind, hasKind := mapValue(value, "kind")
-	if !hasAPIVersion && !hasKind {
-		return kubernetesResourceIdentity{}, false, nil
-	}
-	if !hasAPIVersion || apiVersion.Kind != String || apiVersion.Text == "" {
-		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource apiVersion must be a non-empty string")
-	}
-	if !hasKind || kind.Kind != String || kind.Text == "" {
-		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource kind must be a non-empty string")
-	}
-	metadata, hasMetadata := mapValue(value, "metadata")
-	if !hasMetadata || nodeContents(metadata).Kind != Map {
-		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource metadata must be a map containing name")
-	}
-	metadata = nodeContents(metadata)
-	name, hasName := mapValue(metadata, "name")
-	generatedName := false
-	if !hasName || name.Kind != String || name.Text == "" {
-		prefix, hasPrefix := mapValue(metadata, "generateName")
-		if !allowGeneratedName || !hasPrefix || prefix.Kind != String || prefix.Text == "" {
-			return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource metadata.name must be a non-empty string")
-		}
-		name = prefix
-		generatedName = true
-	}
-	group, version, hasGroup := strings.Cut(apiVersion.Text, "/")
-	if !hasGroup {
-		group = ""
-		version = apiVersion.Text
-	} else if group == "" || strings.Contains(version, "/") {
-		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource apiVersion is invalid")
-	}
-	if !validKubernetesAPIVersion(version) {
-		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource apiVersion is invalid")
-	}
-	namespace := Value{}
-	if namespaceValue, exists := mapValue(nodeContents(metadata), "namespace"); exists {
-		if namespaceValue.Kind != String {
-			return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource metadata.namespace must be a string")
-		}
-		namespace = namespaceValue
-	}
-
-	identity := kubernetesResourceIdentity{
-		group:         group,
-		kind:          kind.Text,
-		namespace:     namespace.Text,
-		rawNamespace:  namespace.Text,
-		name:          name.Text,
-		generatedName: generatedName,
-	}
-	if descriptor, known := builtinKubernetesResourceDescriptors[kubernetesResourceKey{group: identity.group, kind: identity.kind}]; known {
-		identity.resourceName = descriptor.resourceName
-		identity.scope = descriptor.scope
-	}
-
-	return identity, true, nil
+	return parseKubernetesResourceIdentity(value, allowGeneratedName)
 }
 
 func lifecycleAllowsGeneratedName(lifecycle Lifecycle) bool {
