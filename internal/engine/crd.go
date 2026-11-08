@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
+	kubernetespkg "github.com/manifest-configuration-language/mcl/internal/kubernetes"
 	"github.com/shopspring/decimal"
 	"gopkg.in/yaml.v3"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
@@ -420,7 +421,7 @@ func ensureCRDVersionFingerprint(schema *crdVersionSchema) error {
 }
 
 func kubernetesResourceDescriptorsFromCRDSchemas(schemas map[customResourceDefinitionKey]crdVersionSchema) ([]KubernetesResourceDescriptor, error) {
-	byKind := make(map[kubernetesResourceKey]KubernetesResourceDescriptor)
+	descriptors := make([]KubernetesResourceDescriptor, 0, len(schemas))
 	for key, schema := range schemas {
 		descriptor := schema.descriptor
 		if descriptor.APIGroup == "" {
@@ -429,30 +430,10 @@ func kubernetesResourceDescriptorsFromCRDSchemas(schemas map[customResourceDefin
 		if descriptor.Kind == "" {
 			descriptor.Kind = key.kind
 		}
-		resourceKey := kubernetesResourceKey{Group: descriptor.APIGroup, Kind: descriptor.Kind}
-		if existing, exists := byKind[resourceKey]; exists {
-			if existing != descriptor {
-				return nil, fmt.Errorf("CRD versions have conflicting resource descriptors for %s", kubernetesResourceKeyName(resourceKey))
-			}
-
-			continue
-		}
-		byKind[resourceKey] = descriptor
-	}
-	descriptors := make([]KubernetesResourceDescriptor, 0, len(byKind))
-	for _, descriptor := range byKind {
 		descriptors = append(descriptors, descriptor)
 	}
 
-	slices.SortFunc(descriptors, func(left, right KubernetesResourceDescriptor) int {
-		if comparison := strings.Compare(left.APIGroup, right.APIGroup); comparison != 0 {
-			return comparison
-		}
-
-		return strings.Compare(left.Kind, right.Kind)
-	})
-
-	return descriptors, nil
+	return kubernetespkg.CanonicalizeCRDDescriptors(descriptors)
 }
 
 func customResourceOpenAPISchemaRuntime(version RuntimeValue) (RuntimeValue, SourceDiagnosticLocation, error) {
