@@ -202,7 +202,8 @@ func removeRuntimePath(value RuntimeValue, parts []string) (RuntimeValue, error)
 
 type typedForContinuation struct {
 	Source     RuntimeValue
-	Body       typedExpression
+	Unit       *typedUnit
+	Body       ExprID
 	LoopName   string
 	Scope      map[string]RuntimeValue
 	SourcePath string
@@ -594,7 +595,6 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 			if deferred.For != nil {
 				loop := *deferred.For
 				loop.Source = state.clone(loop.Source)
-				loop.Body = cloneTypedExpression(loop.Body)
 				loop.Scope = maps.Clone(loop.Scope)
 				for name, captured := range loop.Scope {
 					loop.Scope[name] = state.clone(captured)

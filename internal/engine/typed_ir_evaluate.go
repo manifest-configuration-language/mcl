@@ -151,10 +151,11 @@ func (expression typedExpression) evaluateFor(context typedEvaluationContext) (R
 		return RuntimeValue{}, err
 	}
 	if runtimeValueHasDeferred(source) {
+		unit, body := newTypedUnit(*expression.thenBranch)
 		return RuntimeValue{
 			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 			Deferred: &typedContinuation{For: &typedForContinuation{
-				Source: source, Body: cloneTypedExpression(*expression.thenBranch),
+				Source: source, Unit: unit, Body: body,
 				LoopName: expression.loopName, Scope: context.captureRuntimeScope(),
 				SourcePath: context.sourcePath, Span: expression.span,
 			}},

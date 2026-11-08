@@ -551,6 +551,10 @@ func resolveTypedIndexContinuation(continuation *typedIndexContinuation, resolve
 }
 
 func resolveTypedForContinuation(continuation *typedForContinuation, state *EvaluationState, resolve func(*RuntimeValue) error) (RuntimeValue, error) {
+	body, ok := continuation.Unit.node(continuation.Body)
+	if !ok {
+		return RuntimeValue{}, errors.New("invalid deferred for body expression")
+	}
 	source := continuation.Source
 	if err := resolve(&source); err != nil {
 		return RuntimeValue{}, err
@@ -570,7 +574,7 @@ func resolveTypedForContinuation(continuation *typedForContinuation, state *Eval
 			return RuntimeValue{}, err
 		}
 		frame := parentFrame.childBinding(continuation.LoopName, item)
-		value, err := evaluateTypedExpressionRuntimeInScope(continuation.Body, state, environment, frame)
+		value, err := evaluateTypedExpressionRuntimeInScope(body, state, environment, frame)
 		if err != nil {
 			return RuntimeValue{}, err
 		}

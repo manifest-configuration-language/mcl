@@ -54,6 +54,12 @@ Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣
 
 ## 2026年11月8日の追加実装
 
+`moduleLoader`が個別に所有していたimport moduleのRuntime export cache、exported type cache、`TypeAnalysisContext`を`ProjectSession`へまとめました。Sessionは評価ごとに生成し、既存のcache key、値のclone、cache lifetime、診断を維持しています。この変更ではworkspace snapshotや型解析結果を評価間で共有しません。
+
+遅延`for`継続は、bodyの再帰式を継続値に直接保持する方式から、`typedUnit`と`ExprID`で参照する方式へ変更しました。Unitは遅延継続を作るときにbodyを一度だけ複製し、RuntimeValue graphのcloneでは同じUnitを共有します。現行評価器にはUnitから従来の再帰式を取得するadapterを残しています。Unitの中身はまだbody全体の再帰式であり、Typed IR全体をarena化した状態ではありません。
+
+これらの変更後に`go test ./... -count=1`が成功しました。Typed Unitの変更では、Unit共有とbody IDの保持を確認する回帰テストを追加しました。ベンチマークは実施していないため、速度向上の数値は示しません。
+
 Project index、Filesystem、workspace scope、import解決を`internal/project`へ移しました。LSPとLanguage Serviceは`project` APIを直接利用し、`internal/engine`には既存の評価器・呼び出し元向けのaliasと薄い委譲を残しています。評価器の`moduleGraph`はAST依存、import循環検出、モジュール評価を持つため、Project indexとは分離してengineに残します。
 
 確定値モデルを`internal/value`へ移し、`Kind`、`Value`、`Entry`、`Artifact`、`Lifecycle`、`NodeIdentity`、値の型由来情報を所有させました。`Bundle`と遅延評価、Lambda、Rule、ModuleContextは評価時の状態を含むためengineに残しています。`internal/types`は`ResolvedType`とclone・generic substitutionを所有し、`internal/source`はSource Spanと診断・Provenanceの基本型を所有します。既存の公開Facadeはengine alias経由で維持します。
@@ -72,6 +78,6 @@ CLI/WASM Facade移行後に全Go packageの`go test ./... -count=1`、`GOOS=js G
 
 ## 継続する設計作業
 
-現在の変更はパッケージ境界を整える段階であり、Compiler・Typed IR・Runtimeの完全分離を完了していません。`typedExpression`は依然としてengineが所有する可変な再帰構造で、安定した`ExprID`を持つ不変Unitへ移行する作業が残っています。型特殊化、遅延継続、Lambda捕捉を同じCompile Unitの寿命で安全に参照する設計が必要です。
+現在の変更はパッケージ境界を整える段階であり、Compiler・Typed IR・Runtimeの完全分離を完了していません。`typedExpression`は依然としてengineが所有する可変な再帰構造です。遅延`for` bodyにだけroot IDを持つ`typedUnit`を導入しましたが、IR nodeをフラットなarenaへ移す作業が残っています。型特殊化、遅延継続、Lambda捕捉を同じCompile Unitの寿命で安全に参照する設計が必要です。
 
 `internal/output`はSource Map、確定値serializer、BundleOutputPlanを所有します。engineにはBundle adapterとRuntimeValue serializerが残っています。`internal/kubernetes`はCatalog、Scope index、CRD/Identity解析、重複Resource検証を所有しますが、engineのCRD descriptor生成adapterは残っています。`internal/adapters/helm`と`internal/adapters/kustomize`はまだ独立していません。CLIとWASMの直接依存はなくなりましたが、`pkg/mcl`は互換Facadeとしてengineを参照します。`internal/engine`の削除は、Compiler、Runtime、Adapter、Output、公開Facadeの依存が分離し、外部packageからのengine内部参照がなくなった後の最終段階です。

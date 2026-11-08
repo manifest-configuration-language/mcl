@@ -62,8 +62,6 @@ type moduleLoader struct {
 	graph                       *moduleGraph
 	entry                       string
 	entryText                   string
-	runtimeCache                map[string][]RuntimeEntry
-	runtimeTypes                map[string]map[string]ResolvedType
 	dependencies                *dependency.Lock
 	operation                   string
 	allowNondeterministicOutput bool
@@ -75,7 +73,7 @@ type moduleLoader struct {
 	textImports                 map[string]string
 	textBytes                   int64
 	session                     *EvaluationSession
-	analysis                    *TypeAnalysisContext
+	projectSession              *ProjectSession
 	crdSchemas                  map[customResourceDefinitionKey]crdVersionSchema
 }
 
@@ -303,11 +301,10 @@ func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fe
 	loader := moduleLoader{
 		ctx:  ctx,
 		root: root, files: files, entry: canonical, entryText: string(source),
-		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters),
 		allowNondeterministicOutput: options.AllowNondeterministicOutput, parameterSources: cloneParameterSources(options.ParameterSources), loadedModules: make(map[string]struct{}), session: &EvaluationSession{Budget: &functionBudget{}},
 		kubernetesVersion: options.KubernetesVersion,
-		analysis:          &TypeAnalysisContext{},
+		projectSession:    newProjectSession(),
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(canonical, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	if err != nil {
@@ -474,8 +471,6 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		entry:                       entry,
 		entryText:                   source,
 		parameters:                  maps.Clone(parameters),
-		runtimeCache:                make(map[string][]RuntimeEntry),
-		runtimeTypes:                make(map[string]map[string]ResolvedType),
 		dependencies:                dependencies,
 		allowNondeterministicOutput: options.AllowNondeterministicOutput,
 		kubernetesVersion:           options.KubernetesVersion,
@@ -483,7 +478,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		overlays:                    canonicalOverlays,
 		loadedModules:               make(map[string]struct{}),
 		session:                     &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}},
-		analysis:                    &TypeAnalysisContext{},
+		projectSession:              newProjectSession(),
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(entry, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
 	loadedModules := loader.loadedModulePaths()
@@ -522,14 +517,8 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if loader.files == nil {
 		loader.files = newOSProjectFilesystem(loader.root)
 	}
-	if loader.runtimeCache == nil {
-		loader.runtimeCache = make(map[string][]RuntimeEntry)
-	}
-	if loader.runtimeTypes == nil {
-		loader.runtimeTypes = make(map[string]map[string]ResolvedType)
-	}
-	if loader.analysis == nil {
-		loader.analysis = &TypeAnalysisContext{}
+	if loader.projectSession == nil {
+		loader.projectSession = newProjectSession()
 	}
 	if err := loader.ctx.Err(); err != nil {
 		return nil, nil, nil, err
@@ -545,10 +534,10 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	}
 	loader.loadedModules[path] = struct{}{}
 	if !entry {
-		if exports, cached := loader.runtimeCache[path]; cached {
+		if exports, cached := loader.projectSession.runtimeCache[path]; cached {
 			state := &EvaluationState{
 				EvaluationSession: loader.session,
-				Types:             maps.Clone(loader.runtimeTypes[path]),
+				Types:             maps.Clone(loader.projectSession.runtimeTypes[path]),
 			}
 
 			return exports, &RuntimeBundle{}, state, nil
@@ -582,10 +571,10 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.analysis); err != nil {
+	if err := loadTypeSchemaFilesWithFilesystem(types, loader.root, path, loader.dependencies, loader.files, loader.projectSession.analysis); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
-	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, AllowNondeterministicOutput: loader.allowNondeterministicOutput, KubernetesVersion: loader.kubernetesVersion, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
+	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, AllowNondeterministicOutput: loader.allowNondeterministicOutput, KubernetesVersion: loader.kubernetesVersion, Analysis: loader.projectSession.analysis, CRDSchemas: loader.crdSchemas}
 	state := &EvaluationState{
 		EvaluationSession: loader.session,
 		Environment:       make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types,
@@ -640,7 +629,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 			if dependencyBundle != nil && len(dependencyBundle.Artifacts) != 0 {
 				return nil, nil, nil, fmt.Errorf("imported module %q emitted values", dependency)
 			}
-			for name, typeExpr := range loader.runtimeTypes[dependency] {
+			for name, typeExpr := range loader.projectSession.runtimeTypes[dependency] {
 				state.Types[declaration.Name+"."+name] = typeExpr
 			}
 		}
@@ -676,7 +665,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		bundle = &RuntimeBundle{}
 	}
 	if !entry {
-		loader.runtimeCache[path] = slices.Clone(exports)
+		loader.projectSession.runtimeCache[path] = slices.Clone(exports)
 		exportedTypes := make(map[string]ResolvedType)
 		typeScope := maps.Clone(state.Types)
 		scopeID := TypeScopeID(path)
@@ -690,7 +679,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 				exportedTypes[declaration.Name] = typeExpr
 			}
 		}
-		loader.runtimeTypes[path] = exportedTypes
+		loader.projectSession.runtimeTypes[path] = exportedTypes
 	}
 
 	return exports, bundle, state, nil

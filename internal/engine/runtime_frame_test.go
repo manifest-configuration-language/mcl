@@ -84,6 +84,23 @@ func TestCloningLambdaFramePreservesNodeCloneSemantics(t *testing.T) {
 	}
 }
 
+func TestCloningDeferredForSharesImmutableTypedUnit(t *testing.T) {
+	unit, bodyID := newTypedUnit(typedExpression{kind: typedExpressionString, text: "body"})
+	deferred := RuntimeValue{Deferred: &typedContinuation{For: &typedForContinuation{Unit: unit, Body: bodyID}}}
+
+	cloned := cloneRuntimeValueGraph(deferred, nil)
+	if cloned.Deferred.For.Unit != unit {
+		t.Fatal("cloned deferred for expression copied its immutable typed unit")
+	}
+	if cloned.Deferred.For.Body != deferred.Deferred.For.Body {
+		t.Fatalf("cloned body ID = %d, want %d", cloned.Deferred.For.Body, deferred.Deferred.For.Body)
+	}
+	body, ok := cloned.Deferred.For.Unit.node(cloned.Deferred.For.Body)
+	if !ok || body.kind != typedExpressionString || body.text != "body" {
+		t.Fatalf("cloned body lookup = (%#v, %t), want string body", body, ok)
+	}
+}
+
 func runtimeFrameTestValue(text string) RuntimeValue {
 	return RuntimeValue{Value: runtimeValueData{Kind: String, Text: text}}
 }

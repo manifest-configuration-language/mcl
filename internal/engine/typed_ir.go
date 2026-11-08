@@ -2,6 +2,27 @@ package engine
 
 import "maps"
 
+// ExprID is an index into one immutable typed expression unit.
+type ExprID uint32
+
+// typedUnit owns typed expressions that must outlive their original evaluation tree.
+// Nodes are built once and read through node; runtime continuations share the unit.
+type typedUnit struct {
+	nodes []typedExpression
+}
+
+func newTypedUnit(expression typedExpression) (*typedUnit, ExprID) {
+	return &typedUnit{nodes: []typedExpression{cloneTypedExpression(expression)}}, 0
+}
+
+func (unit *typedUnit) node(id ExprID) (typedExpression, bool) {
+	if unit == nil || uint64(id) >= uint64(len(unit.nodes)) {
+		return typedExpression{}, false
+	}
+
+	return unit.nodes[id], true
+}
+
 type typedExpressionKind uint8
 
 const (
