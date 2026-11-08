@@ -828,21 +828,34 @@ type RuntimeValidation struct {
 	Types         map[string]ResolvedType
 }
 
-// EvaluationStateは型付き評価とBundle参照解決で共有する実行状態を保持します。
+// EvaluationSessionは再帰評価、値生成、Node参照解決で共有する実行制御状態を保持します。
+type EvaluationSession struct {
+	Budget           *functionBudget
+	Allocations      *runtimeAllocationBudget
+	NodeIndex        map[*NodeIdentity]runtimeNodeRecord
+	ActiveReferences map[activeReference]bool
+	ActiveRules      map[*runtimeRuleIdentity]bool
+}
+
+// EvaluationStateはモジュールの環境と一回の実行で共有するEvaluationSessionを結び付けます。
 type EvaluationState struct {
+	*EvaluationSession
 	Environment      map[string]RuntimeValue
 	StaticTypes      map[string]TypeAnalysis
 	Parameters       map[string]jsontext.Value
 	ParameterSources map[string]ParameterSource
 	Types            map[string]ResolvedType
 	Stack            map[string]bool
-	Budget           *functionBudget
-	Allocations      *runtimeAllocationBudget
 	SourcePath       string
 	Module           *ModuleContext
-	NodeIndex        map[*NodeIdentity]runtimeNodeRecord
-	ActiveReferences map[activeReference]bool
-	ActiveRules      map[*runtimeRuleIdentity]bool
+}
+
+func (state *EvaluationState) ensureSession() *EvaluationSession {
+	if state.EvaluationSession == nil {
+		state.EvaluationSession = &EvaluationSession{}
+	}
+
+	return state.EvaluationSession
 }
 
 type runtimeAllocationBudget struct {
@@ -895,8 +908,9 @@ func evaluateRuntimeExpression(expression typedExpression, state *EvaluationStat
 	if state == nil {
 		return RuntimeValue{}, errors.New("evaluation state is nil")
 	}
+	session := state.ensureSession()
 	if state.Allocations == nil {
-		state.Allocations = &runtimeAllocationBudget{}
+		session.Allocations = &runtimeAllocationBudget{}
 	}
 	value, err := expression.evaluate(typedEvaluationContext{
 		runtimeEnv:  state.Environment,
@@ -920,8 +934,9 @@ func evaluateTypedContinuation(continuation *typedContinuation, state *Evaluatio
 	if state == nil {
 		return RuntimeValue{}, errors.New("evaluation state is nil")
 	}
+	session := state.ensureSession()
 	if state.Allocations == nil {
-		state.Allocations = &runtimeAllocationBudget{}
+		session.Allocations = &runtimeAllocationBudget{}
 	}
 	environment := state.Environment
 	if continuation.Scope != nil {
@@ -942,6 +957,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	if lambda.Lambda == nil || state == nil {
 		return RuntimeValue{}, errors.New("invalid typed Lambda call")
 	}
+	state.ensureSession()
 	definition := lambda.Lambda
 	parameters := make([]FunctionTypeParameter, len(definition.Parameters))
 	for index, name := range definition.Parameters {
@@ -999,8 +1015,9 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, defaultExpression.span, err)
 		}
 		defaultValue, err := evaluateTypedExpressionRuntime(defaultExpression, &EvaluationState{
-			Environment: environment, StaticTypes: definition.Typing.TypeScope, Types: lambdaTypes,
-			Stack: state.Stack, Budget: state.Budget, Allocations: state.Allocations,
+			EvaluationSession: state.EvaluationSession,
+			Environment:       environment, StaticTypes: definition.Typing.TypeScope, Types: lambdaTypes,
+			Stack:      state.Stack,
 			SourcePath: lambda.Value.SourcePath, Module: definition.ModuleContext,
 		})
 		if err != nil {
@@ -1112,8 +1129,9 @@ func evaluateTypedExpressionRuntime(expression typedExpression, state *Evaluatio
 	if state == nil {
 		return RuntimeValue{}, errors.New("evaluation state is nil")
 	}
+	session := state.ensureSession()
 	if state.Allocations == nil {
-		state.Allocations = &runtimeAllocationBudget{}
+		session.Allocations = &runtimeAllocationBudget{}
 	}
 	value, err := expression.evaluate(typedEvaluationContext{
 		runtimeEnv: state.Environment, staticTypes: state.StaticTypes, types: state.Types,

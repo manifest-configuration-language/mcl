@@ -339,8 +339,9 @@ func EvaluateASTContext(ctx context.Context, module ModuleAST) (Bundle, error) {
 	}
 	moduleContext := &ModuleContext{Context: ctx, Analysis: &TypeAnalysisContext{}}
 	state := &EvaluationState{
-		Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types,
-		Stack: make(map[string]bool), Budget: &functionBudget{ctx: ctx}, Allocations: &runtimeAllocationBudget{}, Module: moduleContext,
+		EvaluationSession: &EvaluationSession{Budget: &functionBudget{ctx: ctx}, Allocations: &runtimeAllocationBudget{}},
+		Environment:       make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types,
+		Stack: make(map[string]bool), Module: moduleContext,
 	}
 	for _, node := range module.Nodes {
 		declaration, ok := node.(*ImportDeclaration)
@@ -387,8 +388,9 @@ func EvaluateASTContext(ctx context.Context, module ModuleAST) (Bundle, error) {
 
 func evaluateASTRuntime(module ModuleAST) (*RuntimeBundle, *EvaluationState, error) {
 	state := &EvaluationState{
-		Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis),
-		Stack: make(map[string]bool), Budget: &functionBudget{},
+		EvaluationSession: &EvaluationSession{Budget: &functionBudget{}},
+		Environment:       make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis),
+		Stack: make(map[string]bool),
 	}
 	_, bundle, err := evaluateModuleASTRuntime(module, state, true)
 	if err != nil {
@@ -402,6 +404,7 @@ func evaluateModuleASTRuntime(module ModuleAST, state *EvaluationState, entry bo
 	if state == nil {
 		return nil, nil, errors.New("evaluation state is nil")
 	}
+	state.ensureSession()
 	if state.Environment == nil {
 		state.Environment = make(map[string]RuntimeValue)
 	}

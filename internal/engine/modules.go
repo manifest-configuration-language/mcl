@@ -17,6 +17,7 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/k8sschema"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"github.com/manifest-configuration-language/mcl/internal/safepath"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
@@ -76,8 +77,7 @@ type moduleLoader struct {
 	loadedModules               map[string]struct{}
 	textImports                 map[string]string
 	textBytes                   int64
-	budget                      *functionBudget
-	allocations                 *runtimeAllocationBudget
+	session                     *EvaluationSession
 	analysis                    *TypeAnalysisContext
 	crdSchemas                  map[customResourceDefinitionKey]crdVersionSchema
 }
@@ -230,15 +230,9 @@ func ResolveImportPath(importer, modulePath string) (string, error) {
 // DependentMCLSourceIndexはworkspaceのimport逆参照indexを保持します。
 type DependentMCLSourceIndex struct {
 	mu           sync.Mutex
-	root         string
-	searchRoots  []string
 	files        *projectFilesystem
-	hashes       map[string][sha256.Size]byte
-	modules      map[string]ModuleAST
-	dependencies map[string][]string
-	importers    map[string][]string
+	snapshot     *project.WorkspaceSnapshot
 	diskSources  map[string]string
-	sources      map[string]string
 	overlayPaths map[string]struct{}
 	initialized  bool
 }
@@ -293,18 +287,13 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystemWithContext(ctx contex
 	if err != nil {
 		return nil, err
 	}
-	hashes := make(map[string][sha256.Size]byte, len(allSources))
-	for path, source := range allSources {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		hashes[path] = sha256.Sum256([]byte(source))
-	}
-
 	modules := make(map[string]ModuleAST, len(allSources))
-	if index.root == root && slices.Equal(index.searchRoots, searchRoots) {
-		for path, module := range index.modules {
-			if hash, exists := hashes[path]; exists && index.hashes[path] == hash {
+	if index.snapshot != nil && index.snapshot.Root() == root && slices.Equal(index.snapshot.SearchRoots(), searchRoots) {
+		for path, source := range allSources {
+			if _, hash, exists := index.snapshot.Source(path); !exists || hash != sha256.Sum256([]byte(source)) {
+				continue
+			}
+			if module, exists := index.snapshot.Module(path); exists {
 				modules[path] = module
 			}
 		}
@@ -325,14 +314,14 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystemWithContext(ctx contex
 
 	dependencies := make(map[string][]string, len(modules))
 	importers := make(map[string][]string)
-	if index.root == root && slices.Equal(index.searchRoots, searchRoots) {
-		for dependency, paths := range index.importers {
-			importers[dependency] = slices.Clone(paths)
-		}
-		for path, paths := range index.dependencies {
-			if _, exists := modules[path]; exists {
-				dependencies[path] = slices.Clone(paths)
-			} else {
+	if index.snapshot != nil && index.snapshot.Root() == root && slices.Equal(index.snapshot.SearchRoots(), searchRoots) {
+		for _, path := range index.snapshot.Paths() {
+			dependencies[path] = index.snapshot.Dependencies(path)
+			if paths := index.snapshot.Importers(path); len(paths) != 0 {
+				importers[path] = paths
+			}
+			if _, exists := modules[path]; !exists {
+				delete(dependencies, path)
 				removeImporterPath(importers, path)
 			}
 		}
@@ -361,20 +350,21 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystemWithContext(ctx contex
 			importers[dependency] = append(importers[dependency], path)
 		}
 	}
-	result, err := dependentModuleSourcesWithContext(ctx, canonical, allSources, importers)
+	generation := uint64(1)
+	if index.snapshot != nil {
+		generation = index.snapshot.Generation() + 1
+	}
+	snapshot, err := project.NewWorkspaceSnapshotFromParsed(generation, root, searchRoots, allSources, modules, dependencies, importers)
 	if err != nil {
 		return nil, err
 	}
-
-	index.root = root
-	index.searchRoots = slices.Clone(searchRoots)
+	result, err := snapshot.DependentSources(ctx, canonical)
+	if err != nil {
+		return nil, err
+	}
+	index.snapshot = snapshot
 	index.files = filesystem
-	index.hashes = hashes
-	index.modules = modules
-	index.dependencies = dependencies
-	index.importers = importers
 	index.diskSources = diskSources
-	index.sources = allSources
 	index.overlayPaths = overlayPaths
 	index.initialized = true
 
@@ -475,7 +465,7 @@ func (index *DependentMCLSourceIndex) SourcesFromIndexWithContext(ctx context.Co
 	if err != nil {
 		return nil, err
 	}
-	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) || index.files == nil || !index.files.osBacked {
+	if !index.initialized || index.snapshot == nil || index.snapshot.Root() != root || !slices.Equal(index.snapshot.SearchRoots(), searchRoots) || index.files == nil || !index.files.osBacked {
 		return index.sourcesForFilesystemWithContext(ctx, canonical, root, searchRoots, newOSProjectFilesystem(root), overlays)
 	}
 
@@ -498,7 +488,7 @@ func (index *DependentMCLSourceIndex) SourcesFromProjectFSIndexWithContext(ctx c
 	if err != nil {
 		return nil, err
 	}
-	if !index.initialized || index.root != root || !slices.Equal(index.searchRoots, searchRoots) || index.files == nil || index.files.osBacked {
+	if !index.initialized || index.snapshot == nil || index.snapshot.Root() != root || !slices.Equal(index.snapshot.SearchRoots(), searchRoots) || index.files == nil || index.files.osBacked {
 		return index.sourcesForFilesystemWithContext(ctx, canonical, root, searchRoots, filesystem, overlays)
 	}
 
@@ -539,7 +529,7 @@ func (index *DependentMCLSourceIndex) sourcesFromIndexWithContext(ctx context.Co
 	for path := range nextOverlayPaths {
 		if source, exists := effectiveSources[path]; !exists {
 			return nil, fmt.Errorf("overlay module %q is missing from the source snapshot", path)
-		} else if old, oldExists := index.sources[path]; !oldExists || old != source {
+		} else if old, _, oldExists := index.snapshot.Source(path); !oldExists || old != source {
 			changed[path] = struct{}{}
 		}
 	}
@@ -550,7 +540,7 @@ func (index *DependentMCLSourceIndex) sourcesFromIndexWithContext(ctx context.Co
 		return nil, err
 	}
 
-	return dependentModuleSourcesWithContext(ctx, canonical, index.sources, index.importers)
+	return index.snapshot.DependentSources(ctx, canonical)
 }
 
 // DependentMCLFileChangeはLSPが通知したMCLファイルの変更を表します。
@@ -575,15 +565,15 @@ func (index *DependentMCLSourceIndex) ApplyFileChanges(changes []DependentMCLFil
 func (index *DependentMCLSourceIndex) ApplyFileChangesWithContext(ctx context.Context, changes []DependentMCLFileChange) error {
 	index.mu.Lock()
 	defer index.mu.Unlock()
-	if !index.initialized {
+	if !index.initialized || index.snapshot == nil {
 		return nil
 	}
 	diskSources := maps.Clone(index.diskSources)
 	files := index.files
 	if files == nil {
-		files = newOSProjectFilesystem(index.root)
+		files = newOSProjectFilesystem(index.snapshot.Root())
 	}
-	effectiveSources := maps.Clone(index.sources)
+	effectiveSources := index.snapshot.Sources()
 	changed := make(map[string]struct{}, len(changes))
 	for _, change := range changes {
 		path, err := canonicalWatchedModulePath(change.Path, change.Deleted, diskSources, files)
@@ -597,12 +587,12 @@ func (index *DependentMCLSourceIndex) ApplyFileChangesWithContext(ctx context.Co
 
 			return nil
 		}
-		if filepath.Ext(path) != ".mcl" || !safepath.Within(index.root, path) || !pathWithinAny(index.searchRoots, path) {
+		if filepath.Ext(path) != ".mcl" || !safepath.Within(index.snapshot.Root(), path) || !pathWithinAny(index.snapshot.SearchRoots(), path) {
 			continue
 		}
 		if files.osBacked {
 			moduleRoot, rootErr := discoverProjectRoot(filepath.Dir(path))
-			if rootErr != nil || moduleRoot != index.root {
+			if rootErr != nil || moduleRoot != index.snapshot.Root() {
 				if _, wasIndexed := diskSources[path]; wasIndexed {
 					index.initialized = false
 
@@ -612,7 +602,7 @@ func (index *DependentMCLSourceIndex) ApplyFileChangesWithContext(ctx context.Co
 				continue
 			}
 		}
-		if ignoredRenameSourcePath(path, index.searchRoots) {
+		if ignoredRenameSourcePath(path, index.snapshot.SearchRoots()) {
 			if _, overlaid := index.overlayPaths[path]; overlaid {
 				if change.Deleted {
 					delete(diskSources, path)
@@ -717,6 +707,9 @@ func canonicalWatchedModulePath(path string, deleted bool, diskSources map[strin
 }
 
 func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx context.Context, diskSources, sources map[string]string, overlayPaths map[string]struct{}, changed map[string]struct{}, files *projectFilesystem) error {
+	if index.snapshot == nil {
+		return errors.New("workspace source snapshot is not initialized")
+	}
 	var totalBytes int64
 	for _, source := range sources {
 		if err := ctx.Err(); err != nil {
@@ -727,10 +720,18 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 	if len(sources) > maxProjectMCLFiles || totalBytes > maxProjectMCLBytes {
 		return errors.New("workspace MCL source index exceeds its configured limits")
 	}
-	modules := maps.Clone(index.modules)
-	dependencies := maps.Clone(index.dependencies)
-	importers := cloneImporters(index.importers)
-	hashes := maps.Clone(index.hashes)
+	modules := make(map[string]ModuleAST, len(sources))
+	dependencies := make(map[string][]string)
+	importers := make(map[string][]string)
+	if index.snapshot != nil {
+		modules = index.snapshot.Modules()
+		for _, path := range index.snapshot.Paths() {
+			dependencies[path] = index.snapshot.Dependencies(path)
+			if paths := index.snapshot.Importers(path); len(paths) != 0 {
+				importers[path] = paths
+			}
+		}
+	}
 	for path := range changed {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -739,7 +740,6 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 		if !exists {
 			delete(modules, path)
 			delete(dependencies, path)
-			delete(hashes, path)
 			removeImporterPath(importers, path)
 
 			continue
@@ -749,7 +749,6 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 			return fmt.Errorf("parse workspace module %q: %w", path, sourceDiagnosticPath(path, err))
 		}
 		modules[path] = module
-		hashes[path] = sha256.Sum256([]byte(source))
 	}
 	for path := range changed {
 		if err := ctx.Err(); err != nil {
@@ -759,7 +758,7 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 		if !exists {
 			continue
 		}
-		resolved, err := resolveModuleDependencies(path, module, index.root, files)
+		resolved, err := resolveModuleDependencies(path, module, index.snapshot.Root(), files)
 		if err != nil {
 			return err
 		}
@@ -769,7 +768,7 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 			importers[dependency] = append(importers[dependency], path)
 		}
 	}
-	for path, importersOfPath := range index.importers {
+	for path, importersOfPath := range importers {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -784,29 +783,23 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 			if !exists {
 				continue
 			}
-			if _, err := resolveModuleDependencies(importer, module, index.root, files); err != nil {
+			if _, err := resolveModuleDependencies(importer, module, index.snapshot.Root(), files); err != nil {
 				return err
 			}
 		}
 	}
+	generation := uint64(1)
+	generation = index.snapshot.Generation() + 1
+	snapshot, err := project.NewWorkspaceSnapshotFromParsed(generation, index.snapshot.Root(), index.snapshot.SearchRoots(), sources, modules, dependencies, importers)
+	if err != nil {
+		return err
+	}
+	index.snapshot = snapshot
 	index.diskSources = maps.Clone(diskSources)
-	index.sources = maps.Clone(sources)
 	index.overlayPaths = maps.Clone(overlayPaths)
-	index.modules = modules
-	index.dependencies = dependencies
-	index.importers = importers
-	index.hashes = hashes
+	index.files = files
 
 	return nil
-}
-
-func cloneImporters(importers map[string][]string) map[string][]string {
-	cloned := make(map[string][]string, len(importers))
-	for dependency, paths := range importers {
-		cloned[dependency] = slices.Clone(paths)
-	}
-
-	return cloned
 }
 
 func resolveModuleDependencies(path string, module ModuleAST, root string, files *projectFilesystem) ([]string, error) {
@@ -1200,7 +1193,7 @@ func evaluateFileWithFilesystemMode(ctx context.Context, path string, update, fe
 		root: root, files: files, entry: canonical, entryText: string(source),
 		runtimeCache: make(map[string][]RuntimeEntry), runtimeTypes: make(map[string]map[string]ResolvedType),
 		dependencies: dependencies, operation: operation, parameters: maps.Clone(parameters),
-		allowNondeterministicOutput: options.AllowNondeterministicOutput, parameterSources: cloneParameterSources(options.ParameterSources), loadedModules: make(map[string]struct{}), budget: &functionBudget{},
+		allowNondeterministicOutput: options.AllowNondeterministicOutput, parameterSources: cloneParameterSources(options.ParameterSources), loadedModules: make(map[string]struct{}), session: &EvaluationSession{Budget: &functionBudget{}},
 		kubernetesVersion: options.KubernetesVersion,
 		analysis:          &TypeAnalysisContext{},
 	}
@@ -1400,8 +1393,7 @@ func evaluateSourceWithFilesystemAndParameters(ctx context.Context, path, source
 		parameterSources:            cloneParameterSources(options.ParameterSources),
 		overlays:                    canonicalOverlays,
 		loadedModules:               make(map[string]struct{}),
-		budget:                      &functionBudget{},
-		allocations:                 &runtimeAllocationBudget{},
+		session:                     &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}},
 		analysis:                    &TypeAnalysisContext{},
 	}
 	_, runtimeBundle, state, err := loader.evaluateRuntime(entry, true) //nolint:contextcheck // moduleLoaderが評価全体のContextを保持します。
@@ -1453,17 +1445,21 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 	if err := loader.ctx.Err(); err != nil {
 		return nil, nil, nil, err
 	}
-	if loader.budget == nil {
-		loader.budget = &functionBudget{}
+	if loader.session == nil {
+		loader.session = &EvaluationSession{}
 	}
-	if loader.allocations == nil {
-		loader.allocations = &runtimeAllocationBudget{}
+	if loader.session.Budget == nil {
+		loader.session.Budget = &functionBudget{}
+	}
+	if loader.session.Allocations == nil {
+		loader.session.Allocations = &runtimeAllocationBudget{}
 	}
 	loader.loadedModules[path] = struct{}{}
 	if !entry {
 		if exports, cached := loader.runtimeCache[path]; cached {
 			state := &EvaluationState{
-				Types: maps.Clone(loader.runtimeTypes[path]), Allocations: loader.allocations,
+				EvaluationSession: loader.session,
+				Types:             maps.Clone(loader.runtimeTypes[path]),
 			}
 
 			return exports, &RuntimeBundle{}, state, nil
@@ -1501,7 +1497,11 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 		return nil, nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
 	moduleContext := &ModuleContext{Context: loader.ctx, ProjectRoot: loader.root, filesystem: loader.files, Dependencies: loader.dependencies, HelmOperation: loader.operation, AllowNondeterministicOutput: loader.allowNondeterministicOutput, KubernetesVersion: loader.kubernetesVersion, Analysis: loader.analysis, CRDSchemas: loader.crdSchemas}
-	state := &EvaluationState{Environment: make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types, Stack: make(map[string]bool), Budget: loader.budget, Allocations: loader.allocations, SourcePath: path, Module: moduleContext}
+	state := &EvaluationState{
+		EvaluationSession: loader.session,
+		Environment:       make(map[string]RuntimeValue), StaticTypes: make(map[string]TypeAnalysis), Types: types,
+		Stack: make(map[string]bool), SourcePath: path, Module: moduleContext,
+	}
 	if entry {
 		state.Parameters = maps.Clone(loader.parameters)
 		state.ParameterSources = loader.parameterSources
@@ -1555,7 +1555,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 				state.Types[declaration.Name+"."+name] = typeExpr
 			}
 		}
-		if err := loader.allocations.consume(len(entries) + 1); err != nil {
+		if err := loader.session.Allocations.consume(len(entries) + 1); err != nil {
 			return nil, nil, nil, sourceDiagnostic(path, declaration.Span, err)
 		}
 		if !declaration.Text {
@@ -1576,7 +1576,7 @@ func (loader *moduleLoader) evaluateRuntime(path string, entry bool) ([]RuntimeE
 			declarationValues++
 		}
 	}
-	if err := loader.allocations.consume(declarationValues); err != nil {
+	if err := loader.session.Allocations.consume(declarationValues); err != nil {
 		return nil, nil, nil, sourceDiagnostic(path, SourceSpan{}, err)
 	}
 	exports, bundle, err := evaluateModuleASTRuntime(module, state, entry)

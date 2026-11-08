@@ -1009,7 +1009,7 @@ func TestListTransformationsReturnOrdinaryListsForAdapterBundles(t *testing.T) {
 		Value:  runtimeValueData{Kind: Lambda},
 		Lambda: &typedLambda{Parameters: []string{paramValue}, Scope: map[string]RuntimeValue{}, Body: typedExpression{kind: typedExpressionReference, text: paramValue}},
 	}
-	state := &EvaluationState{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}}
+	state := &EvaluationState{EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}}}
 	mapped, err := callRuntimeStandard(fnMap, []RuntimeValue{bundle, lambda}, nil, state)
 	if err != nil {
 		t.Fatal(err)
@@ -1214,7 +1214,7 @@ func TestValidateEachTypeQueryReportsRuleTypeMismatchForAnnotatedCandidate(t *te
 	bundle := RuntimeBundle{Artifacts: []RuntimeArtifact{{Value: candidate}}, PendingValidations: []RuntimeValidation{{
 		Rule: rule, Line: 1, Each: true, QueryType: &queryType, MinMatches: 0, MinMatchesSet: true,
 	}}}
-	state := &EvaluationState{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}}
+	state := &EvaluationState{EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}}}
 	if err := resolveRuntimeBundle(&bundle, state); err == nil || !strings.Contains(err.Error(), "does not match its type") {
 		t.Fatalf("resolveRuntimeBundle() error = %v, want a Rule argument type diagnostic", err)
 	}

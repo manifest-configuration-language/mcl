@@ -319,7 +319,8 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	if got := dependent[importer]; got != importSource {
 		t.Fatalf("incremental index source = %q, want %q", got, importSource)
 	}
-	if got, want := index.hashes[importer], sha256.Sum256([]byte(importSource)); got != want {
+	_, got, exists := index.snapshot.Source(importer)
+	if want := sha256.Sum256([]byte(importSource)); !exists || got != want {
 		t.Fatalf("source hash = %x, want hash of current source %x", got, want)
 	}
 
@@ -352,7 +353,8 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	if got := dependent[importer]; got != diskSource {
 		t.Fatalf("closed overlay restored %q, want disk source %q", got, diskSource)
 	}
-	if got, want := index.hashes[importer], sha256.Sum256([]byte(diskSource)); got != want {
+	_, got, exists = index.snapshot.Source(importer)
+	if want := sha256.Sum256([]byte(diskSource)); !exists || got != want {
 		t.Fatalf("closed overlay source hash = %x, want hash of disk source %x", got, want)
 	}
 }

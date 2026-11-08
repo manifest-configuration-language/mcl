@@ -365,8 +365,9 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			}
 		}
 		state := &EvaluationState{
-			Environment: context.runtimeEnv, StaticTypes: context.staticTypes, Types: context.types,
-			Stack: context.stack, Budget: context.budget, Allocations: context.allocations,
+			EvaluationSession: &EvaluationSession{Budget: context.budget, Allocations: context.allocations},
+			Environment:       context.runtimeEnv, StaticTypes: context.staticTypes, Types: context.types,
+			Stack:      context.stack,
 			SourcePath: context.sourcePath, Module: context.module,
 		}
 		if callee.Rule != nil {

@@ -20,6 +20,7 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 	if bundle == nil || state == nil {
 		return errors.New("runtime Bundle and evaluation state are required")
 	}
+	state.ensureSession()
 	nodes, err := indexRuntimeBundleNodes(bundle, state)
 	if err != nil {
 		return err

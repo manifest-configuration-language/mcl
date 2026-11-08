@@ -306,6 +306,7 @@ func runtimeAllocationBudgetOf(state *EvaluationState) *runtimeAllocationBudget 
 	if state == nil {
 		return nil
 	}
+	state.ensureSession()
 	if state.Allocations == nil {
 		state.Allocations = &runtimeAllocationBudget{}
 	}
