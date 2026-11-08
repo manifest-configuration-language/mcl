@@ -22,6 +22,35 @@ func TestRuntimeFrameLookupUsesNearestBinding(t *testing.T) {
 	}
 }
 
+func TestLambdaCapturesRuntimeFrame(t *testing.T) {
+	t.Parallel()
+	bindings := map[string]RuntimeValue{"outer": runtimeFrameTestValue("outer-value")}
+	state := &EvaluationState{
+		EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}},
+		Environment:       bindings,
+		Types:             make(map[string]ResolvedType),
+		Stack:             make(map[string]bool),
+	}
+	context := typedEvaluationContext{runtimeEnv: bindings, budget: state.Budget, allocations: state.Allocations}
+	lambda, err := (typedExpression{
+		kind: typedExpressionLambda, operand: &typedExpression{kind: typedExpressionReference, text: "outer"},
+		lambdaTyping: &LambdaTyping{},
+	}).evaluate(context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lambda.Lambda.Frame == nil || lambda.Lambda.Scope != nil {
+		t.Fatalf("captured scope = (frame %p, map %v), want frame-backed scope", lambda.Lambda.Frame, lambda.Lambda.Scope)
+	}
+	result, err := callRuntimeLambda(lambda, nil, nil, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.TextValue(); got != "outer-value" {
+		t.Fatalf("Lambda returned %q, want captured value", got)
+	}
+}
+
 func TestNewRuntimeRootFrameCopiesBindings(t *testing.T) {
 	bindings := map[string]RuntimeValue{"name": runtimeFrameTestValue("before")}
 	root := newRuntimeRootFrame(bindings)

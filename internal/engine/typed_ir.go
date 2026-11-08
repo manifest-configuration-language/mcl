@@ -139,5 +139,5 @@ func (context typedEvaluationContext) captureLambdaScope() (map[string]RuntimeVa
 		return nil, context.frame
 	}
 
-	return maps.Clone(context.runtimeEnv), nil
+	return nil, newRuntimeRootFrame(context.runtimeEnv)
 }

@@ -1027,9 +1027,14 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			substitutions[parameterType.Name] = argumentAnalysis.Type
 		}
 	}
-	environment := maps.Clone(definition.Scope)
-	if environment == nil {
-		environment = make(map[string]RuntimeValue)
+	var environment map[string]RuntimeValue
+	if definition.Frame != nil {
+		environment = make(map[string]RuntimeValue, len(definition.Parameters)+len(definition.Locals))
+	} else {
+		environment = maps.Clone(definition.Scope)
+		if environment == nil {
+			environment = make(map[string]RuntimeValue)
+		}
 	}
 	lambdaState := *state
 	lambdaState.Environment = environment

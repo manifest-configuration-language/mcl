@@ -28,7 +28,7 @@ Module indexでは、完全snapshot再構築のimport解決を既存の`resolveM
 
 CLIでは`render`、`check`、`explain`、`diff`、`update`、`fetch`がそれぞれ登録・取得していたparameter、parameter-file、nondeterministic-output flagを共通関数へ集約しました。各コマンドのflag名・説明・既定値・登録順とparameter parsingの診断は維持します。Kubernetes version flagは既存の独立登録を維持しています。
 
-Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。LambdaはFrameをそのまま捕捉し、呼び出し時に引数とlocalをchild frameとして追加するため、反復ごとのLambdaで外側の全環境Mapを複製しません。runtime value graphをcloneするときは、Frameをmemoizeしてbinding値を既存のclone状態へ通し、Node Identityのclone semanticsを保ちます。Deferred値と動的Map keyは生成時にFrameを既存のMap scopeへflattenするため、これらの継続にFrame pointerは残りません。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
+Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。すべてのtyped LambdaはFrameを捕捉し、呼び出し時に引数とlocalをchild frameとして追加するため、呼び出しごとの外側環境Map複製を避けます。runtime value graphをcloneするときは、Frameをmemoizeしてbinding値を既存のclone状態へ通し、Node Identityのclone semanticsを保ちます。Deferred値と動的Map keyは生成時にFrameを既存のMap scopeへflattenするため、これらの継続にFrame pointerは残りません。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
 
 ## 今回変更しない項目
 
@@ -42,7 +42,7 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 検証
 
-前回の変更では`go test ./internal/syntax`、`go test ./internal/engine -count=1`、`go test ./...`が成功しました。Lambda Frameの捕捉とclone対応後に`go test ./internal/engine -count=1`および`go test ./... -count=1`が成功しました。Apple M5 Pro / darwin arm64でnested Map/Listを使うcache-hit benchmarkを比較すると、type-only hitは`601.7 ns/op`・`1568 B/op`・`4 allocs/op`、Facts込みhitは`2120 ns/op`・`5520 B/op`・`13 allocs/op`でした。この値は機種とGoバージョンに依存する一回のローカル測定です。
+前回の変更では`go test ./internal/syntax`、`go test ./internal/engine -count=1`、`go test ./...`が成功しました。Lambda Frameの通常scope捕捉、`for`内捕捉、Node Identity clone対応後に`go test ./internal/engine -count=1`および`go test ./... -count=1`が成功しました。Apple M5 Pro / darwin arm64でnested Map/Listを使うcache-hit benchmarkを比較すると、type-only hitは`601.7 ns/op`・`1568 B/op`・`4 allocs/op`、Facts込みhitは`2120 ns/op`・`5520 B/op`・`13 allocs/op`でした。この値は機種とGoバージョンに依存する一回のローカル測定です。
 
 ## 状態
 
