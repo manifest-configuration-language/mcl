@@ -83,22 +83,46 @@ func formatListMapStarts(source string, module ModuleAST) string {
 			})
 		}
 	}
-	slices.SortFunc(replacements, func(left, right SourceSpan) int { return cmp.Compare(right.Start, left.Start) })
+	slices.SortFunc(replacements, func(left, right SourceSpan) int {
+		if order := cmp.Compare(left.Start, right.Start); order != 0 {
+			return order
+		}
+
+		return cmp.Compare(left.End, right.End)
+	})
+	if len(replacements) == 0 {
+		return source
+	}
+
+	var formatted strings.Builder
+	formatted.Grow(len(source))
+	position := 0
 	for _, replacement := range replacements {
+		if replacement.Start < position || replacement.Start < 0 || replacement.End < replacement.Start || replacement.Start > len(source) || replacement.End > len(source) {
+			continue
+		}
+		formatted.WriteString(source[position:replacement.Start])
 		segment := source[replacement.Start:replacement.End]
 		segmentLines := formatterSourceLines(segment)
 		if len(segmentLines) < 2 {
+			formatted.WriteString(segment)
+			position = replacement.End
+
 			continue
 		}
 		marker := segment[segmentLines[0].bodySpan.Start:segmentLines[0].bodySpan.End]
 		item := segment[segmentLines[1].bodySpan.Start:segmentLines[1].bodySpan.End]
 		indent := len(marker) - len(strings.TrimLeft(marker, " "))
 		ending := segment[segmentLines[1].lineEnding.Start:segmentLines[1].lineEnding.End]
-		updated := strings.Repeat(" ", indent) + "- " + strings.TrimSpace(item) + ending
-		source = source[:replacement.Start] + updated + source[replacement.End:]
+		formatted.WriteString(strings.Repeat(" ", indent))
+		formatted.WriteString("- ")
+		formatted.WriteString(strings.TrimSpace(item))
+		formatted.WriteString(ending)
+		position = replacement.End
 	}
+	formatted.WriteString(source[position:])
 
-	return source
+	return formatted.String()
 }
 
 type formatterNodeKind uint8

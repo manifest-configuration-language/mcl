@@ -226,77 +226,11 @@ func parseASTWithLexedTokens(source string, tokens []sourceToken) (module Module
 				return ModuleAST{}, fmt.Errorf("line %d: type definitions must precede emit statements", lineToken.lineNumber)
 			}
 			phase = 1
-			typeTokens := parser.sourceTokenLexemesInSpan(SourceSpan{Start: header.keyword.span.End, End: lineToken.span.End})
-			if len(typeTokens) == 0 || typeTokens[0].lexeme.kind != sourceLexemeIdentifier {
-				return ModuleAST{}, fmt.Errorf("line %d: expected type name = type expression", lineToken.lineNumber)
+			declaration, err := parser.typeDeclaration(lineToken, header)
+			if err != nil {
+				return ModuleAST{}, err
 			}
-			parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
-			equalIndex := -1
-		findTypeDefinitionEqual:
-			for index, token := range typeTokens {
-				if token.lexeme.kind != sourceLexemeSymbol {
-					continue
-				}
-				switch parser.sourceTokenLexemeText(token) {
-				case "=":
-					if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
-						equalIndex = index
-
-						break findTypeDefinitionEqual
-					}
-				case "(":
-					parenDepth++
-				case ")":
-					parenDepth--
-				case "[":
-					bracketDepth++
-				case "]":
-					bracketDepth--
-				case "{":
-					braceDepth++
-				case "}":
-					braceDepth--
-				case "<":
-					angleDepth++
-				case ">":
-					angleDepth--
-				}
-			}
-			if equalIndex < 0 {
-				return ModuleAST{}, fmt.Errorf("line %d: expected type name = type expression", lineToken.lineNumber)
-			}
-			nameToken, equalToken := typeTokens[0], typeTokens[equalIndex]
-			nameSpan := parser.trimSourceSpan(SourceSpan{Start: nameToken.span.Start, End: equalToken.span.Start})
-			name, parameters, valid := parser.parseTypeDeclarationName(nameSpan)
-			if !valid {
-				return ModuleAST{}, fmt.Errorf("line %d: expected type name = type expression", lineToken.lineNumber)
-			}
-			definitionSpan := parser.trimSourceSpan(SourceSpan{Start: equalToken.span.End, End: lineToken.span.End})
-			var err error
-			var typeSpec TypeExpr
-			if definitionSpan.Start == definitionSpan.End {
-				typeSpec, err = parser.typeRecord(lineToken.lineNumber)
-				if err != nil {
-					return ModuleAST{}, err
-				}
-			} else {
-				typeSpec, err = parser.parseTypeExpressionSourceSpan(definitionSpan)
-				if err != nil {
-					return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
-				}
-			}
-			typeSpec.TypeParameters = parameters
-			endSpan := parser.sourceTokenLastLexemeSpan(lineToken)
-			if definitionSpan.Start == definitionSpan.End {
-				if lastLine, ok := parser.lastConsumedSourceToken(); ok && lastLine.span.Start > lineToken.span.Start {
-					endSpan = parser.sourceTokenLastLexemeSpan(lastLine)
-				}
-			}
-			module.Nodes = append(module.Nodes, &TypeDeclaration{
-				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, endSpan)},
-				Name:         name, Exported: header.exported, TypeSpec: &typeSpec,
-				NameSpan: nameToken.span,
-			})
+			module.Nodes = append(module.Nodes, declaration)
 
 			continue
 		}
@@ -306,76 +240,11 @@ func parseASTWithLexedTokens(source string, tokens []sourceToken) (module Module
 			}
 			phase = 1
 			parametersStarted = true
-			if len(lineTokens) < 3 || lineTokens[0].lexeme.kind != sourceLexemeIdentifier || parser.sourceTokenLexemeText(lineTokens[1]) != ":" {
-				return ModuleAST{}, fmt.Errorf("line %d: expected param name: Type [= default]", lineToken.lineNumber)
-			}
-			nameToken := lineTokens[0]
-			name := parser.sourceTokenLexemeText(nameToken)
-			if !identifier(name) {
-				return ModuleAST{}, fmt.Errorf("line %d: invalid parameter name %q", lineToken.lineNumber, name)
-			}
-			parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
-			equalIndex := -1
-			for index := 2; index < len(lineTokens); index++ {
-				if lineTokens[index].lexeme.kind != sourceLexemeSymbol {
-					continue
-				}
-				switch parser.sourceTokenLexemeText(lineTokens[index]) {
-				case "=":
-					if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
-						equalIndex = index
-						index = len(lineTokens)
-					}
-				case "(":
-					parenDepth++
-				case ")":
-					parenDepth--
-				case "[":
-					bracketDepth++
-				case "]":
-					bracketDepth--
-				case "{":
-					braceDepth++
-				case "}":
-					braceDepth--
-				case "<":
-					angleDepth++
-				case ">":
-					angleDepth--
-				}
-			}
-			typeEnd := lineToken.span.End
-			if equalIndex >= 0 {
-				typeEnd = lineTokens[equalIndex].span.Start
-			}
-			typeSpan := parser.trimSourceSpan(SourceSpan{Start: lineTokens[1].span.End, End: typeEnd})
-			if typeSpan.Start == typeSpan.End {
-				return ModuleAST{}, fmt.Errorf("line %d: parameter %q requires a type", lineToken.lineNumber, name)
-			}
-			typeSpec, err := parser.parseTypeExpressionSourceSpan(typeSpan)
+			declaration, err := parser.parameterDeclaration(lineToken, lineTokens)
 			if err != nil {
-				return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+				return ModuleAST{}, err
 			}
-			var defaultExpr Expr
-			if equalIndex >= 0 {
-				defaultSpan := parser.trimSourceSpan(SourceSpan{Start: lineTokens[equalIndex].span.End, End: lineToken.span.End})
-				if defaultSpan.Start == defaultSpan.End {
-					return ModuleAST{}, fmt.Errorf("line %d: parameter default cannot be empty", lineToken.lineNumber)
-				}
-				continued, err := parser.continuedExpressionSourceSpan(lineToken, defaultSpan, 0)
-				if err != nil {
-					return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
-				}
-				parsed, err := parser.valueExpressionWithContinued(continued, 0, lineToken.lineNumber)
-				if err != nil {
-					return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
-				}
-				defaultExpr = parsed.Expression
-			}
-			module.Nodes = append(module.Nodes, &LetDeclaration{
-				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, parser.expressionTreeSpan(defaultExpr))},
-				Name:         name, Parameter: true, Expression: defaultExpr, Annotation: &typeSpec, NameSpan: nameToken.span,
-			})
+			module.Nodes = append(module.Nodes, declaration)
 
 			continue
 		}
@@ -700,6 +569,157 @@ func parseASTWithLexedTokens(source string, tokens []sourceToken) (module Module
 	}
 
 	return module, nil
+}
+
+func (p *Parser) typeDeclaration(lineToken sourceToken, header topLevelHeader) (*TypeDeclaration, error) {
+	typeTokens := p.sourceTokenLexemesInSpan(SourceSpan{Start: header.keyword.span.End, End: lineToken.span.End})
+	if len(typeTokens) == 0 || typeTokens[0].lexeme.kind != sourceLexemeIdentifier {
+		return nil, fmt.Errorf("line %d: expected type name = type expression", lineToken.lineNumber)
+	}
+	parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
+	equalIndex := -1
+findTypeDefinitionEqual:
+	for index, token := range typeTokens {
+		if token.lexeme.kind != sourceLexemeSymbol {
+			continue
+		}
+		switch p.sourceTokenLexemeText(token) {
+		case "=":
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
+				equalIndex = index
+
+				break findTypeDefinitionEqual
+			}
+		case "(":
+			parenDepth++
+		case ")":
+			parenDepth--
+		case "[":
+			bracketDepth++
+		case "]":
+			bracketDepth--
+		case "{":
+			braceDepth++
+		case "}":
+			braceDepth--
+		case "<":
+			angleDepth++
+		case ">":
+			angleDepth--
+		}
+	}
+	if equalIndex < 0 {
+		return nil, fmt.Errorf("line %d: expected type name = type expression", lineToken.lineNumber)
+	}
+	nameToken, equalToken := typeTokens[0], typeTokens[equalIndex]
+	nameSpan := p.trimSourceSpan(SourceSpan{Start: nameToken.span.Start, End: equalToken.span.Start})
+	name, parameters, valid := p.parseTypeDeclarationName(nameSpan)
+	if !valid {
+		return nil, fmt.Errorf("line %d: expected type name = type expression", lineToken.lineNumber)
+	}
+	definitionSpan := p.trimSourceSpan(SourceSpan{Start: equalToken.span.End, End: lineToken.span.End})
+	var err error
+	var typeSpec TypeExpr
+	if definitionSpan.Start == definitionSpan.End {
+		typeSpec, err = p.typeRecord(lineToken.lineNumber)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		typeSpec, err = p.parseTypeExpressionSourceSpan(definitionSpan)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+		}
+	}
+	typeSpec.TypeParameters = parameters
+	endSpan := p.sourceTokenLastLexemeSpan(lineToken)
+	if definitionSpan.Start == definitionSpan.End {
+		if lastLine, ok := p.lastConsumedSourceToken(); ok && lastLine.span.Start > lineToken.span.Start {
+			endSpan = p.sourceTokenLastLexemeSpan(lastLine)
+		}
+	}
+	declaration := &TypeDeclaration{
+		NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: p.statementSpan(lineToken, endSpan)},
+		Name:         name, Exported: header.exported, TypeSpec: &typeSpec,
+		NameSpan: nameToken.span,
+	}
+
+	return declaration, nil
+}
+
+func (p *Parser) parameterDeclaration(lineToken sourceToken, lineTokens []sourceToken) (*LetDeclaration, error) {
+	if len(lineTokens) < 3 || lineTokens[0].lexeme.kind != sourceLexemeIdentifier || p.sourceTokenLexemeText(lineTokens[1]) != ":" {
+		return nil, fmt.Errorf("line %d: expected param name: Type [= default]", lineToken.lineNumber)
+	}
+	nameToken := lineTokens[0]
+	name := p.sourceTokenLexemeText(nameToken)
+	if !identifier(name) {
+		return nil, fmt.Errorf("line %d: invalid parameter name %q", lineToken.lineNumber, name)
+	}
+	parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
+	equalIndex := -1
+	for index := 2; index < len(lineTokens); index++ {
+		if lineTokens[index].lexeme.kind != sourceLexemeSymbol {
+			continue
+		}
+		switch p.sourceTokenLexemeText(lineTokens[index]) {
+		case "=":
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
+				equalIndex = index
+				index = len(lineTokens)
+			}
+		case "(":
+			parenDepth++
+		case ")":
+			parenDepth--
+		case "[":
+			bracketDepth++
+		case "]":
+			bracketDepth--
+		case "{":
+			braceDepth++
+		case "}":
+			braceDepth--
+		case "<":
+			angleDepth++
+		case ">":
+			angleDepth--
+		}
+	}
+	typeEnd := lineToken.span.End
+	if equalIndex >= 0 {
+		typeEnd = lineTokens[equalIndex].span.Start
+	}
+	typeSpan := p.trimSourceSpan(SourceSpan{Start: lineTokens[1].span.End, End: typeEnd})
+	if typeSpan.Start == typeSpan.End {
+		return nil, fmt.Errorf("line %d: parameter %q requires a type", lineToken.lineNumber, name)
+	}
+	typeSpec, err := p.parseTypeExpressionSourceSpan(typeSpan)
+	if err != nil {
+		return nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+	}
+	var defaultExpr Expr
+	if equalIndex >= 0 {
+		defaultSpan := p.trimSourceSpan(SourceSpan{Start: lineTokens[equalIndex].span.End, End: lineToken.span.End})
+		if defaultSpan.Start == defaultSpan.End {
+			return nil, fmt.Errorf("line %d: parameter default cannot be empty", lineToken.lineNumber)
+		}
+		continued, err := p.continuedExpressionSourceSpan(lineToken, defaultSpan, 0)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+		}
+		parsed, err := p.valueExpressionWithContinued(continued, 0, lineToken.lineNumber)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+		}
+		defaultExpr = parsed.Expression
+	}
+	declaration := &LetDeclaration{
+		NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: p.statementSpan(lineToken, p.expressionTreeSpan(defaultExpr))},
+		Name:         name, Parameter: true, Expression: defaultExpr, Annotation: &typeSpec, NameSpan: nameToken.span,
+	}
+
+	return declaration, nil
 }
 
 func callCalleeReference(call *CallExpr) (*ReferenceExpr, bool) {

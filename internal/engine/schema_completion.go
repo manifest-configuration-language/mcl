@@ -109,16 +109,7 @@ func schemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, root 
 		if schema == nil {
 			continue
 		}
-		properties := make(map[string]struct{})
-		collectSchemaProperties(schema, properties, make(map[*jsonschema.Schema]bool))
-		for _, field := range existing {
-			delete(properties, field)
-		}
-		completions := make([]string, 0, len(properties))
-		for field := range properties {
-			completions = append(completions, field)
-		}
-		slices.Sort(completions)
+		completions := schemaCompletionPropertyNames(schema, existing)
 
 		return completions, nil
 	}
@@ -201,13 +192,7 @@ func schemaTypeFieldsWithFilesystem(modulePath, source, annotation string, field
 		typeExpr = next
 	}
 	if schema != nil {
-		properties := make(map[string]struct{})
-		collectSchemaProperties(schema, properties, make(map[*jsonschema.Schema]bool))
-		fields := make([]string, 0, len(properties))
-		for field := range properties {
-			fields = append(fields, field)
-		}
-		slices.Sort(fields)
+		fields := schemaCompletionPropertyNames(schema, nil)
 
 		return fields, nil
 	}
@@ -634,16 +619,7 @@ func helmSchemaFieldCompletionsWithFilesystem(modulePath, source, placeholder, r
 			return nil
 		}
 	}
-	properties := make(map[string]struct{})
-	collectSchemaProperties(schema, properties, make(map[*jsonschema.Schema]bool))
-	for _, field := range existing {
-		delete(properties, field)
-	}
-	completions := make([]string, 0, len(properties))
-	for field := range properties {
-		completions = append(completions, field)
-	}
-	slices.Sort(completions)
+	completions := schemaCompletionPropertyNames(schema, existing)
 
 	return completions
 }
@@ -904,4 +880,19 @@ func collectSchemaProperties(schema *jsonschema.Schema, properties map[string]st
 			collectSchemaProperties(alternative, properties, visited)
 		}
 	}
+}
+
+func schemaCompletionPropertyNames(schema *jsonschema.Schema, existing []string) []string {
+	properties := make(map[string]struct{})
+	collectSchemaProperties(schema, properties, make(map[*jsonschema.Schema]bool))
+	for _, field := range existing {
+		delete(properties, field)
+	}
+	fields := make([]string, 0, len(properties))
+	for field := range properties {
+		fields = append(fields, field)
+	}
+	slices.Sort(fields)
+
+	return fields
 }

@@ -57,6 +57,7 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 	}
 
 	lineStarts := yamlLineStarts(output)
+	lineEnds := yamlLineEnds(output, lineStarts)
 	decoder := yaml.NewDecoder(bytes.NewReader(output))
 	for index, artifact := range artifacts {
 		var document yaml.Node
@@ -67,7 +68,8 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 			return ManifestSourceMap{}, fmt.Errorf("rendered YAML document %d has no root node", index+1)
 		}
 		documentMap := ManifestDocumentSourceMap{Index: index + 1}
-		appendManifestValueEntries(&documentMap.Entries, output, lineStarts, document.Content[0], artifact.artifact.Value, "", nil)
+		outputRanges := yamlNodeOutputRanges(output, lineStarts, lineEnds, document.Content[0])
+		appendManifestValueEntries(&documentMap.Entries, output, lineStarts, lineEnds, outputRanges, document.Content[0], artifact.artifact.Value, "", nil)
 		result.Documents = append(result.Documents, documentMap)
 	}
 	var extra yaml.Node
@@ -82,11 +84,11 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 	return result, nil
 }
 
-func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte, lineStarts []int, node *yaml.Node, value Value, path string, inherited []SourceDiagnosticLocation) {
+func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte, lineStarts, lineEnds []int, outputRanges map[*yaml.Node]SourceSpan, node *yaml.Node, value Value, path string, inherited []SourceDiagnosticLocation) {
 	sourceValue := value
 	value = nodeContents(value)
 	locations := appendSourceLocations(slices.Clone(inherited), sourceValue.SourceLocations, "", SourceSpan{}, "")
-	appendManifestEntry(entries, outputRange(output, lineStarts, node), path, "value", sourceValue.SourcePath, sourceValue.Span, locations)
+	appendManifestEntry(entries, outputRanges[node], path, "value", sourceValue.SourcePath, sourceValue.Span, locations)
 	childLocations := appendSourceLocations(slices.Clone(locations), nil, sourceValue.SourcePath, sourceValue.Span, "Containing value")
 
 	//nolint:exhaustive // 部分的なKind判定であり、その他の値は後続の共通処理で扱います。
@@ -96,7 +98,7 @@ func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte
 			if index >= len(node.Content) {
 				break
 			}
-			appendManifestValueEntries(entries, output, lineStarts, node.Content[index], item, path+"/"+strconv.Itoa(index), childLocations)
+			appendManifestValueEntries(entries, output, lineStarts, lineEnds, outputRanges, node.Content[index], item, path+"/"+strconv.Itoa(index), childLocations)
 		}
 	case Map:
 		for index, entry := range value.Map {
@@ -108,8 +110,8 @@ func appendManifestValueEntries(entries *[]ManifestSourceMapEntry, output []byte
 			childNode := node.Content[contentIndex+1]
 			childPath := path + "/" + escapeJSONPointer(entry.Key)
 			keyLocations := appendSourceLocations(slices.Clone(childLocations), entry.KeySourceLocations, entry.KeySourcePath, entry.KeySpan, "Map key")
-			appendManifestEntry(entries, mappingKeyOutputRange(output, lineStarts, keyNode), childPath, "key", entry.KeySourcePath, entry.KeySpan, keyLocations)
-			appendManifestValueEntries(entries, output, lineStarts, childNode, entry.Value, childPath, childLocations)
+			appendManifestEntry(entries, mappingKeyOutputRange(output, lineStarts, lineEnds, keyNode), childPath, "key", entry.KeySourcePath, entry.KeySpan, keyLocations)
+			appendManifestValueEntries(entries, output, lineStarts, lineEnds, outputRanges, childNode, entry.Value, childPath, childLocations)
 		}
 	}
 }
@@ -186,29 +188,39 @@ func sourceOriginFromMessage(message string) SourceOriginKind {
 	}
 }
 
-func outputRange(output []byte, lineStarts []int, node *yaml.Node) SourceSpan {
-	start := yamlNodeStart(output, lineStarts, node)
-	end := yamlNodeOutputEnd(output, lineStarts, node)
-	for _, child := range node.Content {
-		childRange := outputRange(output, lineStarts, child)
-		if childRange.End > end {
-			end = childRange.End
+func yamlNodeOutputRanges(output []byte, lineStarts, lineEnds []int, root *yaml.Node) map[*yaml.Node]SourceSpan {
+	ranges := make(map[*yaml.Node]SourceSpan)
+	var visit func(*yaml.Node) SourceSpan
+	visit = func(node *yaml.Node) SourceSpan {
+		span := SourceSpan{
+			Start: yamlNodeStart(output, lineStarts, lineEnds, node),
+			End:   yamlNodeOutputEnd(output, lineStarts, lineEnds, node),
 		}
-	}
+		for _, child := range node.Content {
+			childSpan := visit(child)
+			if childSpan.End > span.End {
+				span.End = childSpan.End
+			}
+		}
+		ranges[node] = span
 
-	return SourceSpan{Start: start, End: end}
+		return span
+	}
+	visit(root)
+
+	return ranges
 }
 
-func mappingKeyOutputRange(output []byte, lineStarts []int, node *yaml.Node) SourceSpan {
-	start := yamlNodeStart(output, lineStarts, node)
-	end := yamlNodeOutputEnd(output, lineStarts, node)
+func mappingKeyOutputRange(output []byte, lineStarts, lineEnds []int, node *yaml.Node) SourceSpan {
+	start := yamlNodeStart(output, lineStarts, lineEnds, node)
+	end := yamlNodeOutputEnd(output, lineStarts, lineEnds, node)
 	if start < 0 || start > end || end > len(output) {
 		return SourceSpan{Start: start, End: start}
 	}
 	if node.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
 		return SourceSpan{Start: start, End: end}
 	}
-	lineEnd := yamlNodeLineEnd(output, lineStarts, node.Line)
+	lineEnd := yamlNodeLineEnd(lineEnds, node.Line)
 	if start > lineEnd {
 		return SourceSpan{Start: start, End: start}
 	}
@@ -245,11 +257,11 @@ func mappingKeyOutputRange(output []byte, lineStarts []int, node *yaml.Node) Sou
 	return SourceSpan{Start: start, End: start + len(line)}
 }
 
-func yamlNodeOutputEnd(output []byte, lineStarts []int, node *yaml.Node) int {
+func yamlNodeOutputEnd(output []byte, lineStarts, lineEnds []int, node *yaml.Node) int {
 	if node.Kind != yaml.ScalarNode {
-		return yamlNodeLineEnd(output, lineStarts, node.Line)
+		return yamlNodeLineEnd(lineEnds, node.Line)
 	}
-	start := yamlNodeStart(output, lineStarts, node)
+	start := yamlNodeStart(output, lineStarts, lineEnds, node)
 	if start < 0 || start >= len(output) {
 		return start
 	}
@@ -259,9 +271,9 @@ func yamlNodeOutputEnd(output []byte, lineStarts []int, node *yaml.Node) int {
 	case node.Style&yaml.SingleQuotedStyle != 0:
 		return quotedScalarOutputEnd(output, start, '\'')
 	case node.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0:
-		return blockScalarOutputEnd(output, lineStarts, node, start)
+		return blockScalarOutputEnd(output, lineStarts, lineEnds, node, start)
 	default:
-		return yamlNodeLineEnd(output, lineStarts, node.Line)
+		return yamlNodeLineEnd(lineEnds, node.Line)
 	}
 }
 
@@ -287,15 +299,15 @@ func quotedScalarOutputEnd(output []byte, start int, quote byte) int {
 	return start
 }
 
-func blockScalarOutputEnd(output []byte, lineStarts []int, node *yaml.Node, start int) int {
+func blockScalarOutputEnd(output []byte, lineStarts, lineEnds []int, node *yaml.Node, start int) int {
 	baseIndent := 0
 	for position := lineStarts[node.Line-1]; position < start && output[position] == ' '; position++ {
 		baseIndent++
 	}
-	end := yamlNodeLineEnd(output, lineStarts, node.Line)
+	end := yamlNodeLineEnd(lineEnds, node.Line)
 	for line := node.Line + 1; line <= len(lineStarts); line++ {
 		lineStart := lineStarts[line-1]
-		lineEnd := yamlNodeLineEnd(output, lineStarts, line)
+		lineEnd := yamlNodeLineEnd(lineEnds, line)
 		indent := 0
 		for position := lineStart; position < lineEnd && output[position] == ' '; position++ {
 			indent++
@@ -312,12 +324,12 @@ func blockScalarOutputEnd(output []byte, lineStarts []int, node *yaml.Node, star
 	return end
 }
 
-func yamlNodeStart(output []byte, lineStarts []int, node *yaml.Node) int {
+func yamlNodeStart(output []byte, lineStarts, lineEnds []int, node *yaml.Node) int {
 	if node.Line < 1 || node.Line > len(lineStarts) || node.Column < 1 {
 		return 0
 	}
 	start := lineStarts[node.Line-1]
-	lineEnd := yamlNodeLineEnd(output, lineStarts, node.Line)
+	lineEnd := yamlNodeLineEnd(lineEnds, node.Line)
 	line := output[start:lineEnd]
 	column := node.Column - 1
 	for column > 0 && len(line) > 0 {
@@ -333,21 +345,12 @@ func yamlNodeStart(output []byte, lineStarts []int, node *yaml.Node) int {
 	return start
 }
 
-func yamlNodeLineEnd(output []byte, lineStarts []int, line int) int {
-	if line < 1 || line > len(lineStarts) {
+func yamlNodeLineEnd(lineEnds []int, line int) int {
+	if line < 1 || line > len(lineEnds) {
 		return 0
 	}
-	start := lineStarts[line-1]
-	if newline := bytes.IndexByte(output[start:], '\n'); newline >= 0 {
-		end := start + newline
-		if end > start && output[end-1] == '\r' {
-			end--
-		}
 
-		return end
-	}
-
-	return len(output)
+	return lineEnds[line-1]
 }
 
 func yamlLineStarts(output []byte) []int {
@@ -359,6 +362,30 @@ func yamlLineStarts(output []byte) []int {
 	}
 
 	return starts
+}
+
+func yamlLineEnds(output []byte, lineStarts []int) []int {
+	ends := make([]int, len(lineStarts))
+	line := 0
+	for index, value := range output {
+		if value != '\n' {
+			continue
+		}
+		end := index
+		if end > lineStarts[line] && output[end-1] == '\r' {
+			end--
+		}
+		ends[line] = end
+		line++
+		if line == len(lineStarts) {
+			return ends
+		}
+	}
+	if line < len(ends) {
+		ends[line] = len(output)
+	}
+
+	return ends
 }
 
 func escapeJSONPointer(value string) string {

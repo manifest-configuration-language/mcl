@@ -70,7 +70,7 @@ func runtimeBundleRequiresCRDSchemaCatalog(bundle *RuntimeBundle) bool {
 		if _, known := builtinKubernetesResourceDescriptors[key]; !known {
 			return true
 		}
-		if _, known := k8sschema.Builtin(apiVersion, kind); !known {
+		if !k8sschema.HasBuiltinSchema(apiVersion, kind) {
 			return true
 		}
 	}
