@@ -24,6 +24,8 @@ Typed IR解析キャッシュでは、`inferType()`のcache hitが`TypeAnalysisF
 
 Typed IR評価器では、`typedExpression.evaluate()`の`typedExpressionCall` caseから呼出し全体を`evaluateCall()`へ移しました。式評価のbudget・allocation chargeはdispatch前に一度だけ行い、callee、引数、Rule、Deferred Call、Lambda、標準関数の評価順とSource Location処理は移動前のままです。複数の責務を一度に動かさず、call経路を独立して読める最小単位として切り出しています。
 
+Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。LambdaとDeferred値、動的Map keyは生成時にFrameを既存のMap scopeへflattenして捕捉するため、Frameが遅延実行後まで残らず、Node Identityを含む値グラフclone経路も変更しません。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
+
 ## 今回変更しない項目
 
 Dependency Module indexの差分更新は、import解決がファイル探索結果にも依存するため、source hashだけで再解決を省く設計にはしません。現状は重複処理を共通化する余地を追加調査し、依存解決のキャッシュキーと無効化条件が明確になるまで挙動を変更しません。
@@ -36,8 +38,8 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 検証
 
-前回の変更では`go test ./internal/syntax`、`go test ./internal/engine -count=1`、`go test ./...`が成功しました。LSP Snapshot、Typed IR cache、Typed IR call評価の変更後に`go test ./... -count=1`が成功しました。Apple M5 Pro / darwin arm64でnested Map/Listを使うcache-hit benchmarkを比較すると、type-only hitは`601.7 ns/op`・`1568 B/op`・`4 allocs/op`、Facts込みhitは`2120 ns/op`・`5520 B/op`・`13 allocs/op`でした。この値は機種とGoバージョンに依存する一回のローカル測定です。
+前回の変更では`go test ./internal/syntax`、`go test ./internal/engine -count=1`、`go test ./...`が成功しました。LSP Snapshot、Typed IR cache、Typed IR evaluator、Runtime Frameの変更後に`go test ./... -count=1`が成功しました。Apple M5 Pro / darwin arm64でnested Map/Listを使うcache-hit benchmarkを比較すると、type-only hitは`601.7 ns/op`・`1568 B/op`・`4 allocs/op`、Facts込みhitは`2120 ns/op`・`5520 B/op`・`13 allocs/op`でした。この値は機種とGoバージョンに依存する一回のローカル測定です。
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有を実装しました。Typed IR解析キャッシュでは`inferType()` cache hit時の不要なFacts複製を除きました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Typed IR評価器ではCall caseを独立関数へ移しました。残る評価器の責務整理、CLIフラグ、Dependency Lockは、既存の所有権・診断・コマンドごとの挙動を保つ変更単位を段階的に確認します。
+Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call評価の抽出、`for`反復Frameを実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Frame導入は`for`内に限定しており、Lambda invocationや全runtime scopeのMap clone除去は未完了です。残る評価器の責務整理、Lambda/Deferred frame伝播、CLIフラグ、Dependency Lockは、既存の所有権・診断・コマンドごとの挙動を保つ変更単位を段階的に確認します。

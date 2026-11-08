@@ -922,6 +922,38 @@ emit labels
 	}
 }
 
+func TestForFrameIsCapturedByLambdas(t *testing.T) {
+	t.Parallel()
+	base := map[string]RuntimeValue{"outer": runtimeFrameTestValue("outer-value")}
+	rootFrame := newRuntimeRootFrame(base)
+	state := &EvaluationState{
+		EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}},
+		Environment:       base,
+		Types:             make(map[string]ResolvedType),
+		Stack:             make(map[string]bool),
+	}
+	for _, item := range []string{"first", "second"} {
+		context := typedEvaluationContext{
+			runtimeEnv: base, frame: rootFrame.childBinding("item", runtimeFrameTestValue(item)),
+			budget: state.Budget, allocations: state.Allocations,
+		}
+		lambda, err := (typedExpression{
+			kind: typedExpressionLambda, operand: &typedExpression{kind: typedExpressionReference, text: "item"},
+			lambdaTyping: &LambdaTyping{},
+		}).evaluate(context)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := callRuntimeLambda(lambda, nil, nil, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := result.TextValue(); got != item {
+			t.Errorf("Lambda captured %q, want %q", got, item)
+		}
+	}
+}
+
 func TestKnownKubernetesKindWithUnknownVersionRequiresSchema(t *testing.T) {
 	t.Parallel()
 	source := `let resource =

@@ -942,15 +942,7 @@ func evaluateTypedContinuation(continuation *typedContinuation, state *Evaluatio
 	if continuation.Scope != nil {
 		environment = continuation.Scope
 	}
-	value, err := continuation.Expression.evaluate(typedEvaluationContext{
-		runtimeEnv: environment, staticTypes: state.StaticTypes, types: state.Types, stack: state.Stack,
-		budget: state.Budget, allocations: state.Allocations, sourcePath: state.SourcePath, module: state.Module,
-	})
-	if err != nil {
-		return RuntimeValue{}, err
-	}
-
-	return value, nil
+	return evaluateTypedExpressionRuntimeInScope(continuation.Expression, state, environment, nil)
 }
 
 func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string, state *EvaluationState) (RuntimeValue, error) {
@@ -1129,12 +1121,19 @@ func evaluateTypedExpressionRuntime(expression typedExpression, state *Evaluatio
 	if state == nil {
 		return RuntimeValue{}, errors.New("evaluation state is nil")
 	}
+	return evaluateTypedExpressionRuntimeInScope(expression, state, state.Environment, nil)
+}
+
+func evaluateTypedExpressionRuntimeInScope(expression typedExpression, state *EvaluationState, environment map[string]RuntimeValue, frame *runtimeFrame) (RuntimeValue, error) {
+	if state == nil {
+		return RuntimeValue{}, errors.New("evaluation state is nil")
+	}
 	session := state.ensureSession()
 	if state.Allocations == nil {
 		session.Allocations = &runtimeAllocationBudget{}
 	}
 	value, err := expression.evaluate(typedEvaluationContext{
-		runtimeEnv: state.Environment, staticTypes: state.StaticTypes, types: state.Types,
+		runtimeEnv: environment, frame: frame, staticTypes: state.StaticTypes, types: state.Types,
 		stack: state.Stack, budget: state.Budget, allocations: state.Allocations, sourcePath: state.SourcePath, module: state.Module,
 	})
 	if err != nil {

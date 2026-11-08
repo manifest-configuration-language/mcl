@@ -1,5 +1,7 @@
 package engine
 
+import "maps"
+
 type typedExpressionKind uint8
 
 const (
@@ -102,6 +104,7 @@ type typedMapEntry struct {
 
 type typedEvaluationContext struct {
 	runtimeEnv  map[string]RuntimeValue
+	frame       *runtimeFrame
 	staticTypes map[string]TypeAnalysis
 	types       map[string]ResolvedType
 	analysis    *typedAnalysisCache
@@ -110,4 +113,23 @@ type typedEvaluationContext struct {
 	allocations *runtimeAllocationBudget
 	sourcePath  string
 	module      *ModuleContext
+}
+
+func (context typedEvaluationContext) runtimeBinding(name string) (RuntimeValue, bool) {
+	if context.frame != nil {
+		if value, exists := context.frame.lookup(name); exists {
+			return value, true
+		}
+	}
+
+	value, exists := context.runtimeEnv[name]
+	return value, exists
+}
+
+func (context typedEvaluationContext) captureRuntimeScope() map[string]RuntimeValue {
+	if context.frame != nil {
+		return context.frame.flatten()
+	}
+
+	return maps.Clone(context.runtimeEnv)
 }

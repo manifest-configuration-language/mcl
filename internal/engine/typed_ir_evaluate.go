@@ -3,14 +3,13 @@ package engine
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 )
 
 func evaluateRuntimeOptionalReference(text string, context typedEvaluationContext) (RuntimeValue, error) {
 	root := referenceRoot(text)
-	value, exists := context.runtimeEnv[root]
+	value, exists := context.runtimeBinding(root)
 	if !exists {
 		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, SourceSpan{}, fmt.Errorf("%w %q", errUndefinedName, root))
 	}
@@ -187,7 +186,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 		value.Value.Text = expression.text
 	case typedExpressionReference:
 		root, rest, _ := strings.Cut(expression.text, ".")
-		resolved, exists := context.runtimeEnv[root]
+		resolved, exists := context.runtimeBinding(root)
 		if !exists {
 			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, fmt.Errorf("%w %q", errUndefinedName, root))
 		}
@@ -262,7 +261,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				if key.IsDeferred() {
 					keyExpression := cloneTypedExpression(*entry.keyExpression)
 					result.KeyExpression = &keyExpression
-					result.KeyScope = maps.Clone(context.runtimeEnv)
+					result.KeyScope = context.captureRuntimeScope()
 				} else if key.Kind() == String {
 					result.Key = key.Value.Text
 				} else {
@@ -333,7 +332,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 				Deferred: &typedContinuation{Conditional: &typedConditionalContinuation{
 					Condition: condition, ThenBranch: cloneTypedExpression(*expression.thenBranch),
-					ElseBranch: cloneTypedExpression(*expression.elseBranch), Scope: maps.Clone(context.runtimeEnv),
+					ElseBranch: cloneTypedExpression(*expression.elseBranch), Scope: context.captureRuntimeScope(),
 				}},
 			}, nil
 		}
@@ -369,7 +368,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			return RuntimeValue{
 				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 				Deferred: &typedContinuation{Binary: &typedBinaryContinuation{
-					Operator: expression.operator, Left: left, RightExpression: &rightExpression, Scope: maps.Clone(context.runtimeEnv),
+					Operator: expression.operator, Left: left, RightExpression: &rightExpression, Scope: context.captureRuntimeScope(),
 				}},
 			}, nil
 		}
@@ -395,7 +394,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			return RuntimeValue{
 				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 				Deferred: &typedContinuation{Binary: &typedBinaryContinuation{
-					Operator: expression.operator, Left: left, Right: right, Scope: maps.Clone(context.runtimeEnv),
+					Operator: expression.operator, Left: left, Right: right, Scope: context.captureRuntimeScope(),
 				}},
 			}, nil
 		}
@@ -414,7 +413,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			Value: runtimeValueData{Kind: Lambda, Span: expression.span, SourcePath: context.sourcePath},
 			Lambda: &typedLambda{
 				Parameters: slices.Clone(expression.parameters), ParameterSpans: slices.Clone(expression.paramSpans),
-				Body: *expression.operand, Scope: maps.Clone(context.runtimeEnv), ScopeSpan: expression.span,
+				Body: *expression.operand, Scope: context.captureRuntimeScope(), ScopeSpan: expression.span,
 				Typing: expression.lambdaTyping, ModuleContext: context.module,
 			},
 		}, nil
@@ -476,7 +475,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 				Deferred: &typedContinuation{For: &typedForContinuation{
 					Source: source, Body: cloneTypedExpression(*expression.thenBranch),
-					LoopName: expression.loopName, Scope: maps.Clone(context.runtimeEnv),
+					LoopName: expression.loopName, Scope: context.captureRuntimeScope(),
 					SourcePath: context.sourcePath, Span: expression.span,
 				}},
 			}, nil
@@ -486,13 +485,16 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("for expression expects a List, got %s", kindName(source.Kind()))))
 		}
 		result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: source.Metadata().OmitSourceSnippet}, List: make([]RuntimeValue, 0, len(items.List))}
+		parentFrame := context.frame
+		if parentFrame == nil {
+			parentFrame = newRuntimeRootFrame(context.runtimeEnv)
+		}
 		for _, item := range items.List {
 			if err := context.budget.consumeIteration(); err != nil {
 				return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, err)
 			}
 			childContext := context
-			childContext.runtimeEnv = maps.Clone(context.runtimeEnv)
-			childContext.runtimeEnv[expression.loopName] = item
+			childContext.frame = parentFrame.childBinding(expression.loopName, item)
 			value, err := expression.thenBranch.evaluate(childContext)
 			if err != nil {
 				return RuntimeValue{}, err

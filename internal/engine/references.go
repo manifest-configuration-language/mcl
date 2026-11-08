@@ -560,16 +560,17 @@ func resolveTypedForContinuation(continuation *typedForContinuation, state *Eval
 		return RuntimeValue{}, typeDiagnostic(fmt.Errorf("for expression expects a List, got %s", kindName(source.Kind())))
 	}
 	result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: continuation.Span, SourcePath: continuation.SourcePath}, List: make([]RuntimeValue, 0, len(items.List))}
+	environment := continuation.Scope
+	if environment == nil {
+		environment = state.Environment
+	}
+	parentFrame := newRuntimeRootFrame(environment)
 	for _, item := range items.List {
 		if err := state.Budget.consumeIteration(); err != nil {
 			return RuntimeValue{}, err
 		}
-		environment := maps.Clone(continuation.Scope)
-		if environment == nil {
-			environment = make(map[string]RuntimeValue)
-		}
-		environment[continuation.LoopName] = item
-		value, err := evaluateTypedContinuation(&typedContinuation{Expression: continuation.Body, Scope: environment}, state)
+		frame := parentFrame.childBinding(continuation.LoopName, item)
+		value, err := evaluateTypedExpressionRuntimeInScope(continuation.Body, state, environment, frame)
 		if err != nil {
 			return RuntimeValue{}, err
 		}
