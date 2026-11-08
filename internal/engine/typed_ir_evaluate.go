@@ -142,6 +142,50 @@ func (expression typedExpression) evaluateCall(context typedEvaluationContext) (
 	return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("cannot call a %s value", kindName(callee.Kind()))))
 }
 
+func (expression typedExpression) evaluateFor(context typedEvaluationContext) (RuntimeValue, error) {
+	if expression.left == nil || expression.thenBranch == nil {
+		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid for expression"))
+	}
+	source, err := expression.left.evaluate(context)
+	if err != nil {
+		return RuntimeValue{}, err
+	}
+	if runtimeValueHasDeferred(source) {
+		return RuntimeValue{
+			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
+			Deferred: &typedContinuation{For: &typedForContinuation{
+				Source: source, Body: cloneTypedExpression(*expression.thenBranch),
+				LoopName: expression.loopName, Scope: context.captureRuntimeScope(),
+				SourcePath: context.sourcePath, Span: expression.span,
+			}},
+		}, nil
+	}
+	items, isList := runtimeListValue(source)
+	if !isList {
+		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("for expression expects a List, got %s", kindName(source.Kind()))))
+	}
+	result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: source.Metadata().OmitSourceSnippet}, List: make([]RuntimeValue, 0, len(items.List))}
+	parentFrame := context.frame
+	if parentFrame == nil {
+		parentFrame = newRuntimeRootFrame(context.runtimeEnv)
+	}
+	for _, item := range items.List {
+		if err := context.budget.consumeIteration(); err != nil {
+			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, err)
+		}
+		childContext := context
+		childContext.frame = parentFrame.childBinding(expression.loopName, item)
+		value, err := expression.thenBranch.evaluate(childContext)
+		if err != nil {
+			return RuntimeValue{}, err
+		}
+		result.Value.OmitSourceSnippet = result.Value.OmitSourceSnippet || value.Metadata().OmitSourceSnippet
+		result.List = append(result.List, value)
+	}
+
+	return result, nil
+}
+
 func runtimeValueWithExpressionSources(value RuntimeValue, sourcePath string, sourceSpan SourceSpan, dependencies ...RuntimeValue) RuntimeValue {
 	result := value
 	locations := slices.Clone(result.Value.SourceLocations)
@@ -464,47 +508,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			Base:  &body,
 		}, nil
 	case typedExpressionFor:
-		if expression.left == nil || expression.thenBranch == nil {
-			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid for expression"))
-		}
-		source, err := expression.left.evaluate(context)
-		if err != nil {
-			return RuntimeValue{}, err
-		}
-		if runtimeValueHasDeferred(source) {
-			return RuntimeValue{
-				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
-				Deferred: &typedContinuation{For: &typedForContinuation{
-					Source: source, Body: cloneTypedExpression(*expression.thenBranch),
-					LoopName: expression.loopName, Scope: context.captureRuntimeScope(),
-					SourcePath: context.sourcePath, Span: expression.span,
-				}},
-			}, nil
-		}
-		items, isList := runtimeListValue(source)
-		if !isList {
-			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, typeDiagnostic(fmt.Errorf("for expression expects a List, got %s", kindName(source.Kind()))))
-		}
-		result := RuntimeValue{Value: runtimeValueData{Kind: List, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: source.Metadata().OmitSourceSnippet}, List: make([]RuntimeValue, 0, len(items.List))}
-		parentFrame := context.frame
-		if parentFrame == nil {
-			parentFrame = newRuntimeRootFrame(context.runtimeEnv)
-		}
-		for _, item := range items.List {
-			if err := context.budget.consumeIteration(); err != nil {
-				return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, err)
-			}
-			childContext := context
-			childContext.frame = parentFrame.childBinding(expression.loopName, item)
-			value, err := expression.thenBranch.evaluate(childContext)
-			if err != nil {
-				return RuntimeValue{}, err
-			}
-			result.Value.OmitSourceSnippet = result.Value.OmitSourceSnippet || value.Metadata().OmitSourceSnippet
-			result.List = append(result.List, value)
-		}
-
-		return result, nil
+		return expression.evaluateFor(context)
 	case typedExpressionOverlay:
 		if expression.left == nil || expression.right == nil {
 			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid with expression"))

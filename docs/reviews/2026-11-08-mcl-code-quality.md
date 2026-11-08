@@ -24,6 +24,8 @@ Typed IR解析キャッシュでは、`inferType()`のcache hitが`TypeAnalysisF
 
 Typed IR評価器では、`typedExpression.evaluate()`の`typedExpressionCall` caseから呼出し全体を`evaluateCall()`へ移しました。式評価のbudget・allocation chargeはdispatch前に一度だけ行い、callee、引数、Rule、Deferred Call、Lambda、標準関数の評価順とSource Location処理は移動前のままです。複数の責務を一度に動かさず、call経路を独立して読める最小単位として切り出しています。
 
+同じ評価器から`for`式の処理を`evaluateFor()`へ移しました。遅延sourceのcontinuation作成、即時Listの反復予算、Frame scope、子式評価の順序を一つのスコープ処理にまとめています。dispatch段階のallocationとstep予算は`evaluate()`に残し、各式で一度だけ消費します。
+
 Module indexでは、完全snapshot再構築のimport解決を既存の`resolveModuleDependencies()`へ統合しました。import先のソートと重複除去を含め、更新時と完全再構築時で同じ依存一覧を生成します。source hashだけを根拠にimport解決を省略する変更は行っていません。
 
 CLIでは`render`、`check`、`explain`、`diff`、`update`、`fetch`がそれぞれ登録・取得していたparameter、parameter-file、nondeterministic-output flagを共通関数へ集約しました。各コマンドのflag名・説明・既定値・登録順とparameter parsingの診断は維持します。Kubernetes version flagは既存の独立登録を維持しています。
@@ -48,4 +50,4 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化、Dependency Lockのサイズ選択共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。評価器の責務整理は遅延評価、source location、scope captureの境界を確認して段階的に扱います。
+Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR callと`for`式評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化、Dependency Lockのサイズ選択共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。評価器の残りの責務整理は遅延評価、source location、scope captureの境界を確認して段階的に扱います。
