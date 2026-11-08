@@ -22,7 +22,7 @@ func TestRenderPhaseArtifactsPreservesResourceAndLifecycle(t *testing.T) {
   metadata:
     name: "sample"
 
-let hook = lifecycle.attach(resource, ["before.create"], 4, false, ["on-success"])
+let hook = lifecycle.attach(resource, ["before.create", "after.create"], 4, false, ["on-success"])
 emit hook
 `
 	bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), source)
@@ -42,6 +42,33 @@ emit hook
 	}
 	if resource["kind"] != "Lease" || artifacts[0].Lifecycle.Priority != 4 || len(artifacts[0].Lifecycle.Cleanup) != 1 || artifacts[0].Lifecycle.Cleanup[0] != cleanupOnSuccess {
 		t.Fatalf("unexpected structured artifact: resource=%v lifecycle=%+v", resource, artifacts[0].Lifecycle)
+	}
+	if artifacts[0].ArtifactID == "" {
+		t.Fatal("RenderPhaseArtifacts() returned no stable artifact identity for source-backed resource")
+	}
+	afterArtifacts, err := RenderPhaseArtifacts(bundle, phaseAfterCreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterArtifacts) != 1 || afterArtifacts[0].ArtifactID != artifacts[0].ArtifactID {
+		t.Fatalf("artifact identity changed between lifecycle phases: before=%+v after=%+v", artifacts, afterArtifacts)
+	}
+}
+
+func TestStableArtifactIDsLeaveAmbiguousProvenanceUnidentified(t *testing.T) {
+	t.Parallel()
+
+	bundle := Bundle{Artifacts: []Artifact{
+		{Value: Value{Kind: Map, SourcePath: "main.mcl", Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+		{Value: Value{Kind: Map, SourcePath: "main.mcl", Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+		{Value: Value{Kind: Map, SourcePath: "main.mcl", Span: SourceSpan{Start: 4, End: 6}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+	}}
+	rendered, err := RenderPhaseArtifacts(bundle, phaseBeforeCreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rendered[0].ArtifactID != "" || rendered[1].ArtifactID != "" || rendered[2].ArtifactID == "" {
+		t.Fatalf("RenderPhaseArtifacts() identities = %q, want ambiguous identities empty and unique identity present", []string{rendered[0].ArtifactID, rendered[1].ArtifactID, rendered[2].ArtifactID})
 	}
 }
 

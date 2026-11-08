@@ -248,6 +248,12 @@ type RenderedFile = engine.RenderedFile
 
 type RenderedArtifact = engine.RenderedArtifact
 
+type BundleOutputPlan = engine.BundleOutputPlan
+
+func NewBundleOutputPlan(bundle Bundle) *BundleOutputPlan {
+	return engine.NewBundleOutputPlan(bundle)
+}
+
 // RenderPhaseArtifactsはLifecycle情報を保った構造化Resourceを返します。
 func RenderPhaseArtifacts(bundle Bundle, phase string) ([]RenderedArtifact, error) {
 	return engine.RenderPhaseArtifacts(bundle, phase)

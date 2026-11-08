@@ -2,7 +2,7 @@
 
 ## 対象
 
-`d2e7e50`を基準に、レビューで挙げられたSource Map、Parser、CRD判定、Formatter、依存Module index、Typed IR解析キャッシュ、Typed IR評価器、CLIフラグ、Schema補完、Dependency Lockを確認します。初回実装時のHEADは`beceed2`で、2026年11月8日の追加移行は`8cda402`に記録されています。言語仕様、レンダリング結果、診断内容と順序、公開API、再現性の挙動は変更対象にしません。
+`d2e7e50`を基準に、レビューで挙げられたSource Map、Parser、CRD判定、Formatter、依存Module index、Typed IR解析キャッシュ、Typed IR評価器、CLIフラグ、Schema補完、Dependency Lockを確認します。初回実装時のHEADは`beceed2`で、2026年11月8日の追加移行は`8cda402`以降に記録されています。言語仕様、Manifestのレンダリング結果、診断内容と順序、再現性の挙動は変更対象にしません。既存APIは互換aliasで維持し、並行作業で`RenderedArtifact`へ追加された`ArtifactID`と`BundleIndex`はManifest出力に影響しないメタデータとして扱います。
 
 ## 実装
 
@@ -62,7 +62,9 @@ CLIとWASMの評価・出力の共通経路に`internal/app.EvaluationService`�
 
 Source Mapの型と処理、および確定値のYAML/JSON直列化を`internal/output`へ移しました。Output packageは`internal/source`と`internal/value`にだけ依存し、engineへの依存はありません。engine側には既存APIとBundleOutputPlanを保つ薄いadapterを残しています。Source Mapでは、既存のYAML nodeごとの範囲計算に加え、行インデントのsegment treeを一度構築し、block scalar終端の探索で後続行を繰り返し走査しないようにしました。末尾空行の扱いを既存実装と一致させるfocused regression testを追加しました。Parserではトップレベル宣言の解析を一つのまとまった処理へ分け、元の宣言順序と診断を維持しました。
 
-Kubernetes Resource Catalog、組み込みScope index、CRD Scope解析、Resource identity解析、identity resolver、Catalog generatorを`internal/kubernetes`へ移しました。PackageはValueとk8sschemaを利用し、engineには依存しません。engineはBundle内のCRD descriptorsを渡し、既存の公開型と関数をalias・wrapperで維持します。BundleOutputPlanと重複Resource検証はBundleのライフサイクル情報と結合しているため、engineに残しています。
+Kubernetes Resource Catalog、組み込みScope index、CRD Scope解析、Resource identity解析、identity resolver、Catalog generatorを`internal/kubernetes`へ移しました。PackageはValueとk8sschemaを利用し、engineには依存しません。engineはBundle内のCRD descriptorsを渡し、既存の公開型と関数をalias・wrapperで維持します。
+
+BundleOutputPlan、phase grouping、lifecycle validation、operation manifest生成も`internal/output`へ移しました。OutputはValueとKubernetes ScopeIndexを受け取り、engineはBundle由来のScopeIndexを構築して既存APIを委譲します。Kubernetes duplicate-resource検証は`internal/kubernetes`が所有します。`runtimeValueToYAMLNode()`はRuntimeValueを受け取るためengineに残しています。
 
 Kubernetes package移行後に全Go packageの`go test ./... -count=1`、`internal/kubernetes`からengineへのimportがないこと、`git diff --check`を確認しました。OutputのSource Map/serializer移行後にも全Go packageのテストが成功しています。Project/Value/Application移行時にはBrowserの`pnpm --dir packages/browser test:unit`（13件）と`GOOS=js GOARCH=wasm go build -o /tmp/mcl-wasm-refactor.wasm ./cmd/mcl-wasm`も成功しました。出力・診断の全入力に対するgolden比較や性能ベンチマークは実施していないため、数値上の速度向上は主張しません。
 
@@ -70,4 +72,4 @@ Kubernetes package移行後に全Go packageの`go test ./... -count=1`、`intern
 
 現在の変更はパッケージ境界を整える段階であり、Compiler・Typed IR・Runtimeの完全分離を完了していません。`typedExpression`は依然としてengineが所有する可変な再帰構造で、安定した`ExprID`を持つ不変Unitへ移行する作業が残っています。型特殊化、遅延継続、Lambda捕捉を同じCompile Unitの寿命で安全に参照する設計が必要です。
 
-`internal/output`はSource Mapと確定値serializerを所有する段階まで切り出しましたが、BundleOutputPlan、Artifactのphase grouping、Kubernetes検証はengineに残っています。`internal/kubernetes`はCatalog、Scope index、CRD/Identity解析を所有しますが、engineのBundle関連検証と呼び出しadapterは残っています。`internal/adapters/helm`と`internal/adapters/kustomize`はまだ独立していません。`internal/engine`の削除は、Compiler、Runtime、Adapter、Output、公開Facadeの依存が分離し、外部packageからのengine内部参照がなくなった後の最終段階です。
+`internal/output`はSource Map、確定値serializer、BundleOutputPlanを所有します。engineにはBundle adapterとRuntimeValue serializerが残っています。`internal/kubernetes`はCatalog、Scope index、CRD/Identity解析、重複Resource検証を所有しますが、engineのCRD descriptor生成adapterは残っています。`internal/adapters/helm`と`internal/adapters/kustomize`はまだ独立していません。`internal/engine`の削除は、Compiler、Runtime、Adapter、Output、公開Facadeの依存が分離し、外部packageからのengine内部参照がなくなった後の最終段階です。

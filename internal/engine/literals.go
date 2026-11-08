@@ -1,6 +1,8 @@
 // Engineで繰り返し現れる文字列リテラルを定数へ寄せたもの。
 package engine
 
+import outputpkg "github.com/manifest-configuration-language/mcl/internal/output"
+
 // MCLの組み込み型名。
 const (
 	typeAny      = "Any"
@@ -95,26 +97,26 @@ const (
 
 // ライフサイクルイベントの名前。
 const (
-	phaseMain           = "main"
-	phaseBootstrap      = "bootstrap"
-	phaseBeforeCreate   = "before.create"
-	phaseAfterCreate    = "after.create"
-	phaseBeforeUpdate   = "before.update"
-	phaseAfterUpdate    = "after.update"
-	phaseBeforeDelete   = "before.delete"
-	phaseAfterDelete    = "after.delete"
-	phaseBeforeRollback = "before.rollback"
-	phaseAfterRollback  = "after.rollback"
-	phaseVerify         = "verify"
+	phaseMain           = outputpkg.PhaseMain
+	phaseBootstrap      = outputpkg.PhaseBootstrap
+	phaseBeforeCreate   = outputpkg.PhaseBeforeCreate
+	phaseAfterCreate    = outputpkg.PhaseAfterCreate
+	phaseBeforeUpdate   = outputpkg.PhaseBeforeUpdate
+	phaseAfterUpdate    = outputpkg.PhaseAfterUpdate
+	phaseBeforeDelete   = outputpkg.PhaseBeforeDelete
+	phaseAfterDelete    = outputpkg.PhaseAfterDelete
+	phaseBeforeRollback = outputpkg.PhaseBeforeRollback
+	phaseAfterRollback  = outputpkg.PhaseAfterRollback
+	phaseVerify         = outputpkg.PhaseVerify
 )
 
 // ライフサイクルで扱う操作名。
 const (
-	operationCreate   = "create"
-	operationUpdate   = "update"
-	operationDelete   = "delete"
-	operationRollback = "rollback"
-	operationVerify   = "verify"
+	operationCreate   = outputpkg.OperationCreate
+	operationUpdate   = outputpkg.OperationUpdate
+	operationDelete   = outputpkg.OperationDelete
+	operationRollback = outputpkg.OperationRollback
+	operationVerify   = outputpkg.OperationVerify
 )
 
 // YAMLのタグ名。
