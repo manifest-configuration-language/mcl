@@ -424,7 +424,7 @@ func StableArtifactIDs(artifacts []value.Artifact) []string {
 	counts := make(map[string]int, len(artifacts))
 	for index, artifact := range artifacts {
 		path, span := artifact.Value.SourcePath, artifact.Value.Span
-		if path == "" || span.Start <= 0 || span.End <= span.Start {
+		if path == "" || span.Start < 0 || span.End <= span.Start {
 			continue
 		}
 		key := fmt.Sprintf("%s\x00%d\x00%d", path, span.Start, span.End)

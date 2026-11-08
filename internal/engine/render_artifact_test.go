@@ -59,16 +59,17 @@ func TestStableArtifactIDsLeaveAmbiguousProvenanceUnidentified(t *testing.T) {
 	t.Parallel()
 
 	bundle := Bundle{Artifacts: []Artifact{
-		{Value: Value{Kind: Map, SourcePath: "main.mcl", Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
-		{Value: Value{Kind: Map, SourcePath: "main.mcl", Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
-		{Value: Value{Kind: Map, SourcePath: "main.mcl", Span: SourceSpan{Start: 4, End: 6}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 4, End: 6}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
+		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 0, End: 1}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
 	}}
 	rendered, err := RenderPhaseArtifacts(bundle, phaseBeforeCreate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rendered[0].ArtifactID != "" || rendered[1].ArtifactID != "" || rendered[2].ArtifactID == "" {
-		t.Fatalf("RenderPhaseArtifacts() identities = %q, want ambiguous identities empty and unique identity present", []string{rendered[0].ArtifactID, rendered[1].ArtifactID, rendered[2].ArtifactID})
+	if rendered[0].ArtifactID != "" || rendered[1].ArtifactID != "" || rendered[2].ArtifactID == "" || rendered[3].ArtifactID == "" {
+		t.Fatalf("RenderPhaseArtifacts() identities = %q, want ambiguous identities empty and unique identities present", []string{rendered[0].ArtifactID, rendered[1].ArtifactID, rendered[2].ArtifactID, rendered[3].ArtifactID})
 	}
 }
 
