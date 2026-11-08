@@ -28,6 +28,8 @@ Module indexでは、完全snapshot再構築のimport解決を既存の`resolveM
 
 CLIでは`render`、`check`、`explain`、`diff`、`update`、`fetch`がそれぞれ登録・取得していたparameter、parameter-file、nondeterministic-output flagを共通関数へ集約しました。各コマンドのflag名・説明・既定値・登録順とparameter parsingの診断は維持します。Kubernetes version flagは既存の独立登録を維持しています。
 
+Dependency Lockの`loadRemote()`では、ManifestとChartで重複していた最大サイズの選択を`remoteMaximumSize()`へまとめました。locked fetch、update、offline readの処理順、cache errorの扱い、digest診断は分岐ごとに維持しています。
+
 Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。すべてのtyped LambdaはFrameを捕捉し、呼び出し時に引数とlocalをchild frameとして追加するため、呼び出しごとの外側環境Map複製を避けます。runtime value graphをcloneするときは、Frameをmemoizeしてbinding値を既存のclone状態へ通し、Node Identityのclone semanticsを保ちます。Deferred値と動的Map keyは生成時にFrameを既存のMap scopeへflattenするため、これらの継続にFrame pointerは残りません。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
 
 ## 今回変更しない項目
@@ -46,4 +48,4 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。残る評価器の責務整理とDependency Lockは、既存の所有権・診断・モードごとの挙動を保つ変更単位を段階的に確認します。
+Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化、Dependency Lockのサイズ選択共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。評価器の責務整理は遅延評価、source location、scope captureの境界を確認して段階的に扱います。

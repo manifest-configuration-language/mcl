@@ -615,10 +615,7 @@ func (lock *Lock) loadRemote(source, category string, entries map[string]string)
 		if !exists {
 			return nil, fmt.Errorf("%s %q is not locked; run mcl update", category, source)
 		}
-		maximumSize := int64(maxRemoteManifestSize)
-		if category == "chart" {
-			maximumSize = maxRemoteChartArchiveSize
-		}
+		maximumSize := remoteMaximumSize(category)
 		if data, err := lock.readCache(digest, maximumSize); err == nil && contentutil.SHA256(data) == digest {
 			return data, nil
 		}
@@ -657,10 +654,7 @@ func (lock *Lock) loadRemote(source, category string, entries map[string]string)
 	if !exists {
 		return nil, fmt.Errorf("%w: %s URL %q is not locked; run mcl update", ErrRemoteDependencyUnavailable, category, source)
 	}
-	maximumSize := int64(maxRemoteManifestSize)
-	if category == "chart" {
-		maximumSize = maxRemoteChartArchiveSize
-	}
+	maximumSize := remoteMaximumSize(category)
 	data, err := lock.readCache(digest, maximumSize)
 	if err != nil {
 		return nil, err
@@ -670,6 +664,14 @@ func (lock *Lock) loadRemote(source, category string, entries map[string]string)
 	}
 
 	return data, nil
+}
+
+func remoteMaximumSize(category string) int64 {
+	if category == "chart" {
+		return maxRemoteChartArchiveSize
+	}
+
+	return maxRemoteManifestSize
 }
 
 func (lock *Lock) Save() error {
