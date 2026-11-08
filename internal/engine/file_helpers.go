@@ -1,18 +1,11 @@
 package engine
 
 import (
-	"errors"
-	"fmt"
-	"io"
 	"io/fs"
-	"os"
-	"path"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 
-	"github.com/manifest-configuration-language/mcl/internal/safepath"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 )
 
 const maxYAMLBytes = 16 << 20
@@ -34,94 +27,37 @@ func pathWithin(root, target string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-// projectFilesystem presents project files through root-relative io/fs paths.
-// osBacked filesystems resolve symlinks before opening so an OS path cannot
-// escape the project root through a link.
+// projectFilesystem preserves the engine's existing access points while project.Filesystem owns path handling.
 type projectFilesystem struct {
-	root     string
-	files    fs.FS
-	osBacked bool
-	reads    *readTrackingFS
-}
-
-type readTrackingFS struct {
-	fs.FS
-	mu   sync.Mutex
-	seen map[string]struct{}
-}
-
-func (filesystem *readTrackingFS) Open(name string) (fs.File, error) {
-	file, err := filesystem.FS.Open(name)
-	if err != nil {
-		return nil, err
-	}
-
-	filesystem.record(name)
-
-	return file, nil
-}
-
-func (filesystem *readTrackingFS) record(name string) {
-	clean := path.Clean(name)
-	if clean != "." && fs.ValidPath(clean) {
-		filesystem.mu.Lock()
-		filesystem.seen[clean] = struct{}{}
-		filesystem.mu.Unlock()
-	}
-}
-
-func (filesystem *readTrackingFS) paths() []string {
-	filesystem.mu.Lock()
-	defer filesystem.mu.Unlock()
-
-	paths := make([]string, 0, len(filesystem.seen))
-	for name := range filesystem.seen {
-		paths = append(paths, name)
-	}
-	sort.Strings(paths)
-
-	return paths
-}
-
-type rootConfinedFS struct {
-	files fs.FS
-}
-
-func (filesystem rootConfinedFS) Open(name string) (fs.File, error) {
-	links, ok := filesystem.files.(fs.ReadLinkFS)
-	if ok {
-		current := ""
-		for component := range strings.SplitSeq(name, "/") {
-			current = path.Join(current, component)
-			info, err := links.Lstat(current)
-			if err != nil {
-				return nil, err
-			}
-			if info.Mode()&fs.ModeSymlink != 0 {
-				return nil, &fs.PathError{Op: "open", Path: name, Err: fmt.Errorf("symbolic link %q is not allowed: %w", current, fs.ErrPermission)}
-			}
-		}
-	}
-
-	return filesystem.files.Open(name)
+	projectFS *project.Filesystem
+	root      string
+	files     fs.FS
+	osBacked  bool
 }
 
 func newOSProjectFilesystem(root string) *projectFilesystem {
-	return newTrackedProjectFilesystem(root, os.DirFS(root), true)
+	return wrapProjectFilesystem(project.NewOSFilesystem(root))
 }
 
 func newProjectFilesystem(root string, files fs.FS) *projectFilesystem {
-	return newTrackedProjectFilesystem(root, rootConfinedFS{files: files}, false)
+	return wrapProjectFilesystem(project.NewFilesystem(root, files))
 }
 
-func newTrackedProjectFilesystem(root string, files fs.FS, osBacked bool) *projectFilesystem {
-	reads := &readTrackingFS{FS: files, seen: make(map[string]struct{})}
-
-	return &projectFilesystem{root: filepath.Clean(root), files: reads, osBacked: osBacked, reads: reads}
+func wrapProjectFilesystem(filesystem *project.Filesystem) *projectFilesystem {
+	return &projectFilesystem{
+		projectFS: filesystem,
+		root:      filesystem.Root(),
+		files:     filesystem.FS(),
+		osBacked:  filesystem.OSBacked(),
+	}
 }
 
 func (filesystem *projectFilesystem) readPaths() []string {
-	return filesystem.reads.paths()
+	return filesystem.projectFS.ReadPaths()
+}
+
+func (filesystem *projectFilesystem) recordRead(name string) {
+	filesystem.projectFS.RecordRead(name)
 }
 
 func projectFilesystemFor(root string, filesystems []*projectFilesystem) *projectFilesystem {
@@ -133,106 +69,17 @@ func projectFilesystemFor(root string, filesystems []*projectFilesystem) *projec
 }
 
 func (filesystem *projectFilesystem) relativePath(filename string) (string, error) {
-	absolute, err := filepath.Abs(filename)
-	if err != nil {
-		return "", err
-	}
-	relative, err := filepath.Rel(filesystem.root, absolute)
-	if err != nil || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q is outside project root %q", filename, filesystem.root)
-	}
-	relative = filepath.ToSlash(relative)
-	if !fs.ValidPath(relative) {
-		return "", fmt.Errorf("invalid project path %q", relative)
-	}
-
-	return relative, nil
+	return filesystem.projectFS.RelativePath(filename)
 }
 
 func (filesystem *projectFilesystem) resolveReadPath(filename string) (string, error) {
-	relative, err := filesystem.relativePath(filename)
-	if err != nil {
-		return "", err
-	}
-	if filesystem.osBacked {
-		return safepath.ResolveWithin(filesystem.root, filepath.Join(filesystem.root, filepath.FromSlash(relative)))
-	}
-	if _, err := fs.Stat(filesystem.files, relative); err != nil {
-		return "", err
-	}
-
-	return filepath.Join(filesystem.root, filepath.FromSlash(relative)), nil
+	return filesystem.projectFS.ResolveReadPath(filename)
 }
 
 func (filesystem *projectFilesystem) resolveModuleImport(importer, modulePath string) (string, error) {
-	if filepath.IsAbs(modulePath) || path.IsAbs(modulePath) {
-		return "", errors.New("absolute module paths are not allowed")
-	}
-	importerPath := importer
-	if filesystem.osBacked {
-		absoluteImporter, err := filepath.Abs(importer)
-		if err != nil {
-			return "", err
-		}
-		canonicalImporter, err := filepath.EvalSymlinks(absoluteImporter)
-		if err != nil {
-			canonicalDirectory, directoryErr := filepath.EvalSymlinks(filepath.Dir(absoluteImporter))
-			if directoryErr != nil {
-				return "", fmt.Errorf("resolve importer directory: %w", directoryErr)
-			}
-			canonicalImporter = filepath.Join(canonicalDirectory, filepath.Base(absoluteImporter))
-		}
-		importerPath = canonicalImporter
-	}
-	importerRelative, err := filesystem.relativePath(importerPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve importer: %w", err)
-	}
-	joined := path.Clean(path.Join(path.Dir(importerRelative), filepath.ToSlash(filepath.FromSlash(modulePath))))
-	if !fs.ValidPath(joined) {
-		return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
-	}
-	candidate := filepath.Join(filesystem.root, filepath.FromSlash(joined))
-	if filesystem.osBacked {
-		canonical, err := safepath.ResolveWithin(filesystem.root, candidate)
-		if err != nil {
-			if errors.Is(err, safepath.ErrOutsideRoot) {
-				return "", fmt.Errorf("module path %q escapes the project directory", modulePath)
-			}
-
-			return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
-		}
-
-		return canonical, nil
-	}
-	if _, err := fs.Stat(filesystem.files, joined); err != nil {
-		return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
-	}
-
-	return candidate, nil
+	return filesystem.projectFS.ResolveModuleImport(importer, modulePath)
 }
 
 func (filesystem *projectFilesystem) readLimitedFile(filename string) ([]byte, error) {
-	resolved, err := filesystem.resolveReadPath(filename)
-	if err != nil {
-		return nil, err
-	}
-	relative, err := filesystem.relativePath(resolved)
-	if err != nil {
-		return nil, err
-	}
-	file, err := filesystem.files.Open(relative)
-	if err != nil {
-		return nil, err
-	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maxMCLSourceBytes+1))
-	closeErr := file.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxMCLSourceBytes {
-		return nil, fmt.Errorf("file %q exceeds the %d-byte limit", filename, maxMCLSourceBytes)
-	}
-
-	return data, nil
+	return filesystem.projectFS.ReadLimitedFile(filename, maxMCLSourceBytes)
 }

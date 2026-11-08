@@ -6,10 +6,12 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 )
 
 func specializeTypedExpression(expression typedExpression, substitutions map[string]ResolvedType, types map[string]ResolvedType) (typedExpression, error) {
-	expression.resolvedType = substituteTypeParameters(expression.resolvedType, substitutions)
+	expression.resolvedType = semtypes.Substitute(expression.resolvedType, substitutions)
 	var err error
 	expression.analysisFacts, err = specializeTypeAnalysisFacts(expression.analysisFacts, substitutions, types)
 	if err != nil {
@@ -112,10 +114,10 @@ func specializeTypedExpression(expression typedExpression, substitutions map[str
 		typing := *expression.lambdaTyping
 		typing.ParameterTypes = slices.Clone(typing.ParameterTypes)
 		for index := range typing.ParameterTypes {
-			typing.ParameterTypes[index] = substituteTypeParameters(typing.ParameterTypes[index], substitutions)
+			typing.ParameterTypes[index] = semtypes.Substitute(typing.ParameterTypes[index], substitutions)
 		}
 		if typing.ReturnType != nil {
-			returnType := substituteTypeParameters(*typing.ReturnType, substitutions)
+			returnType := semtypes.Substitute(*typing.ReturnType, substitutions)
 			typing.ReturnType = &returnType
 		}
 		if typing.InferenceBody != nil {
@@ -127,7 +129,7 @@ func specializeTypedExpression(expression typedExpression, substitutions map[str
 		}
 		typing.TypeScope = maps.Clone(typing.TypeScope)
 		for name, analysis := range typing.TypeScope {
-			analysis.Type = substituteTypeParameters(analysis.Type, substitutions)
+			analysis.Type = semtypes.Substitute(analysis.Type, substitutions)
 			typing.TypeScope[name] = analysis
 		}
 		expression.lambdaTyping = &typing
@@ -195,7 +197,7 @@ func specializeTypedExpression(expression typedExpression, substitutions map[str
 func specializeTypeAnalysisFacts(facts TypeAnalysisFacts, substitutions map[string]ResolvedType, types map[string]ResolvedType) (TypeAnalysisFacts, error) {
 	facts = cloneTypeAnalysisFacts(facts)
 	if facts.Replacement != nil {
-		replacement := substituteTypeParameters(*facts.Replacement, substitutions)
+		replacement := semtypes.Substitute(*facts.Replacement, substitutions)
 		facts.Replacement = &replacement
 	}
 	for name, fieldFacts := range facts.Fields {
@@ -218,7 +220,7 @@ func specializeTypeAnalysisFacts(facts TypeAnalysisFacts, substitutions map[stri
 	inference := *facts.FunctionInference
 	inference.Bindings = maps.Clone(inference.Bindings)
 	for name, analysis := range inference.Bindings {
-		analysis.Type = substituteTypeParameters(analysis.Type, substitutions)
+		analysis.Type = semtypes.Substitute(analysis.Type, substitutions)
 		var err error
 		analysis.Facts, err = specializeTypeAnalysisFacts(analysis.Facts, substitutions, types)
 		if err != nil {

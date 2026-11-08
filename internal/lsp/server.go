@@ -7,7 +7,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 )
@@ -20,7 +20,7 @@ type server struct {
 	dispatchTail             chan struct{}
 	documents                map[string]documentState
 	workspaceRoots           []string
-	renameIndex              *engine.DependentMCLSourceIndex
+	renameIndex              *project.DependentMCLSourceIndex
 	semanticCache            *projectSemanticSnapshotCache
 	canWatchMCLFiles         bool
 	watchRegistrationPending bool

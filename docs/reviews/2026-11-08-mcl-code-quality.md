@@ -14,7 +14,7 @@ FormatterのList内Map開始位置を整える後処理では、置換範囲を�
 
 通常Schema補完、Schema型フィールド列挙、Helm Schema補完で重複していたプロパティ収集・既存候補の除外・ソートを`schemaCompletionPropertyNames()`にまとめます。呼び出し元ごとの既存フィールド除外と候補順を維持します。
 
-Parserでは、トップレベルの宣言順序判定と、`type`・`param`宣言のトークン解析およびAST構築を分離します。トップレベルにはフェーズ遷移とASTへの追加を残し、各宣言の解析関数は元の診断文、Source Span、parser helperの呼び出し順を維持します。
+Parserでは、トップレベルの宣言順序判定と、`import`・`type`・`param`・`rule`・`fn`・`let`宣言の解析およびAST構築を`parseTopLevelDeclaration()`へ分離しました。トップレベルには行の取得、宣言フェーズの受け渡し、`emit`・`validate`など残りの文の処理を残し、宣言順序、フェーズ遷移、診断文、Source Span、parser helperの呼び出し順を維持します。
 
 Language Serviceのproject FS経路では、読み込んだsource一式を`ProjectSemanticSnapshot`に保持し、各モジュールのASTと`SemanticIndex`を必要になった時点で一度だけ生成します。Definition、Hover、References、Rename、名前付き引数補完は、同じsnapshot内の解析結果を再利用します。構文エラーのあるsourceもsnapshotのsource一覧には保持し、機能ごとの既存の失敗・スキップ動作を維持します。
 
@@ -51,3 +51,21 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 ## 状態
 
 Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR callと`for`式評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化、Dependency Lockのサイズ選択共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。評価器の残りの責務整理は遅延評価、source location、scope captureの境界を確認して段階的に扱います。
+
+## 2026年11月8日の追加実装
+
+Project index、Filesystem、workspace scope、import解決を`internal/project`へ移しました。LSPとLanguage Serviceは`project` APIを直接利用し、`internal/engine`には既存の評価器・呼び出し元向けのaliasと薄い委譲を残しています。評価器の`moduleGraph`はAST依存、import循環検出、モジュール評価を持つため、Project indexとは分離してengineに残します。
+
+確定値モデルを`internal/value`へ移し、`Kind`、`Value`、`Entry`、`Artifact`、`Lifecycle`、`NodeIdentity`、値の型由来情報を所有させました。`Bundle`と遅延評価、Lambda、Rule、ModuleContextは評価時の状態を含むためengineに残しています。`internal/types`は`ResolvedType`とclone・generic substitutionを所有し、`internal/source`はSource Spanと診断・Provenanceの基本型を所有します。既存の公開Facadeはengine alias経由で維持します。
+
+CLIとWASMの評価・出力の共通経路に`internal/app.EvaluationService`を導入しました。CLIはcheck、bundle評価、render前の評価にこのServiceを使い、WASMはcheck、evaluate、renderを委譲します。Cobra、JavaScript、WASM protocol固有の処理は各entrypointに残します。`packages/browser/src/runtime.ts`からrequest scheduler、Worker管理、Project snapshot同期、protocol bridgeを分離し、`MclRuntime`と`MclProject`の公開型を維持しました。
+
+Source Mapでは、既存のYAML nodeごとの範囲計算に加え、行インデントのsegment treeを一度構築し、block scalar終端の探索で後続行を繰り返し走査しないようにしました。末尾空行の扱いを既存実装と一致させるfocused regression testを追加しました。Parserではトップレベル宣言の解析を一つのまとまった処理へ分け、元の宣言順序と診断を維持しました。
+
+全Go packageの`go test ./... -count=1`、Browserの`pnpm --dir packages/browser test:unit`（13件）、`GOOS=js GOARCH=wasm go build -o /tmp/mcl-wasm-refactor.wasm ./cmd/mcl-wasm`、`git diff --check`が成功しました。出力・診断の全入力に対するgolden比較や性能ベンチマークは実施していないため、数値上の速度向上は主張しません。
+
+## 継続する設計作業
+
+現在の変更はパッケージ境界を整える段階であり、Compiler・Typed IR・Runtimeの完全分離を完了していません。`typedExpression`は依然としてengineが所有する可変な再帰構造で、安定した`ExprID`を持つ不変Unitへ移行する作業が残っています。型特殊化、遅延継続、Lambda捕捉を同じCompile Unitの寿命で安全に参照する設計が必要です。
+
+`internal/output`、`internal/kubernetes`、`internal/adapters/helm`、`internal/adapters/kustomize`はまだ独立していません。これらはValue、Artifact、Kubernetes resource catalogの依存方向を定めてから順に切り出します。`internal/engine`の削除は、Compiler、Runtime、Adapter、Output、公開Facadeの依存が分離し、外部packageからのengine内部参照がなくなった後の最終段階です。

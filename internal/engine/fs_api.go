@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"strings"
+
+	"github.com/manifest-configuration-language/mcl/internal/project"
 )
 
 // EvaluateProjectSourceContext evaluates source as entryPath in a project
@@ -71,5 +72,5 @@ func EvaluateProjectFileContext(ctx context.Context, projectRoot, entryPath stri
 }
 
 func validProjectPath(name string) bool {
-	return fs.ValidPath(name) && name != "." && filepath.IsLocal(filepath.FromSlash(name)) && !strings.Contains(name, `\`)
+	return project.IsValidProjectPath(name)
 }

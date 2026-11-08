@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/languageservice"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
@@ -15,7 +15,7 @@ import (
 
 func projectReferenceResolvers(s *server) (languageservice.ReferenceImportResolver, languageservice.ReferenceSourceReader) {
 	resolveImport := func(importer, modulePath string) (string, bool) {
-		resolved, err := engine.ResolveImportPath(importer, modulePath)
+		resolved, err := project.ResolveImportPath(importer, modulePath)
 		if err != nil {
 			return "", false
 		}

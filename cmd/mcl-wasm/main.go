@@ -19,6 +19,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/manifest-configuration-language/mcl/internal/app"
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/wasmprotocol"
@@ -192,34 +193,31 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 				return marshal(result)
 			}
 		}
-		bundle, evalErr := evaluate(input.Source, projectFiles, entrypoint, parameters)
+		operation := app.EvaluationOperationEvaluate
+		if input.Operation == "check" {
+			operation = app.EvaluationOperationCheck
+		} else if input.Operation == "render" {
+			operation = app.EvaluationOperationRender
+		}
+		evaluation, evalErr := (app.EvaluationService{Timeout: evaluationTime}).Run(context.Background(), app.EvaluationRequest{
+			Operation: operation,
+			Input: app.ProjectSourceInput{
+				ProjectRoot: browserProjectRoot(), Entrypoint: entrypoint,
+				Source: input.Source, Files: projectFiles,
+			},
+			Parameters: parameters,
+		})
 		if evalErr != nil {
 			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, evalErr)
 			return marshal(result)
 		}
-		if input.Operation == "check" || input.Operation == "render" {
-			if checkErr := engine.ValidateBundleOutput(bundle); checkErr != nil {
-				result.Error = diagnosticError(input.Source, entrypoint, projectFiles, checkErr)
-				return marshal(result)
-			}
-		}
+		bundle := evaluation.Bundle
 		if input.Operation == "check" {
 			result.Ok = true
 			result.Result = wasmprotocol.CheckResult{Valid: true, Artifacts: uint64(len(bundle.Artifacts))}
 			return marshal(result)
 		}
-		var output []byte
-		var manifestSourceMap engine.ManifestSourceMap
-		var renderErr error
-		if input.Operation == "render" {
-			output, manifestSourceMap, renderErr = engine.RenderWithSourceMap(bundle)
-		} else {
-			output, renderErr = engine.Render(bundle)
-		}
-		if renderErr != nil {
-			result.Error = diagnosticError(input.Source, entrypoint, projectFiles, renderErr)
-			return marshal(result)
-		}
+		output := evaluation.Output
 		if len(output) > wasmprotocol.MaxOutputBytes {
 			result.Error = &responseError{Code: "MCL-WASM-OUTPUT-LIMIT", Message: fmt.Sprintf("rendered output exceeds the %d-byte limit", wasmprotocol.MaxOutputBytes)}
 			return marshal(result)
@@ -228,7 +226,7 @@ func handle(raw string, binaryArgument js.Value, projectID string) string {
 		if input.Operation == "render" {
 			result.Result = wasmprotocol.RenderResult{
 				Yaml: string(output), Artifacts: uint64(len(bundle.Artifacts)),
-				SourceMap: wasmSourceMap(manifestSourceMap, output, projectFiles, entrypoint, input.Source),
+				SourceMap: wasmSourceMap(evaluation.SourceMap, output, projectFiles, entrypoint, input.Source),
 			}
 		} else {
 			result.Result = wasmprotocol.EvaluateResult{Artifacts: uint64(len(bundle.Artifacts)), RenderedBytes: uint64(len(output))}
@@ -289,13 +287,6 @@ func projectFilesForSession(projectID, entrypoint, source string) (*projectFiles
 		return nil, errors.New("project entrypoint source does not match the synchronized project")
 	}
 	return activeProject, nil
-}
-
-func evaluate(source string, files fs.FS, entrypoint string, parameters map[string]jsontext.Value) (engine.Bundle, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), evaluationTime)
-	defer cancel()
-
-	return engine.EvaluateProjectSourceWithParametersContext(ctx, browserProjectRoot(), entrypoint, source, files, nil, parameters)
 }
 
 func decodeParameters(raw []byte) (map[string]jsontext.Value, error) {

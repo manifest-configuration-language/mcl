@@ -11,6 +11,7 @@ import (
 
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/languageservice"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
@@ -180,7 +181,7 @@ func (s *server) importedDefinition(uri string, current syntax.ModuleAST, offset
 			if index.LocalAt(reference.Alias, reference.Span.Start).Found || strings.HasPrefix(declaration.ModulePath, "std:") {
 				return nil, true
 			}
-			resolved, err := engine.ResolveImportPath(currentPath, declaration.ModulePath)
+			resolved, err := project.ResolveImportPath(currentPath, declaration.ModulePath)
 			if err != nil {
 				return nil, true
 			}
@@ -356,7 +357,7 @@ func (s *server) renameSchemaField(ctx context.Context, params renameParams, nam
 	annotationByPath := map[string]map[string]string{filepath.Clean(path): annotationByBinding}
 	bindingsPathByPath := map[string]map[string][]string{filepath.Clean(path): pathByBinding}
 	if s.renameIndex == nil {
-		s.renameIndex = &engine.DependentMCLSourceIndex{}
+		s.renameIndex = &project.DependentMCLSourceIndex{}
 	}
 	var sources map[string]string
 	if s.watchRegistered {
@@ -746,7 +747,7 @@ func schemaAnnotationIdentityWithSources(path string, module syntax.ModuleAST, a
 			if !ok || declaration.Name != alias {
 				continue
 			}
-			if resolved, resolveErr := engine.ResolveImportPath(path, declaration.ModulePath); resolveErr == nil {
+			if resolved, resolveErr := project.ResolveImportPath(path, declaration.ModulePath); resolveErr == nil {
 				resolved, resolveErr = filepath.Abs(resolved)
 				if resolveErr != nil {
 					break
@@ -1144,7 +1145,7 @@ func (s *server) renameImportedExport(ctx context.Context, params renameParams, 
 			if !ok || !isMCLIdentifier(declaration.Name) {
 				continue
 			}
-			resolved, err := engine.ResolveImportPath(currentPath, declaration.ModulePath)
+			resolved, err := project.ResolveImportPath(currentPath, declaration.ModulePath)
 			if err != nil {
 				continue
 			}
@@ -1315,7 +1316,7 @@ func (s *server) renameImportedExport(ctx context.Context, params renameParams, 
 			if !ok {
 				continue
 			}
-			resolved, err := engine.ResolveImportPath(paths[uri], declaration.ModulePath)
+			resolved, err := project.ResolveImportPath(paths[uri], declaration.ModulePath)
 			if err == nil && resolved == targetPath {
 				aliases[declaration.Name] = true
 			}

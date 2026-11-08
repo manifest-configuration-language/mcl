@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 )
 
@@ -63,7 +63,7 @@ func RenameForProjectFS(params NavigationParams, projectFiles fs.FS, newName str
 	for _, span := range spans {
 		result.Edits = append(result.Edits, RenameEdit{Path: target.Path, Range: SourceRangeAt(targetSource, span), NewText: newName})
 	}
-	var dependents engine.DependentMCLSourceIndex
+	var dependents project.DependentMCLSourceIndex
 	dependentSources, err := dependents.SourcesForProjectFS(filepath.Join(filepath.Clean("/"), "mcl-project"), target.Path, files, nil)
 	if err != nil {
 		return nil

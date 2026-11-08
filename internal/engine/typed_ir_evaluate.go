@@ -504,7 +504,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 		}
 
 		return RuntimeValue{
-			Value: runtimeValueData{Kind: Node, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: body.Metadata().OmitSourceSnippet, NodeID: &NodeIdentity{originPath: context.sourcePath, originSpan: expression.span}},
+			Value: runtimeValueData{Kind: Node, Span: expression.span, SourcePath: context.sourcePath, OmitSourceSnippet: body.Metadata().OmitSourceSnippet, NodeID: newNodeIdentity(context.sourcePath, expression.span)},
 			Base:  &body,
 		}, nil
 	case typedExpressionFor:

@@ -5,45 +5,40 @@ import (
 	"regexp"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
+	values "github.com/manifest-configuration-language/mcl/internal/value"
 )
 
 var numberPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
-type Kind uint8
+type Kind = values.Kind
 
 const (
-	Null Kind = iota
-	Bool
-	Integer
-	Decimal
-	String
-	List
-	AdapterBundle
-	Map
-	Replacement
-	Function
-	Lambda
-	Node
-	Rule
+	Null          = values.Null
+	Bool          = values.Bool
+	Integer       = values.Integer
+	Decimal       = values.Decimal
+	String        = values.String
+	List          = values.List
+	AdapterBundle = values.AdapterBundle
+	Map           = values.Map
+	Replacement   = values.Replacement
+	Function      = values.Function
+	Lambda        = values.Lambda
+	Node          = values.Node
+	Rule          = values.Rule
 )
 
-type Value struct {
-	Kind            Kind
-	Span            SourceSpan
-	Bool            bool
-	Text            string
-	List            []Value
-	Map             []Entry
-	Base            *Value
-	SourcePath      string
-	SourceLocations []SourceDiagnosticLocation
-	typing          *ValueTyping
-	NodeID          *NodeIdentity
-	output          *valueOutputMetadata
-}
+type Value = values.Value
+type Entry = values.Entry
+type Artifact = values.Artifact
+type Lifecycle = values.Lifecycle
+type NodeIdentity = values.NodeIdentity
+type TypeProvenance = values.TypeProvenance
+type SchemaProvenance = values.SchemaProvenance
+type ValueTyping = values.ValueTyping
 
-type valueOutputMetadata struct {
-	Lifecycle *Lifecycle
+func newNodeIdentity(originPath string, originSpan SourceSpan) *NodeIdentity {
+	return values.NewNodeIdentity(originPath, originSpan)
 }
 
 type LambdaTyping struct {
@@ -52,11 +47,6 @@ type LambdaTyping struct {
 	TypeScope      map[string]TypeAnalysis
 	Types          map[string]ResolvedType
 	InferenceBody  *typedExpression
-}
-
-type ValueTyping struct {
-	TypeProvenance   []TypeProvenance
-	SchemaProvenance *SchemaProvenance
 }
 
 type ModuleContext struct {
@@ -78,18 +68,6 @@ func valueStringField(value Value, key string) (string, bool) {
 	return field.Text, exists && field.Kind == String
 }
 
-type TypeProvenance struct {
-	Type  ResolvedType
-	Types map[string]ResolvedType
-}
-
-type SchemaProvenance struct {
-	ResourceType string
-	Path         string
-	Type         *ResolvedType
-	Unknown      bool
-}
-
 type RuleFailure struct {
 	Rule       string
 	Expression string
@@ -99,17 +77,4 @@ type RuleFailure struct {
 	Span       SourceSpan
 	Actual     string
 	Target     string
-}
-
-type NodeIdentity struct {
-	originPath string
-	originSpan SourceSpan
-}
-
-type Entry struct {
-	Key                string
-	KeySpan            SourceSpan
-	KeySourcePath      string
-	KeySourceLocations []SourceDiagnosticLocation
-	Value              Value
 }

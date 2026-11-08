@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -36,7 +36,7 @@ type workspaceFolder = protocol.WorkspaceFolder
 func (s *server) readOnlySnapshot() *server {
 	s.mu.Lock()
 	if s.renameIndex == nil {
-		s.renameIndex = &engine.DependentMCLSourceIndex{}
+		s.renameIndex = &project.DependentMCLSourceIndex{}
 	}
 	if s.semanticCache == nil {
 		s.semanticCache = &projectSemanticSnapshotCache{}
@@ -463,7 +463,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params *protoc
 	if params == nil {
 		return nil
 	}
-	changes := make([]engine.DependentMCLFileChange, 0, len(params.Changes))
+	changes := make([]project.DependentMCLFileChange, 0, len(params.Changes))
 	changedURIs := make([]string, 0, len(params.Changes))
 	invalidateRenameIndex := false
 	for _, change := range params.Changes {
@@ -481,7 +481,7 @@ func (s *server) didChangeWatchedFilesLocked(ctx context.Context, params *protoc
 		if filepath.Ext(path) != ".mcl" {
 			continue
 		}
-		changes = append(changes, engine.DependentMCLFileChange{Path: path, Deleted: change.Type == protocol.FileChangeTypeDeleted})
+		changes = append(changes, project.DependentMCLFileChange{Path: path, Deleted: change.Type == protocol.FileChangeTypeDeleted})
 	}
 	if s.watchRegistered && s.renameIndex != nil {
 		if invalidateRenameIndex {

@@ -157,35 +157,6 @@ emit service(labels, ports)
 	}
 }
 
-func TestCollectDependentSourcesWithFilesystem(t *testing.T) {
-	t.Parallel()
-	root := filepath.Join(t.TempDir(), "project")
-	files := newProjectFilesystem(root, fstest.MapFS{
-		projectConfigFileName:        &fstest.MapFile{Data: []byte("")},
-		targetFilename:               &fstest.MapFile{Data: []byte("export let value = 1\n")},
-		"nested/" + importerFilename: &fstest.MapFile{Data: []byte("import \"../target.mcl\" as target\nemit target.value\n")},
-		".mcl/cache/cached.mcl":      &fstest.MapFile{Data: []byte("ignored\n")},
-		"node_modules/module.mcl":    &fstest.MapFile{Data: []byte("ignored\n")},
-	})
-	canonical := filepath.Join(root, targetFilename)
-	sources, err := collectDependentSourcesWithFilesystem(files, canonical, root, []string{root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := sources[canonical], "export let value = 1\n"; got != want {
-		t.Fatalf("target source = %q, want %q", got, want)
-	}
-	importer := filepath.Join(root, "nested", "importer.mcl")
-	if got, want := sources[importer], "import \"../target.mcl\" as target\nemit target.value\n"; got != want {
-		t.Fatalf("importer source = %q, want %q", got, want)
-	}
-	for _, ignored := range []string{filepath.Join(root, ".mcl", "cache", "cached.mcl"), filepath.Join(root, "node_modules", "module.mcl")} {
-		if _, exists := sources[ignored]; exists {
-			t.Errorf("source index included ignored module %q", ignored)
-		}
-	}
-}
-
 func TestDependentMCLSourcesForProjectFS(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(string(filepath.Separator), "virtual-project")
@@ -402,7 +373,8 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	if got := dependent[importer]; got != importSource {
 		t.Fatalf("incremental index source = %q, want %q", got, importSource)
 	}
-	_, got, exists := index.snapshot.Source(importer)
+	snapshot := index.WorkspaceSnapshot()
+	_, got, exists := snapshot.Source(importer)
 	if want := sha256.Sum256([]byte(importSource)); !exists || got != want {
 		t.Fatalf("source hash = %x, want hash of current source %x", got, want)
 	}
@@ -436,7 +408,8 @@ func TestDependentMCLSourceIndexAppliesWatchedChangesAndOverlays(t *testing.T) {
 	if got := dependent[importer]; got != diskSource {
 		t.Fatalf("closed overlay restored %q, want disk source %q", got, diskSource)
 	}
-	_, got, exists = index.snapshot.Source(importer)
+	snapshot = index.WorkspaceSnapshot()
+	_, got, exists = snapshot.Source(importer)
 	if want := sha256.Sum256([]byte(diskSource)); !exists || got != want {
 		t.Fatalf("closed overlay source hash = %x, want hash of disk source %x", got, want)
 	}
@@ -465,7 +438,7 @@ func TestDependentMCLSourceIndexInvalidatesOnDeletedImport(t *testing.T) {
 	if err := index.ApplyFileChanges([]DependentMCLFileChange{{Path: target, Deleted: true}}); err == nil {
 		t.Fatal("deleting an imported module left a valid reverse index")
 	}
-	if index.initialized {
+	if index.WorkspaceSnapshot() != nil {
 		t.Fatal("failed watcher update kept the index marked complete")
 	}
 }

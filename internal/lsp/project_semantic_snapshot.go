@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/languageservice"
 	"github.com/manifest-configuration-language/mcl/internal/project"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
@@ -110,7 +109,7 @@ func (s *server) semanticSnapshotForDocument(ctx context.Context, path, source s
 
 func (s *server) semanticSnapshotForWorkspace(ctx context.Context, target string) (map[string]string, *languageservice.ProjectSemanticSnapshot, error) {
 	if s.renameIndex == nil {
-		s.renameIndex = &engine.DependentMCLSourceIndex{}
+		s.renameIndex = &project.DependentMCLSourceIndex{}
 	}
 	overlays, _ := s.renameOverlays()
 	var sources map[string]string

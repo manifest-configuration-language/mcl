@@ -58,6 +58,7 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 
 	lineStarts := yamlLineStarts(output)
 	lineEnds := yamlLineEnds(output, lineStarts)
+	lineIndex := newYAMLLineIndex(output, lineStarts, lineEnds)
 	decoder := yaml.NewDecoder(bytes.NewReader(output))
 	for index, artifact := range artifacts {
 		var document yaml.Node
@@ -68,7 +69,7 @@ func manifestSourceMap(output []byte, artifacts []indexedArtifact) (ManifestSour
 			return ManifestSourceMap{}, fmt.Errorf("rendered YAML document %d has no root node", index+1)
 		}
 		documentMap := ManifestDocumentSourceMap{Index: index + 1}
-		outputRanges := yamlNodeOutputRanges(output, lineStarts, lineEnds, document.Content[0])
+		outputRanges := yamlNodeOutputRanges(output, lineStarts, lineEnds, lineIndex, document.Content[0])
 		appendManifestValueEntries(&documentMap.Entries, output, lineEnds, outputRanges, document.Content[0], artifact.artifact.Value, "", nil)
 		result.Documents = append(result.Documents, documentMap)
 	}
@@ -193,7 +194,7 @@ type yamlOutputRanges struct {
 	direct map[*yaml.Node]SourceSpan
 }
 
-func yamlNodeOutputRanges(output []byte, lineStarts, lineEnds []int, root *yaml.Node) yamlOutputRanges {
+func yamlNodeOutputRanges(output []byte, lineStarts, lineEnds []int, lineIndex yamlLineIndex, root *yaml.Node) yamlOutputRanges {
 	ranges := yamlOutputRanges{
 		values: make(map[*yaml.Node]SourceSpan),
 		direct: make(map[*yaml.Node]SourceSpan),
@@ -203,7 +204,7 @@ func yamlNodeOutputRanges(output []byte, lineStarts, lineEnds []int, root *yaml.
 		node := order[index]
 		span := SourceSpan{
 			Start: yamlNodeStart(output, lineStarts, lineEnds, node),
-			End:   yamlNodeOutputEnd(output, lineStarts, lineEnds, node),
+			End:   yamlNodeOutputEnd(output, lineStarts, lineEnds, lineIndex, node),
 		}
 		ranges.values[node] = span
 		ranges.direct[node] = span
@@ -269,7 +270,7 @@ func mappingKeyOutputRange(output []byte, lineEnds []int, outputRange SourceSpan
 	return SourceSpan{Start: start, End: start + len(line)}
 }
 
-func yamlNodeOutputEnd(output []byte, lineStarts, lineEnds []int, node *yaml.Node) int {
+func yamlNodeOutputEnd(output []byte, lineStarts, lineEnds []int, lineIndex yamlLineIndex, node *yaml.Node) int {
 	if node.Kind != yaml.ScalarNode {
 		return yamlNodeLineEnd(lineEnds, node.Line)
 	}
@@ -283,7 +284,7 @@ func yamlNodeOutputEnd(output []byte, lineStarts, lineEnds []int, node *yaml.Nod
 	case node.Style&yaml.SingleQuotedStyle != 0:
 		return quotedScalarOutputEnd(output, start, '\'')
 	case node.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0:
-		return blockScalarOutputEnd(output, lineStarts, lineEnds, node, start)
+		return blockScalarOutputEnd(output, lineStarts, lineEnds, lineIndex, node, start)
 	default:
 		return yamlNodeLineEnd(lineEnds, node.Line)
 	}
@@ -311,29 +312,105 @@ func quotedScalarOutputEnd(output []byte, start int, quote byte) int {
 	return start
 }
 
-func blockScalarOutputEnd(output []byte, lineStarts, lineEnds []int, node *yaml.Node, start int) int {
+func blockScalarOutputEnd(output []byte, lineStarts []int, lineEnds []int, lineIndex yamlLineIndex, node *yaml.Node, start int) int {
 	baseIndent := 0
 	for position := lineStarts[node.Line-1]; position < start && output[position] == ' '; position++ {
 		baseIndent++
 	}
 	end := yamlNodeLineEnd(lineEnds, node.Line)
-	for line := node.Line + 1; line <= len(lineStarts); line++ {
-		lineStart := lineStarts[line-1]
-		lineEnd := yamlNodeLineEnd(lineEnds, line)
+	if line := lineIndex.firstNonBlankAtMost(node.Line, baseIndent); line >= 0 {
+		return lineStarts[line-1]
+	}
+	if line := lineIndex.lastNonBlankAbove(node.Line, baseIndent); line >= 0 {
+		end = lineEnds[line]
+	}
+	return end
+}
+
+// yamlLineIndex finds the next nonblank line at or below a block scalar's indentation in logarithmic time.
+type yamlLineIndex struct {
+	base      int
+	minIndent []int
+	maxIndent []int
+	lineCount int
+}
+
+func newYAMLLineIndex(output []byte, lineStarts, lineEnds []int) yamlLineIndex {
+	base := 1
+	for base < len(lineStarts) {
+		base <<= 1
+	}
+	index := yamlLineIndex{base: base, minIndent: make([]int, base*2), maxIndent: make([]int, base*2), lineCount: len(lineStarts)}
+	for i := range index.minIndent {
+		index.minIndent[i] = int(^uint(0) >> 1)
+	}
+	for i := range index.maxIndent {
+		index.maxIndent[i] = -1
+	}
+	for line, start := range lineStarts {
+		end := lineEnds[line]
 		indent := 0
-		for position := lineStart; position < lineEnd && output[position] == ' '; position++ {
+		for position := start; position < end && output[position] == ' '; position++ {
 			indent++
 		}
-		if indent == lineEnd-lineStart {
+		if indent == end-start {
 			continue
 		}
-		if indent <= baseIndent {
-			return lineStart
-		}
-		end = lineEnd
+		index.minIndent[base+line] = indent
+		index.maxIndent[base+line] = indent
 	}
+	for i := base - 1; i > 0; i-- {
+		if index.minIndent[i*2] < index.minIndent[i*2+1] {
+			index.minIndent[i] = index.minIndent[i*2]
+		} else {
+			index.minIndent[i] = index.minIndent[i*2+1]
+		}
+		if index.maxIndent[i*2] > index.maxIndent[i*2+1] {
+			index.maxIndent[i] = index.maxIndent[i*2]
+		} else {
+			index.maxIndent[i] = index.maxIndent[i*2+1]
+		}
+	}
+	return index
+}
 
-	return end
+func (index yamlLineIndex) firstNonBlankAtMost(afterLine, indent int) int {
+	return index.find(1, 0, index.base, afterLine, indent)
+}
+
+func (index yamlLineIndex) find(node, left, right, afterLine, indent int) int {
+	if right <= afterLine || left >= index.lineCount || index.minIndent[node] > indent {
+		return -1
+	}
+	if right-left == 1 {
+		return left + 1
+	}
+	middle := left + (right-left)/2
+	if line := index.find(node*2, left, middle, afterLine, indent); line >= 0 {
+		return line
+	}
+	return index.find(node*2+1, middle, right, afterLine, indent)
+}
+
+func (index yamlLineIndex) lastNonBlankAbove(afterLine, indent int) int {
+	return index.findLast(1, 0, index.base, afterLine, indent)
+}
+
+func (index yamlLineIndex) findLast(node, left, right, afterLine, indent int) int {
+	if right <= afterLine || left >= index.lineCount || index.maxIndent[node] <= indent {
+		return -1
+	}
+	if right-left == 1 {
+		if index.maxIndent[node] > indent {
+			return left
+		}
+		return -1
+	}
+	middle := left + (right-left)/2
+	if line := index.findLast(node*2+1, middle, right, afterLine, indent); line >= 0 {
+		return line
+	}
+	return index.findLast(node*2, left, middle, afterLine, indent)
 }
 
 func yamlNodeStart(output []byte, lineStarts, lineEnds []int, node *yaml.Node) int {

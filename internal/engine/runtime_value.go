@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
+	values "github.com/manifest-configuration-language/mcl/internal/value"
 )
 
 // RuntimeValueは解決済みの値と未評価の型付き式を分離して保持します。Valueにはruntime scalarと実行時metadataを格納し、Map/Listの子要素と未評価式はこの構造体に保持します。
@@ -38,11 +41,12 @@ func (value runtimeValueData) snapshotValue() Value {
 	value = value.cloneMetadata()
 	result := Value{
 		Kind: value.Kind, Span: value.Span, Bool: value.Bool, Text: value.Text,
-		SourcePath: value.SourcePath, SourceLocations: value.SourceLocations, typing: value.Typing,
+		SourcePath: value.SourcePath, SourceLocations: value.SourceLocations,
 		NodeID: value.NodeID,
 	}
+	result.SetTyping(value.Typing)
 	if value.Lifecycle != nil {
-		result.output = &valueOutputMetadata{Lifecycle: value.Lifecycle}
+		result.SetLifecycleMetadata(value.Lifecycle)
 	}
 
 	return result
@@ -50,7 +54,7 @@ func (value runtimeValueData) snapshotValue() Value {
 
 func (value runtimeValueData) cloneMetadata() runtimeValueData {
 	value.SourceLocations = slices.Clone(value.SourceLocations)
-	value.Typing = cloneValueTyping(value.Typing)
+	value.Typing = values.CloneTyping(value.Typing)
 	if value.Lifecycle != nil {
 		lifecycle := *value.Lifecycle
 		value.Lifecycle = &lifecycle
@@ -501,7 +505,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 	if value.Value.NodeID != nil {
 		identity, exists := identities[value.Value.NodeID]
 		if !exists {
-			identity = &NodeIdentity{originPath: value.Value.NodeID.originPath, originSpan: value.Value.NodeID.originSpan}
+			identity = value.Value.NodeID.Clone()
 			identities[value.Value.NodeID] = identity
 		}
 		value.Value.NodeID = identity
@@ -720,72 +724,6 @@ func (state *runtimeValueCloneState) cloneRule(source *RuntimeRule) *RuntimeRule
 	}
 
 	return &rule
-}
-
-func cloneValueTyping(value *ValueTyping) *ValueTyping {
-	if value == nil {
-		return nil
-	}
-	typing := *value
-	typing.TypeProvenance = slices.Clone(value.TypeProvenance)
-	for index := range typing.TypeProvenance {
-		provenance := &typing.TypeProvenance[index]
-		provenance.Type = cloneResolvedType(provenance.Type)
-		if provenance.Types != nil {
-			types := make(map[string]ResolvedType, len(provenance.Types))
-			for name, typeExpression := range provenance.Types {
-				types[name] = cloneResolvedType(typeExpression)
-			}
-			provenance.Types = types
-		}
-	}
-	if value.SchemaProvenance != nil {
-		provenance := *value.SchemaProvenance
-		if provenance.Type != nil {
-			typeExpression := cloneResolvedType(*provenance.Type)
-			provenance.Type = &typeExpression
-		}
-		typing.SchemaProvenance = &provenance
-	}
-
-	return &typing
-}
-
-func cloneResolvedType(typeExpression ResolvedType) ResolvedType {
-	typeExpression.TypeParameters = slices.Clone(typeExpression.TypeParameters)
-	typeExpression.Arguments = cloneResolvedTypes(typeExpression.Arguments)
-	typeExpression.Options = cloneResolvedTypes(typeExpression.Options)
-	typeExpression.Fields = slices.Clone(typeExpression.Fields)
-	for index := range typeExpression.Fields {
-		typeExpression.Fields[index].Type = cloneResolvedType(typeExpression.Fields[index].Type)
-	}
-	if typeExpression.Element != nil {
-		element := cloneResolvedType(*typeExpression.Element)
-		typeExpression.Element = &element
-	}
-	if typeExpression.AdditionalProperties != nil {
-		additionalProperties := cloneResolvedType(*typeExpression.AdditionalProperties)
-		typeExpression.AdditionalProperties = &additionalProperties
-	}
-	typeExpression.Parameters = slices.Clone(typeExpression.Parameters)
-	for index := range typeExpression.Parameters {
-		typeExpression.Parameters[index].Type = cloneResolvedType(typeExpression.Parameters[index].Type)
-	}
-	if typeExpression.ReturnType != nil {
-		returnType := cloneResolvedType(*typeExpression.ReturnType)
-		typeExpression.ReturnType = &returnType
-	}
-
-	return typeExpression
-}
-
-func cloneResolvedTypes(types []ResolvedType) []ResolvedType {
-	cloned := slices.Clone(types)
-	for index := range cloned {
-		cloned[index] = cloneResolvedType(cloned[index])
-	}
-
-	return cloned
 }
 
 func cloneTypedExpression(expression typedExpression) typedExpression {
@@ -1079,7 +1017,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			if isRuntimeCallable(ordered[index]) {
 				continue
 			}
-			parameterType = substituteTypeParameters(parameterType, substitutions)
+			parameterType = semtypes.Substitute(parameterType, substitutions)
 			argumentAnalysis, known := inferRuntimeValueStaticType(ordered[index])
 			matches, compatible := staticTypeAssignable(argumentAnalysis.Type, parameterType, lambdaTypes, lambdaAnalysis)
 			if known && compatible && matches {
@@ -1096,7 +1034,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 		return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, err)
 	}
 	if definition.Typing != nil && definition.Typing.ReturnType != nil {
-		returnType := substituteTypeParameters(*definition.Typing.ReturnType, substitutions)
+		returnType := semtypes.Substitute(*definition.Typing.ReturnType, substitutions)
 		if staticTypeCompatibility(body.resolvedType, returnType, types).isDefinitelyIncompatible() {
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, fmt.Errorf("lambda returns %s, expected %s", staticTypeName(body.resolvedType), staticTypeName(returnType)))
 		}
@@ -1121,7 +1059,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			return RuntimeValue{}, err
 		}
 		if local.Annotation != nil {
-			annotation := substituteTypeParameters(*local.Annotation, substitutions)
+			annotation := semtypes.Substitute(*local.Annotation, substitutions)
 			checkValue := value
 			checkValue.Value.SourcePath = lambda.Value.SourcePath
 			checkValue.Value.Span = local.Span

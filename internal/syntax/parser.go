@@ -203,185 +203,11 @@ func parseASTWithLexedTokens(source string, tokens []sourceToken) (module Module
 			keyword = parser.sourceTokenLexemeText(header.keyword)
 		}
 		lineTokens := parser.sourceTokenLexemesInSpan(SourceSpan{Start: header.keyword.span.End, End: lineToken.span.End})
-		if keyword == "import" && !header.exported {
-			if phase != 0 {
-				return ModuleAST{}, fmt.Errorf("line %d: imports must precede definitions", lineToken.lineNumber)
-			}
-			path, alias, textImport, pathSpan, aliasSpan, err := parser.parseImportLine(lineToken)
-			if err != nil {
-				return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
-			}
-			module.Nodes = append(module.Nodes, &ImportDeclaration{
-				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, aliasSpan)},
-				Name:         alias, ModulePath: path, Text: textImport, NameSpan: aliasSpan, ModulePathSpan: pathSpan,
-			})
-
-			continue
+		handled, err := parser.parseTopLevelDeclaration(lineToken, header, keyword, lineTokens, &module, &phase, &parametersStarted, &definitionsStarted)
+		if err != nil {
+			return ModuleAST{}, err
 		}
-		if keyword == "type" {
-			if parametersStarted {
-				return ModuleAST{}, fmt.Errorf("line %d: type definitions must precede parameters", lineToken.lineNumber)
-			}
-			if phase > 1 {
-				return ModuleAST{}, fmt.Errorf("line %d: type definitions must precede emit statements", lineToken.lineNumber)
-			}
-			phase = 1
-			declaration, err := parser.typeDeclaration(lineToken, header)
-			if err != nil {
-				return ModuleAST{}, err
-			}
-			module.Nodes = append(module.Nodes, declaration)
-
-			continue
-		}
-		if keyword == "param" && !header.exported {
-			if definitionsStarted || phase > 1 {
-				return ModuleAST{}, fmt.Errorf("line %d: parameters must precede definitions and emit statements", lineToken.lineNumber)
-			}
-			phase = 1
-			parametersStarted = true
-			declaration, err := parser.parameterDeclaration(lineToken, lineTokens)
-			if err != nil {
-				return ModuleAST{}, err
-			}
-			module.Nodes = append(module.Nodes, declaration)
-
-			continue
-		}
-		if keyword == "rule" {
-			if phase > 1 {
-				return ModuleAST{}, fmt.Errorf("line %d: rules must precede emit statements", lineToken.lineNumber)
-			}
-			phase = 1
-			definitionsStarted = true
-			name, rule, err := parser.ruleDefinition(lineToken, header)
-			if err != nil {
-				return ModuleAST{}, err
-			}
-			endSpan := lineToken.span
-			if len(rule.Requirements) > 0 {
-				endSpan = rule.Requirements[len(rule.Requirements)-1].Span
-			}
-			module.Nodes = append(module.Nodes, &RuleDeclaration{
-				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, endSpan)},
-				Name:         name, Exported: header.exported, Rule: rule,
-				NameSpan: lineTokens[0].span,
-			})
-
-			continue
-		}
-		if keyword == "fn" {
-			if phase > 1 {
-				return ModuleAST{}, fmt.Errorf("line %d: function definitions must precede emit statements", lineToken.lineNumber)
-			}
-			phase = 1
-			definitionsStarted = true
-			name, definition, err := parser.functionDefinition(lineToken, header)
-			if err != nil {
-				return ModuleAST{}, err
-			}
-			if header.exported && definition.ReturnType == nil {
-				return ModuleAST{}, fmt.Errorf("line %d: exported functions require an explicit return type", lineToken.lineNumber)
-			}
-			module.Nodes = append(module.Nodes, &FunctionDeclaration{
-				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, definition.BodySpan())},
-				Name:         name, Exported: header.exported, Function: definition,
-				NameSpan: lineTokens[0].span,
-			})
-
-			continue
-		}
-		if keyword == "let" {
-			if phase > 1 {
-				return ModuleAST{}, fmt.Errorf("line %d: definitions must precede emit statements", lineToken.lineNumber)
-			}
-			phase = 1
-			definitionsStarted = true
-			if len(lineTokens) == 0 || lineTokens[0].lexeme.kind != sourceLexemeIdentifier {
-				return ModuleAST{}, fmt.Errorf("line %d: expected let name = expression", lineToken.lineNumber)
-			}
-			nameToken := lineTokens[0]
-			name := parser.sourceTokenLexemeText(lineTokens[0])
-			if !identifier(name) {
-				return ModuleAST{}, fmt.Errorf("line %d: invalid name %q", lineToken.lineNumber, name)
-			}
-			parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
-			equalIndex, annotationIndex := -1, -1
-		findLetDelimiter:
-			for index := 1; index < len(lineTokens); index++ {
-				lexeme := lineTokens[index].lexeme
-				if lexeme.kind != sourceLexemeSymbol {
-					continue
-				}
-				switch parser.sourceTokenLexemeText(lineTokens[index]) {
-				case ":":
-					if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 && annotationIndex < 0 {
-						annotationIndex = index
-					}
-				case "=":
-					if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
-						equalIndex = index
-
-						break findLetDelimiter
-					}
-				case "(":
-					parenDepth++
-				case ")":
-					parenDepth--
-				case "[":
-					bracketDepth++
-				case "]":
-					bracketDepth--
-				case "{":
-					braceDepth++
-				case "}":
-					braceDepth--
-				case "<":
-					angleDepth++
-				case ">":
-					angleDepth--
-				}
-			}
-			if equalIndex < 0 {
-				return ModuleAST{}, fmt.Errorf("line %d: expected let name = expression", lineToken.lineNumber)
-			}
-			var annotation *TypeExpr
-			if annotationIndex >= 0 {
-				annotationSpan := parser.trimSourceSpan(SourceSpan{Start: lineTokens[annotationIndex].span.End, End: lineTokens[equalIndex].span.Start})
-				typeSpec, err := parser.parseTypeExpressionSourceSpan(annotationSpan)
-				if err != nil {
-					return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
-				}
-				annotation = &typeSpec
-			}
-			valueSpan := parser.trimSourceSpan(SourceSpan{Start: lineTokens[equalIndex].span.End, End: lineToken.span.End})
-			var parsed parsedValue
-			var err error
-			if valueSpan.Start == valueSpan.End {
-				valueToken, hasValue, lineErr := parser.peekParserToken()
-				if lineErr != nil {
-					return ModuleAST{}, lineErr
-				}
-				if !hasValue || valueToken.indent == 0 {
-					return ModuleAST{}, fmt.Errorf("line %d: expected an indented value", lineToken.lineNumber)
-				}
-				parsed, err = parser.indentedValueWithExpression(lineToken.lineNumber)
-			} else {
-				continued, continueErr := parser.continuedExpressionSourceSpan(lineToken, valueSpan, 0)
-				err = continueErr
-				if err == nil {
-					parsed, err = parser.valueExpressionWithContinued(continued, 0, lineToken.lineNumber)
-				}
-			}
-			if err != nil {
-				return ModuleAST{}, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
-			}
-			module.Nodes = append(module.Nodes, &LetDeclaration{
-				NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: parser.statementSpan(lineToken, parser.expressionTreeSpan(parsed.Expression))},
-				Name:         name, Exported: header.exported, Expression: parsed.Expression,
-				Annotation: annotation, NameSpan: nameToken.span,
-			})
-
+		if handled {
 			continue
 		}
 		if keyword == "emit" && !header.exported {
@@ -569,6 +395,191 @@ func parseASTWithLexedTokens(source string, tokens []sourceToken) (module Module
 	}
 
 	return module, nil
+}
+
+func (p *Parser) parseTopLevelDeclaration(lineToken sourceToken, header topLevelHeader, keyword string, lineTokens []sourceToken, module *ModuleAST, phase *int, parametersStarted, definitionsStarted *bool) (bool, error) {
+	if keyword == "import" && !header.exported {
+		if *phase != 0 {
+			return true, fmt.Errorf("line %d: imports must precede definitions", lineToken.lineNumber)
+		}
+		path, alias, textImport, pathSpan, aliasSpan, err := p.parseImportLine(lineToken)
+		if err != nil {
+			return true, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+		}
+		module.Nodes = append(module.Nodes, &ImportDeclaration{
+			NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: p.statementSpan(lineToken, aliasSpan)},
+			Name:         alias, ModulePath: path, Text: textImport, NameSpan: aliasSpan, ModulePathSpan: pathSpan,
+		})
+
+		return true, nil
+	}
+	if keyword == "type" {
+		if *parametersStarted {
+			return true, fmt.Errorf("line %d: type definitions must precede parameters", lineToken.lineNumber)
+		}
+		if *phase > 1 {
+			return true, fmt.Errorf("line %d: type definitions must precede emit statements", lineToken.lineNumber)
+		}
+		*phase = 1
+		declaration, err := p.typeDeclaration(lineToken, header)
+		if err != nil {
+			return true, err
+		}
+		module.Nodes = append(module.Nodes, declaration)
+
+		return true, nil
+	}
+	if keyword == "param" && !header.exported {
+		if *definitionsStarted || *phase > 1 {
+			return true, fmt.Errorf("line %d: parameters must precede definitions and emit statements", lineToken.lineNumber)
+		}
+		*phase = 1
+		*parametersStarted = true
+		declaration, err := p.parameterDeclaration(lineToken, lineTokens)
+		if err != nil {
+			return true, err
+		}
+		module.Nodes = append(module.Nodes, declaration)
+
+		return true, nil
+	}
+	if keyword == "rule" {
+		if *phase > 1 {
+			return true, fmt.Errorf("line %d: rules must precede emit statements", lineToken.lineNumber)
+		}
+		*phase = 1
+		*definitionsStarted = true
+		name, rule, err := p.ruleDefinition(lineToken, header)
+		if err != nil {
+			return true, err
+		}
+		endSpan := lineToken.span
+		if len(rule.Requirements) > 0 {
+			endSpan = rule.Requirements[len(rule.Requirements)-1].Span
+		}
+		module.Nodes = append(module.Nodes, &RuleDeclaration{
+			NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: p.statementSpan(lineToken, endSpan)},
+			Name:         name, Exported: header.exported, Rule: rule,
+			NameSpan: lineTokens[0].span,
+		})
+
+		return true, nil
+	}
+	if keyword == "fn" {
+		if *phase > 1 {
+			return true, fmt.Errorf("line %d: function definitions must precede emit statements", lineToken.lineNumber)
+		}
+		*phase = 1
+		*definitionsStarted = true
+		name, definition, err := p.functionDefinition(lineToken, header)
+		if err != nil {
+			return true, err
+		}
+		if header.exported && definition.ReturnType == nil {
+			return true, fmt.Errorf("line %d: exported functions require an explicit return type", lineToken.lineNumber)
+		}
+		module.Nodes = append(module.Nodes, &FunctionDeclaration{
+			NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: p.statementSpan(lineToken, definition.BodySpan())},
+			Name:         name, Exported: header.exported, Function: definition,
+			NameSpan: lineTokens[0].span,
+		})
+
+		return true, nil
+	}
+	if keyword == "let" {
+		if *phase > 1 {
+			return true, fmt.Errorf("line %d: definitions must precede emit statements", lineToken.lineNumber)
+		}
+		*phase = 1
+		*definitionsStarted = true
+		if len(lineTokens) == 0 || lineTokens[0].lexeme.kind != sourceLexemeIdentifier {
+			return true, fmt.Errorf("line %d: expected let name = expression", lineToken.lineNumber)
+		}
+		nameToken := lineTokens[0]
+		name := p.sourceTokenLexemeText(lineTokens[0])
+		if !identifier(name) {
+			return true, fmt.Errorf("line %d: invalid name %q", lineToken.lineNumber, name)
+		}
+		parenDepth, bracketDepth, braceDepth, angleDepth := 0, 0, 0, 0
+		equalIndex, annotationIndex := -1, -1
+	findLetDelimiter:
+		for index := 1; index < len(lineTokens); index++ {
+			lexeme := lineTokens[index].lexeme
+			if lexeme.kind != sourceLexemeSymbol {
+				continue
+			}
+			switch p.sourceTokenLexemeText(lineTokens[index]) {
+			case ":":
+				if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 && annotationIndex < 0 {
+					annotationIndex = index
+				}
+			case "=":
+				if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && angleDepth == 0 {
+					equalIndex = index
+
+					break findLetDelimiter
+				}
+			case "(":
+				parenDepth++
+			case ")":
+				parenDepth--
+			case "[":
+				bracketDepth++
+			case "]":
+				bracketDepth--
+			case "{":
+				braceDepth++
+			case "}":
+				braceDepth--
+			case "<":
+				angleDepth++
+			case ">":
+				angleDepth--
+			}
+		}
+		if equalIndex < 0 {
+			return true, fmt.Errorf("line %d: expected let name = expression", lineToken.lineNumber)
+		}
+		var annotation *TypeExpr
+		if annotationIndex >= 0 {
+			annotationSpan := p.trimSourceSpan(SourceSpan{Start: lineTokens[annotationIndex].span.End, End: lineTokens[equalIndex].span.Start})
+			typeSpec, err := p.parseTypeExpressionSourceSpan(annotationSpan)
+			if err != nil {
+				return true, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+			}
+			annotation = &typeSpec
+		}
+		valueSpan := p.trimSourceSpan(SourceSpan{Start: lineTokens[equalIndex].span.End, End: lineToken.span.End})
+		var parsed parsedValue
+		var err error
+		if valueSpan.Start == valueSpan.End {
+			valueToken, hasValue, lineErr := p.peekParserToken()
+			if lineErr != nil {
+				return true, lineErr
+			}
+			if !hasValue || valueToken.indent == 0 {
+				return true, fmt.Errorf("line %d: expected an indented value", lineToken.lineNumber)
+			}
+			parsed, err = p.indentedValueWithExpression(lineToken.lineNumber)
+		} else {
+			continued, continueErr := p.continuedExpressionSourceSpan(lineToken, valueSpan, 0)
+			err = continueErr
+			if err == nil {
+				parsed, err = p.valueExpressionWithContinued(continued, 0, lineToken.lineNumber)
+			}
+		}
+		if err != nil {
+			return true, fmt.Errorf("line %d: %w", lineToken.lineNumber, err)
+		}
+		module.Nodes = append(module.Nodes, &LetDeclaration{
+			NodeMetadata: NodeMetadata{Line: lineToken.lineNumber, Span: p.statementSpan(lineToken, p.expressionTreeSpan(parsed.Expression))},
+			Name:         name, Exported: header.exported, Expression: parsed.Expression,
+			Annotation: annotation, NameSpan: nameToken.span,
+		})
+
+		return true, nil
+	}
+	return false, nil
 }
 
 func (p *Parser) typeDeclaration(lineToken sourceToken, header topLevelHeader) (*TypeDeclaration, error) {

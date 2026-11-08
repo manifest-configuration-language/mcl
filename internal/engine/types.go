@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/manifest-configuration-language/mcl/internal/dependency"
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	jsonschemakind "github.com/santhosh-tekuri/jsonschema/v6/kind"
 )
@@ -1019,41 +1020,5 @@ func instantiateTypeAlias(reference, definition ResolvedType) (ResolvedType, err
 	}
 	definition.TypeParameters = nil
 
-	return substituteTypeParameters(definition, bindings), nil
-}
-
-func substituteTypeParameters(typeExpr ResolvedType, bindings map[string]ResolvedType) ResolvedType {
-	if replacement, exists := bindings[typeExpr.Name]; exists && len(typeExpr.Arguments) == 0 {
-		return replacement
-	}
-	typeExpr.Options = slices.Clone(typeExpr.Options)
-	for index := range typeExpr.Options {
-		typeExpr.Options[index] = substituteTypeParameters(typeExpr.Options[index], bindings)
-	}
-	typeExpr.Arguments = slices.Clone(typeExpr.Arguments)
-	for index := range typeExpr.Arguments {
-		typeExpr.Arguments[index] = substituteTypeParameters(typeExpr.Arguments[index], bindings)
-	}
-	if typeExpr.Element != nil {
-		element := substituteTypeParameters(*typeExpr.Element, bindings)
-		typeExpr.Element = &element
-	}
-	typeExpr.Fields = slices.Clone(typeExpr.Fields)
-	for index := range typeExpr.Fields {
-		typeExpr.Fields[index].Type = substituteTypeParameters(typeExpr.Fields[index].Type, bindings)
-	}
-	if typeExpr.AdditionalProperties != nil {
-		additionalProperties := substituteTypeParameters(*typeExpr.AdditionalProperties, bindings)
-		typeExpr.AdditionalProperties = &additionalProperties
-	}
-	typeExpr.Parameters = slices.Clone(typeExpr.Parameters)
-	for index := range typeExpr.Parameters {
-		typeExpr.Parameters[index].Type = substituteTypeParameters(typeExpr.Parameters[index].Type, bindings)
-	}
-	if typeExpr.ReturnType != nil {
-		returnType := substituteTypeParameters(*typeExpr.ReturnType, bindings)
-		typeExpr.ReturnType = &returnType
-	}
-
-	return typeExpr
+	return semtypes.Substitute(definition, bindings), nil
 }

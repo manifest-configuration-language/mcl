@@ -23,12 +23,7 @@ func explainCommand(ctx context.Context, filePath, apiVersion, kind, name, names
 		return err
 	}
 
-	var bundle mcl.Bundle
-	if operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, filePath, operation, parameters, evaluationOptions)
-	} else {
-		bundle, err = mcl.EvaluateFileWithParametersAndOptionsContext(ctx, filePath, parameters, evaluationOptions)
-	}
+	bundle, err := evaluateBundle(ctx, filePath, operation, parameters, evaluationOptions)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 )
 
 func inferStaticExprCall(expression Expr, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
@@ -158,7 +160,7 @@ func inferStaticFunctionCall(calleeAnalysis TypeAnalysis, callArguments []Expr, 
 			}
 			returnType := specialized.resolvedType
 			if calleeType.ReturnType != nil {
-				expectedReturnType := substituteTypeParameters(*calleeType.ReturnType, typeSubstitutions)
+				expectedReturnType := semtypes.Substitute(*calleeType.ReturnType, typeSubstitutions)
 				matches, compatible := staticTypeAssignable(returnType, expectedReturnType, types)
 				if compatible && !matches {
 					return ResolvedType{}, false, fmt.Errorf("lambda returns %s, declared %s", staticTypeName(returnType), staticTypeName(expectedReturnType))
@@ -179,7 +181,7 @@ func inferStaticFunctionCall(calleeAnalysis TypeAnalysis, callArguments []Expr, 
 		}
 		if known {
 			if calleeType.ReturnType != nil {
-				expectedReturnType := substituteTypeParameters(*calleeType.ReturnType, typeSubstitutions)
+				expectedReturnType := semtypes.Substitute(*calleeType.ReturnType, typeSubstitutions)
 				matches, compatible := staticTypeAssignable(returnType, expectedReturnType, types)
 				if compatible && !matches {
 					return ResolvedType{}, false, fmt.Errorf("lambda returns %s, declared %s", staticTypeName(returnType), staticTypeName(expectedReturnType))
@@ -200,7 +202,7 @@ func inferStaticFunctionCall(calleeAnalysis TypeAnalysis, callArguments []Expr, 
 			typeSubstitutions[parameter.Type.Name] = argumentTypes[index]
 		}
 	}
-	returnType = substituteTypeParameters(returnType, typeSubstitutions)
+	returnType = semtypes.Substitute(returnType, typeSubstitutions)
 
 	return returnType, true, nil
 }

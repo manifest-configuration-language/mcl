@@ -2,53 +2,34 @@ package engine
 
 import (
 	"errors"
+
+	"github.com/manifest-configuration-language/mcl/internal/source"
 )
 
-// SourceDiagnosticLocation は診断に関連するソース範囲です。
-type SourceDiagnosticLocation struct {
-	Path         string
-	Span         SourceSpan
-	Message      string
-	Origin       SourceOriginKind
-	Multiplicity SourceOriginMultiplicity
-	Occurrences  int
-}
+type SourceDiagnosticLocation = source.DiagnosticLocation
 
-// SourceOriginKindは出力値とソース範囲の関係を示します。
-type SourceOriginKind string
+type SourceOriginKind = source.OriginKind
 
 const (
-	SourceOriginMCL             SourceOriginKind = "mcl"
-	SourceOriginMCLOverlayBase  SourceOriginKind = "mcl-overlay-base"
-	SourceOriginMCLOverlayPatch SourceOriginKind = "mcl-overlay-patch"
-	SourceOriginKustomizeInput  SourceOriginKind = "kustomize-input"
-	SourceOriginKustomizeChange SourceOriginKind = "kustomize-transformation"
-	SourceOriginHelmExpression  SourceOriginKind = "helm-template-expression"
-	SourceOriginHelmBranch      SourceOriginKind = "helm-template-branch"
-	SourceOriginHelmFallback    SourceOriginKind = "helm-template-fallback"
+	SourceOriginMCL             = source.OriginMCL
+	SourceOriginMCLOverlayBase  = source.OriginMCLOverlayBase
+	SourceOriginMCLOverlayPatch = source.OriginMCLOverlayPatch
+	SourceOriginKustomizeInput  = source.OriginKustomizeInput
+	SourceOriginKustomizeChange = source.OriginKustomizeChange
+	SourceOriginHelmExpression  = source.OriginHelmExpression
+	SourceOriginHelmBranch      = source.OriginHelmBranch
+	SourceOriginHelmFallback    = source.OriginHelmFallback
 )
 
-// SourceOriginMultiplicityはソース範囲と出力範囲の対応の一意性を示します。
-type SourceOriginMultiplicity string
+type SourceOriginMultiplicity = source.OriginMultiplicity
 
 const (
-	SourceOriginUnique    SourceOriginMultiplicity = "unique"
-	SourceOriginRepeated  SourceOriginMultiplicity = "repeated"
-	SourceOriginAmbiguous SourceOriginMultiplicity = "ambiguous"
+	SourceOriginUnique    = source.OriginUnique
+	SourceOriginRepeated  = source.OriginRepeated
+	SourceOriginAmbiguous = source.OriginAmbiguous
 )
 
-// SourceDiagnosticError はソース上の位置を持つ評価診断です。
-type SourceDiagnosticError struct {
-	Path              string
-	Code              string
-	Message           string
-	TypeName          string
-	SchemaPath        string
-	Span              SourceSpan
-	Related           []SourceDiagnosticLocation
-	OmitSourceSnippet bool
-	Cause             error
-}
+type SourceDiagnosticError = source.DiagnosticError
 
 type typeDiagnosticError struct {
 	cause error
@@ -73,40 +54,13 @@ func typeDiagnostic(err error) error {
 	return typeDiagnosticError{cause: err}
 }
 
-func (err SourceDiagnosticError) Error() string {
-	return err.Message
-}
-
-func (err SourceDiagnosticError) Unwrap() error {
-	return err.Cause
-}
-
-// DisplayMessage は診断の内容と型情報を表示用の文章にまとめます。
-func (err SourceDiagnosticError) DisplayMessage() string {
-	message := err.Message
-	if err.TypeName != "" {
-		message += "\nType: " + err.TypeName
-	}
-	if err.SchemaPath != "" {
-		message += "\nSchema: " + err.SchemaPath
-	}
-
-	return message
-}
-
 // SourceDiagnosticFromError はエラー列からソース診断を取得します。
 func SourceDiagnosticFromError(err error) (SourceDiagnosticError, bool) {
-	return errors.AsType[SourceDiagnosticError](err)
+	return source.FromError(err)
 }
 
 func sourceDiagnosticPath(path string, err error) error {
-	diagnostic, ok := SourceDiagnosticFromError(err)
-	if !ok || diagnostic.Path != "" {
-		return err
-	}
-	diagnostic.Path = path
-
-	return diagnostic
+	return source.WithPath(path, err)
 }
 
 func sourceDiagnostic(path string, span SourceSpan, err error) error {

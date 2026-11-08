@@ -18,19 +18,6 @@ type Bundle struct {
 	resourceDescriptors []KubernetesResourceDescriptor
 }
 
-type Artifact struct {
-	Value     Value
-	Lifecycle Lifecycle
-}
-
-type Lifecycle struct {
-	Events   []string
-	Priority int
-	Cleanup  []string
-	Wait     bool
-	Origin   string
-}
-
 type functionBudget struct {
 	//nolint:containedctx // Contextは評価中に再帰する関数呼び出し間で共有します。
 	ctx        context.Context

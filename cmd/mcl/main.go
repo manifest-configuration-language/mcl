@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/manifest-configuration-language/mcl/internal/app"
 	"github.com/manifest-configuration-language/mcl/internal/engine"
 	"github.com/manifest-configuration-language/mcl/internal/lsp"
 	"github.com/manifest-configuration-language/mcl/internal/sourceindex"
@@ -633,11 +634,7 @@ func printLintDiagnostic(path string, source []byte, index *sourceindex.Index, d
 
 func diffCommand(ctx context.Context, beforePath, afterPath, operation string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
 	evaluate := func(path string) (mcl.Bundle, error) {
-		if operation != "" {
-			return mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, evaluationOptions)
-		}
-
-		return mcl.EvaluateFileWithParametersAndOptionsContext(ctx, path, parameters, evaluationOptions)
+		return evaluateBundle(ctx, path, operation, parameters, evaluationOptions)
 	}
 	before, err := evaluate(beforePath)
 	if err != nil {
@@ -678,18 +675,27 @@ func diffCommand(ctx context.Context, beforePath, afterPath, operation string, p
 }
 
 func checkCommand(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) error {
-	var bundle mcl.Bundle
-	var err error
-	if operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, evaluationOptions)
-	} else {
-		bundle, err = mcl.EvaluateFileWithParametersAndOptionsContext(ctx, path, parameters, evaluationOptions)
-	}
+	_, err := (app.EvaluationService{}).Run(ctx, app.EvaluationRequest{
+		Input: app.FileEvaluationInput{Path: path}, Operation: app.EvaluationOperationCheck,
+		LifecycleOperation: operation, Parameters: parameters, Options: evaluationOptions,
+	})
 	if err != nil {
 		return err
 	}
 
-	return mcl.ValidateBundleOutput(bundle)
+	return nil
+}
+
+func evaluateBundle(ctx context.Context, path, operation string, parameters map[string]jsontext.Value, evaluationOptions mcl.EvaluationOptions) (mcl.Bundle, error) {
+	result, err := (app.EvaluationService{}).Run(ctx, app.EvaluationRequest{
+		Input: app.FileEvaluationInput{Path: path}, Operation: app.EvaluationOperationBundle,
+		LifecycleOperation: operation, Parameters: parameters, Options: evaluationOptions,
+	})
+	if err != nil {
+		return mcl.Bundle{}, err
+	}
+
+	return result.Bundle, nil
 }
 
 func renderCommand(ctx context.Context, path, phase, operation, outputDir, format string, parameters map[string]jsontext.Value, outputWriter io.Writer, evaluationOptions mcl.EvaluationOptions) error {
@@ -705,13 +711,7 @@ func renderCommand(ctx context.Context, path, phase, operation, outputDir, forma
 	if format != "yaml" && format != "json" {
 		return fmt.Errorf("unsupported output format %q", format)
 	}
-	var bundle mcl.Bundle
-	var err error
-	if operation != "" {
-		bundle, err = mcl.EvaluateFileForOperationWithParametersAndOptionsContext(ctx, path, operation, parameters, evaluationOptions)
-	} else {
-		bundle, err = mcl.EvaluateFileWithParametersAndOptionsContext(ctx, path, parameters, evaluationOptions)
-	}
+	bundle, err := evaluateBundle(ctx, path, operation, parameters, evaluationOptions)
 	if err != nil {
 		return err
 	}

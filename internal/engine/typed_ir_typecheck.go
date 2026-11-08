@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 )
 
 func typedExpressionFromExpr(expression Expr, state *EvaluationState) (typedExpression, bool, error) {
@@ -745,7 +747,7 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 		if option.ReturnType == nil {
 			continue
 		}
-		returnType := substituteTypeParameters(*option.ReturnType, typeSubstitutions[index])
+		returnType := semtypes.Substitute(*option.ReturnType, typeSubstitutions[index])
 		if !staticTypeCompatibility(returnType, inferred, context.types).isAssignable() {
 			return typedExpression{}, false
 		}

@@ -1,9 +1,8 @@
 package syntax
 
-type SourceSpan struct {
-	Start int
-	End   int
-}
+import "github.com/manifest-configuration-language/mcl/internal/source"
+
+type SourceSpan = source.Span
 
 type ExprCallDelimiters struct {
 	Open  SourceSpan

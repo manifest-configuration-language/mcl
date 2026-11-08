@@ -628,10 +628,11 @@ func unresolvedRuntimeNodeLocations(reference *runtimeReference) []SourceDiagnos
 	locations := make([]SourceDiagnosticLocation, 0, len(reference.Targets))
 	labels := []string{"Referenced Node definition", "Referenced child Node definition"}
 	for index, identity := range reference.Targets {
-		if identity == nil || identity.originPath == "" || identity.originSpan.End <= identity.originSpan.Start {
+		originPath, originSpan := identity.Origin()
+		if originPath == "" || originSpan.End <= originSpan.Start {
 			continue
 		}
-		locations = append(locations, SourceDiagnosticLocation{Path: identity.originPath, Span: identity.originSpan, Message: labels[min(index, len(labels)-1)]})
+		locations = append(locations, SourceDiagnosticLocation{Path: originPath, Span: originSpan, Message: labels[min(index, len(labels)-1)]})
 	}
 
 	return locations

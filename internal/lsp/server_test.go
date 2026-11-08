@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/manifest-configuration-language/mcl/internal/engine"
+	"github.com/manifest-configuration-language/mcl/internal/project"
 	"github.com/manifest-configuration-language/mcl/internal/syntax"
 	"github.com/manifest-configuration-language/mcl/pkg/mcl"
 	"go.lsp.dev/protocol"
@@ -713,7 +713,7 @@ func TestWatchedFileChangesUpdateTheExportRenameIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := &engine.DependentMCLSourceIndex{}
+	index := &project.DependentMCLSourceIndex{}
 	if _, err := index.Sources(target, []string{root}, nil); err != nil {
 		t.Fatal(err)
 	}
