@@ -13,39 +13,6 @@ import (
 	jsonschemakind "github.com/santhosh-tekuri/jsonschema/v6/kind"
 )
 
-type ResolvedType struct {
-	Span                 SourceSpan
-	Name                 string
-	StringLiteral        string
-	StringLiteralKnown   bool
-	TypeParameters       []string
-	Arguments            []ResolvedType
-	SchemaPath           string
-	SchemaID             SchemaID
-	ScopeID              TypeScopeID
-	Element              *ResolvedType
-	Options              []ResolvedType
-	Fields               []TypeField
-	OpenRecord           bool
-	AdditionalProperties *ResolvedType
-	Optional             bool
-	Parameters           []FunctionTypeParameter
-	ReturnType           *ResolvedType
-}
-
-type FunctionTypeParameter struct {
-	Name     string
-	Type     ResolvedType
-	Optional bool
-}
-
-type TypeField struct {
-	Name     string
-	NameSpan SourceSpan
-	Type     ResolvedType
-	Optional bool
-}
-
 type runtimeTypeFailure struct {
 	Expected string
 	Actual   string

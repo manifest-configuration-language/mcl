@@ -8,10 +8,6 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-type SchemaID string
-
-type TypeScopeID string
-
 type TypeAnalysis struct {
 	Type        ResolvedType
 	Facts       TypeAnalysisFacts
