@@ -133,3 +133,11 @@ func (context typedEvaluationContext) captureRuntimeScope() map[string]RuntimeVa
 
 	return maps.Clone(context.runtimeEnv)
 }
+
+func (context typedEvaluationContext) captureLambdaScope() (map[string]RuntimeValue, *runtimeFrame) {
+	if context.frame != nil {
+		return nil, context.frame
+	}
+
+	return maps.Clone(context.runtimeEnv), nil
+}

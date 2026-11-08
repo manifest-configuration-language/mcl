@@ -373,7 +373,7 @@ func compileFunctionDeclaration(declaration *FunctionDeclaration, state *Evaluat
 	bodyType := *signature.Type.ReturnType
 	bodyType.Span = SourceSpan{}
 	bodyContext := typedEvaluationContext{
-		runtimeEnv: state.Environment, staticTypes: bindings, types: state.Types, stack: state.Stack,
+		runtimeEnv: state.Environment, frame: state.RuntimeFrame, staticTypes: bindings, types: state.Types, stack: state.Stack,
 		budget: state.Budget, sourcePath: declaration.SourcePath, module: state.Module,
 	}
 	if err := builtinKubernetesStaticExpressionDiagnostic(definition.Expression, bodyContext); err != nil {

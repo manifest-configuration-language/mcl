@@ -974,7 +974,7 @@ func evaluateRuntimeRuleRequirement(expression typedExpression, state *Evaluatio
 	}
 	leftIsLiteral := isTypedScalarLiteral(*expression.left)
 	context := typedEvaluationContext{
-		runtimeEnv: state.Environment, staticTypes: state.StaticTypes, types: state.Types,
+		runtimeEnv: state.Environment, frame: state.RuntimeFrame, staticTypes: state.StaticTypes, types: state.Types,
 		stack: state.Stack, budget: state.Budget, sourcePath: state.SourcePath, module: state.Module,
 	}
 	if err := runtimeAllocationBudgetOf(state).consume(1); err != nil {

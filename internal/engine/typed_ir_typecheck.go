@@ -43,7 +43,7 @@ func typedExpressionFromKnownAnalysisWithStaticTypes(expression Expr, state *Eva
 
 func typedEvaluationContextFromState(state *EvaluationState) typedEvaluationContext {
 	return typedEvaluationContext{
-		runtimeEnv: state.Environment, staticTypes: state.StaticTypes, types: state.Types,
+		runtimeEnv: state.Environment, frame: state.RuntimeFrame, staticTypes: state.StaticTypes, types: state.Types,
 		stack: state.Stack, budget: state.Budget, sourcePath: state.SourcePath, module: state.Module,
 		analysis: newTypedAnalysisCache(),
 	}

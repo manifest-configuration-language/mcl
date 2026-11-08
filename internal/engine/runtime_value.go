@@ -87,6 +87,7 @@ type typedLambda struct {
 	Locals         []typedLocalBinding
 	Body           typedExpression
 	Scope          map[string]RuntimeValue
+	Frame          *runtimeFrame
 	ScopeSpan      SourceSpan
 	Typing         *LambdaTyping
 	ModuleContext  *ModuleContext
@@ -364,6 +365,7 @@ func cloneRuntimeValueGraphWithBudget(value RuntimeValue, identities map[*NodeId
 		values:     make(map[*RuntimeValue]*RuntimeValue),
 		deferred:   make(map[*typedContinuation]*typedContinuation),
 		lambdas:    make(map[*typedLambda]*typedLambda),
+		frames:     make(map[*runtimeFrame]*runtimeFrame),
 		rules:      make(map[*RuntimeRule]*RuntimeRule),
 	}
 	cloned := state.clone(value)
@@ -438,6 +440,7 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 			for _, captured := range value.Lambda.Scope {
 				count += runtimeValueGraphSizeActive(captured, active)
 			}
+			count += runtimeFrameGraphSizeActive(value.Lambda.Frame, active)
 		}
 	}
 	if value.Rule != nil {
@@ -447,6 +450,19 @@ func runtimeValueGraphSizeActive(value RuntimeValue, active map[any]bool) int {
 				count += runtimeValueGraphSizeActive(captured, active)
 			}
 		}
+	}
+
+	return count
+}
+
+func runtimeFrameGraphSizeActive(frame *runtimeFrame, active map[any]bool) int {
+	if frame == nil || active[frame] {
+		return 0
+	}
+	active[frame] = true
+	count := runtimeFrameGraphSizeActive(frame.parent, active)
+	for _, value := range frame.bindings {
+		count += runtimeValueGraphSizeActive(value, active)
 	}
 
 	return count
@@ -476,6 +492,7 @@ type runtimeValueCloneState struct {
 	values     map[*RuntimeValue]*RuntimeValue
 	deferred   map[*typedContinuation]*typedContinuation
 	lambdas    map[*typedLambda]*typedLambda
+	frames     map[*runtimeFrame]*runtimeFrame
 	rules      map[*RuntimeRule]*RuntimeRule
 }
 
@@ -630,6 +647,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 			for name, captured := range lambda.Scope {
 				lambda.Scope[name] = state.clone(captured)
 			}
+			lambda.Frame = state.cloneFrame(lambda.Frame)
 			if lambda.Typing != nil {
 				typing := *lambda.Typing
 				typing.ParameterTypes = slices.Clone(typing.ParameterTypes)
@@ -660,6 +678,23 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 	}
 
 	return value
+}
+
+func (state *runtimeValueCloneState) cloneFrame(frame *runtimeFrame) *runtimeFrame {
+	if frame == nil {
+		return nil
+	}
+	if cloned, exists := state.frames[frame]; exists {
+		return cloned
+	}
+	cloned := &runtimeFrame{bindings: make(map[string]RuntimeValue, len(frame.bindings))}
+	state.frames[frame] = cloned
+	cloned.parent = state.cloneFrame(frame.parent)
+	for name, value := range frame.bindings {
+		cloned.bindings[name] = state.clone(value)
+	}
+
+	return cloned
 }
 
 func (state *runtimeValueCloneState) cloneRule(source *RuntimeRule) *RuntimeRule {
@@ -841,6 +876,7 @@ type EvaluationSession struct {
 type EvaluationState struct {
 	*EvaluationSession
 	Environment      map[string]RuntimeValue
+	RuntimeFrame     *runtimeFrame
 	StaticTypes      map[string]TypeAnalysis
 	Parameters       map[string]jsontext.Value
 	ParameterSources map[string]ParameterSource
@@ -914,6 +950,7 @@ func evaluateRuntimeExpression(expression typedExpression, state *EvaluationStat
 	}
 	value, err := expression.evaluate(typedEvaluationContext{
 		runtimeEnv:  state.Environment,
+		frame:       state.RuntimeFrame,
 		staticTypes: state.StaticTypes,
 		types:       state.Types,
 		stack:       state.Stack,
@@ -939,10 +976,12 @@ func evaluateTypedContinuation(continuation *typedContinuation, state *Evaluatio
 		session.Allocations = &runtimeAllocationBudget{}
 	}
 	environment := state.Environment
+	frame := state.RuntimeFrame
 	if continuation.Scope != nil {
 		environment = continuation.Scope
+		frame = nil
 	}
-	return evaluateTypedExpressionRuntimeInScope(continuation.Expression, state, environment, nil)
+	return evaluateTypedExpressionRuntimeInScope(continuation.Expression, state, environment, frame)
 }
 
 func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string, state *EvaluationState) (RuntimeValue, error) {
@@ -992,9 +1031,15 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	if environment == nil {
 		environment = make(map[string]RuntimeValue)
 	}
+	lambdaState := *state
+	lambdaState.Environment = environment
+	lambdaState.RuntimeFrame = definition.Frame
 	for index, parameter := range definition.Parameters {
 		if assigned[index] {
 			environment[parameter] = ordered[index]
+			if lambdaState.RuntimeFrame != nil {
+				lambdaState.RuntimeFrame = lambdaState.RuntimeFrame.childBinding(parameter, ordered[index])
+			}
 
 			continue
 		}
@@ -1006,17 +1051,20 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 		if err != nil {
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, defaultExpression.span, err)
 		}
-		defaultValue, err := evaluateTypedExpressionRuntime(defaultExpression, &EvaluationState{
-			EvaluationSession: state.EvaluationSession,
-			Environment:       environment, StaticTypes: definition.Typing.TypeScope, Types: lambdaTypes,
-			Stack:      state.Stack,
-			SourcePath: lambda.Value.SourcePath, Module: definition.ModuleContext,
-		})
+		defaultState := lambdaState
+		defaultState.StaticTypes = definition.Typing.TypeScope
+		defaultState.Types = lambdaTypes
+		defaultState.SourcePath = lambda.Value.SourcePath
+		defaultState.Module = definition.ModuleContext
+		defaultValue, err := evaluateTypedExpressionRuntime(defaultExpression, &defaultState)
 		if err != nil {
 			return RuntimeValue{}, err
 		}
 		ordered[index] = defaultValue
 		environment[parameter] = defaultValue
+		if lambdaState.RuntimeFrame != nil {
+			lambdaState.RuntimeFrame = lambdaState.RuntimeFrame.childBinding(parameter, defaultValue)
+		}
 	}
 	if definition.Typing != nil {
 		for index, parameterType := range definition.Typing.ParameterTypes {
@@ -1051,8 +1099,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	for index, parameter := range definition.Parameters {
 		environment[parameter] = ordered[index]
 	}
-	childState := *state
-	childState.Environment = environment
+	childState := lambdaState
 	childState.SourcePath = lambda.Value.SourcePath
 	childState.Types = lambdaTypes
 	if definition.ModuleContext != nil {
@@ -1078,6 +1125,9 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			}
 		}
 		childState.Environment[local.Name] = value
+		if childState.RuntimeFrame != nil {
+			childState.RuntimeFrame = childState.RuntimeFrame.childBinding(local.Name, value)
+		}
 	}
 
 	return evaluateTypedExpressionRuntime(body, &childState)
@@ -1121,7 +1171,7 @@ func evaluateTypedExpressionRuntime(expression typedExpression, state *Evaluatio
 	if state == nil {
 		return RuntimeValue{}, errors.New("evaluation state is nil")
 	}
-	return evaluateTypedExpressionRuntimeInScope(expression, state, state.Environment, nil)
+	return evaluateTypedExpressionRuntimeInScope(expression, state, state.Environment, state.RuntimeFrame)
 }
 
 func evaluateTypedExpressionRuntimeInScope(expression typedExpression, state *EvaluationState, environment map[string]RuntimeValue, frame *runtimeFrame) (RuntimeValue, error) {

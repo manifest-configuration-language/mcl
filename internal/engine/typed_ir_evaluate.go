@@ -90,7 +90,7 @@ func (expression typedExpression) evaluateCall(context typedEvaluationContext) (
 	}
 	state := &EvaluationState{
 		EvaluationSession: &EvaluationSession{Budget: context.budget, Allocations: context.allocations},
-		Environment:       context.runtimeEnv, StaticTypes: context.staticTypes, Types: context.types,
+		Environment:       context.runtimeEnv, RuntimeFrame: context.frame, StaticTypes: context.staticTypes, Types: context.types,
 		Stack:      context.stack,
 		SourcePath: context.sourcePath, Module: context.module,
 	}
@@ -408,12 +408,13 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 		if expression.operand == nil || expression.lambdaTyping == nil {
 			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid Lambda expression"))
 		}
+		scope, frame := context.captureLambdaScope()
 
 		return RuntimeValue{
 			Value: runtimeValueData{Kind: Lambda, Span: expression.span, SourcePath: context.sourcePath},
 			Lambda: &typedLambda{
 				Parameters: slices.Clone(expression.parameters), ParameterSpans: slices.Clone(expression.paramSpans),
-				Body: *expression.operand, Scope: context.captureRuntimeScope(), ScopeSpan: expression.span,
+				Body: *expression.operand, Scope: scope, Frame: frame, ScopeSpan: expression.span,
 				Typing: expression.lambdaTyping, ModuleContext: context.module,
 			},
 		}, nil
