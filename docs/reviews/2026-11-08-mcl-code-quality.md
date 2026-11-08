@@ -60,6 +60,8 @@ Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣
 
 `typedExpression.evaluate()`のBinary式分岐を`evaluateBinary()`へ移しました。左辺・右辺の評価順、論理演算の短絡、遅延継続が捕捉する式とscope、Source metadata、診断を維持し、budgetとallocationの消費は共通dispatchに残しています。
 
+残るConditional、List、Mapの分岐は、複数caseにまたがる制御責務を共有していないため、それぞれを個別helperへ移す変更は行いません。式caseごとの機械的な関数化を避け、遅延継続や独立した評価段階を持つ`call`、`for`、`binary`の境界だけを切り出します。
+
 これらの変更後に`go test ./... -count=1`が成功しました。Typed Unitの変更では、Unit共有とbody IDの保持を確認する回帰テストを追加しました。ベンチマークは実施していないため、速度向上の数値は示しません。
 
 Project index、Filesystem、workspace scope、import解決を`internal/project`へ移しました。LSPとLanguage Serviceは`project` APIを直接利用し、`internal/engine`には既存の評価器・呼び出し元向けのaliasと薄い委譲を残しています。評価器の`moduleGraph`はAST依存、import循環検出、モジュール評価を持つため、Project indexとは分離してengineに残します。
