@@ -24,6 +24,10 @@ Typed IR解析キャッシュでは、`inferType()`のcache hitが`TypeAnalysisF
 
 Typed IR評価器では、`typedExpression.evaluate()`の`typedExpressionCall` caseから呼出し全体を`evaluateCall()`へ移しました。式評価のbudget・allocation chargeはdispatch前に一度だけ行い、callee、引数、Rule、Deferred Call、Lambda、標準関数の評価順とSource Location処理は移動前のままです。複数の責務を一度に動かさず、call経路を独立して読める最小単位として切り出しています。
 
+Module indexでは、完全snapshot再構築のimport解決を既存の`resolveModuleDependencies()`へ統合しました。import先のソートと重複除去を含め、更新時と完全再構築時で同じ依存一覧を生成します。source hashだけを根拠にimport解決を省略する変更は行っていません。
+
+CLIでは`render`、`check`、`explain`、`diff`、`update`、`fetch`がそれぞれ登録・取得していたparameter、parameter-file、nondeterministic-output flagを共通関数へ集約しました。各コマンドのflag名・説明・既定値・登録順とparameter parsingの診断は維持します。Kubernetes version flagは既存の独立登録を維持しています。
+
 Runtime scopeでは、parent frameを辿る読み取り専用`runtimeFrame`を追加し、即時`for`反復と遅延`for`解決で各反復の全環境Map cloneをbinding一件のchild frameへ置き換えました。Referenceとoptional ReferenceはFrameを先に検索します。LambdaはFrameをそのまま捕捉し、呼び出し時に引数とlocalをchild frameとして追加するため、反復ごとのLambdaで外側の全環境Mapを複製しません。runtime value graphをcloneするときは、Frameをmemoizeしてbinding値を既存のclone状態へ通し、Node Identityのclone semanticsを保ちます。Deferred値と動的Map keyは生成時にFrameを既存のMap scopeへflattenするため、これらの継続にFrame pointerは残りません。ローカル測定benchmarkはまだ追加していないため、速度向上の数値は主張しません。
 
 ## 今回変更しない項目
@@ -42,4 +46,4 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call評価の抽出、`for`反復とLambda invocationのFrameを実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。残る評価器の責務整理、CLIフラグ、Dependency Lockは、既存の所有権・診断・コマンドごとの挙動を保つ変更単位を段階的に確認します。
+Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有、Typed IR type-only cache hit、Typed IR call評価の抽出、`for`反復とLambda invocationのFrame、Module依存解決ヘルパーの共有、CLI評価入力flagの共通化を実装しました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Deferred値と動的Map keyは引き続きMap scopeを捕捉します。Frameは`for`とLambdaの実行範囲で利用し、全runtime scopeを置き換える変更は未実施です。残る評価器の責務整理とDependency Lockは、既存の所有権・診断・モードごとの挙動を保つ変更単位を段階的に確認します。

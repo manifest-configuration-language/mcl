@@ -351,17 +351,10 @@ func (index *DependentMCLSourceIndex) sourcesForFilesystemWithContext(ctx contex
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		graph := moduleGraph{root: root, files: filesystem}
-		resolvedDependencies := make([]string, 0)
-		imports, err := graph.imports(path, module)
+		resolvedDependencies, err := resolveModuleDependencies(path, module, root, filesystem)
 		if err != nil {
 			return nil, err
 		}
-		for _, imported := range imports {
-			resolvedDependencies = append(resolvedDependencies, imported.path)
-		}
-		slices.Sort(resolvedDependencies)
-		resolvedDependencies = slices.Compact(resolvedDependencies)
 		if slices.Equal(dependencies[path], resolvedDependencies) {
 			continue
 		}
