@@ -58,6 +58,8 @@ Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣
 
 遅延`for`継続は、bodyの再帰式を継続値に直接保持する方式から、`typedUnit`と`ExprID`で参照する方式へ変更しました。Unitは遅延継続を作るときにbodyを一度だけ複製し、RuntimeValue graphのcloneでは同じUnitを共有します。現行評価器にはUnitから従来の再帰式を取得するadapterを残しています。Unitの中身はまだbody全体の再帰式であり、Typed IR全体をarena化した状態ではありません。
 
+`typedExpression.evaluate()`のBinary式分岐を`evaluateBinary()`へ移しました。左辺・右辺の評価順、論理演算の短絡、遅延継続が捕捉する式とscope、Source metadata、診断を維持し、budgetとallocationの消費は共通dispatchに残しています。
+
 これらの変更後に`go test ./... -count=1`が成功しました。Typed Unitの変更では、Unit共有とbody IDの保持を確認する回帰テストを追加しました。ベンチマークは実施していないため、速度向上の数値は示しません。
 
 Project index、Filesystem、workspace scope、import解決を`internal/project`へ移しました。LSPとLanguage Serviceは`project` APIを直接利用し、`internal/engine`には既存の評価器・呼び出し元向けのaliasと薄い委譲を残しています。評価器の`moduleGraph`はAST依存、import循環検出、モジュール評価を持つため、Project indexとは分離してengineに残します。
