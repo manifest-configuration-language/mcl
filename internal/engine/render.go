@@ -326,13 +326,14 @@ func appendJSONValue(output *bytes.Buffer, value Value) error {
 }
 
 type kubernetesResourceIdentity struct {
-	group        string
-	kind         string
-	namespace    string
-	rawNamespace string
-	name         string
-	resourceName string
-	scope        kubernetesResourceScope
+	group         string
+	kind          string
+	namespace     string
+	rawNamespace  string
+	name          string
+	resourceName  string
+	scope         kubernetesResourceScope
+	generatedName bool
 }
 
 const defaultKubernetesNamespace = "default"
@@ -340,7 +341,7 @@ const defaultKubernetesNamespace = "default"
 func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesResourceScopeIndex) error {
 	seen := make(map[kubernetesResourceIdentity]int, len(artifacts))
 	for index, artifact := range artifacts {
-		identity, isResource, err := validatedKubernetesResourceIdentityOf(artifact.Value)
+		identity, isResource, err := validatedKubernetesResourceIdentityOfWithGeneratedName(artifact.Value, lifecycleAllowsGeneratedName(artifact.Lifecycle))
 		if err != nil {
 			return fmt.Errorf("artifact %d: %w", index+1, err)
 		}
@@ -372,6 +373,9 @@ func rejectDuplicateKubernetesResources(artifacts []Artifact, scopes kubernetesR
 			identity.namespace = ""
 		case kubernetesResourceUnknown:
 			// scope不明のリソースは宣言されたnamespaceで重複を判定する。
+		}
+		if identity.generatedName {
+			continue
 		}
 		if previousIndex, exists := seen[identity]; exists {
 			resource := identity.resourceName
@@ -418,6 +422,10 @@ func normalizeKubernetesResourceIdentity(identity kubernetesResourceIdentity) ku
 }
 
 func validatedKubernetesResourceIdentityOf(value Value) (kubernetesResourceIdentity, bool, error) {
+	return validatedKubernetesResourceIdentityOfWithGeneratedName(value, false)
+}
+
+func validatedKubernetesResourceIdentityOfWithGeneratedName(value Value, allowGeneratedName bool) (kubernetesResourceIdentity, bool, error) {
 	value = nodeContents(value)
 	if value.Kind != Map {
 		return kubernetesResourceIdentity{}, false, nil
@@ -437,9 +445,16 @@ func validatedKubernetesResourceIdentityOf(value Value) (kubernetesResourceIdent
 	if !hasMetadata || nodeContents(metadata).Kind != Map {
 		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource metadata must be a map containing name")
 	}
-	name, hasName := mapValue(nodeContents(metadata), "name")
+	metadata = nodeContents(metadata)
+	name, hasName := mapValue(metadata, "name")
+	generatedName := false
 	if !hasName || name.Kind != String || name.Text == "" {
-		return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource metadata.name must be a non-empty string")
+		prefix, hasPrefix := mapValue(metadata, "generateName")
+		if !allowGeneratedName || !hasPrefix || prefix.Kind != String || prefix.Text == "" {
+			return kubernetesResourceIdentity{}, true, errors.New("kubernetes resource metadata.name must be a non-empty string")
+		}
+		name = prefix
+		generatedName = true
 	}
 	group, version, hasGroup := strings.Cut(apiVersion.Text, "/")
 	if !hasGroup {
@@ -460,11 +475,12 @@ func validatedKubernetesResourceIdentityOf(value Value) (kubernetesResourceIdent
 	}
 
 	identity := kubernetesResourceIdentity{
-		group:        group,
-		kind:         kind.Text,
-		namespace:    namespace.Text,
-		rawNamespace: namespace.Text,
-		name:         name.Text,
+		group:         group,
+		kind:          kind.Text,
+		namespace:     namespace.Text,
+		rawNamespace:  namespace.Text,
+		name:          name.Text,
+		generatedName: generatedName,
 	}
 	if descriptor, known := builtinKubernetesResourceDescriptors[kubernetesResourceKey{group: identity.group, kind: identity.kind}]; known {
 		identity.resourceName = descriptor.resourceName
@@ -472,6 +488,21 @@ func validatedKubernetesResourceIdentityOf(value Value) (kubernetesResourceIdent
 	}
 
 	return identity, true, nil
+}
+
+func lifecycleAllowsGeneratedName(lifecycle Lifecycle) bool {
+	if len(lifecycle.Events) == 0 {
+		return false
+	}
+	for _, event := range lifecycle.Events {
+		switch event {
+		case phaseBeforeCreate, phaseAfterCreate, phaseBeforeUpdate, phaseAfterUpdate, phaseBeforeDelete, phaseAfterDelete, phaseBeforeRollback, phaseAfterRollback, phaseVerify:
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 func validLifecycleEvent(event string) bool {

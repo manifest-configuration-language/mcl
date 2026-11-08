@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[customResourceDefinitionKey]struct{}, kubernetesVersion string) error {
+func validateBuiltinKubernetesResource(value RuntimeValue, lifecycle Lifecycle, customSchemas map[customResourceDefinitionKey]struct{}, kubernetesVersion string) error {
 	value = runtimeMapContents(value)
 	if value.Kind() != Map {
 		return nil
@@ -24,7 +24,7 @@ func validateBuiltinKubernetesResource(value RuntimeValue, customSchemas map[cus
 	if err != nil {
 		return fmt.Errorf("convert Kubernetes resource: %w", err)
 	}
-	identity, isResource, err := validatedKubernetesResourceIdentityOf(converted)
+	identity, isResource, err := validatedKubernetesResourceIdentityOfWithGeneratedName(converted, lifecycleAllowsGeneratedName(lifecycle))
 	if err != nil {
 		return fmt.Errorf("invalid Kubernetes resource identity: %w", err)
 	}

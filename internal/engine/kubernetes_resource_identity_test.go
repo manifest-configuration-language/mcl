@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -165,4 +166,92 @@ func TestResolveKubernetesResourceIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKubernetesResourceIdentityResolverMatchesBundleResolver(t *testing.T) {
+	t.Parallel()
+
+	bundle := Bundle{resourceDescriptors: []KubernetesResourceDescriptor{
+		{APIGroup: testResourceGroup, Kind: "NamespacedWidget", ResourceName: "namespacedwidgets", Scope: KubernetesResourceScopeNamespaced},
+	}}
+	resolver, err := NewKubernetesResourceIdentityResolver(bundle)
+	if err != nil {
+		t.Fatalf("NewKubernetesResourceIdentityResolver() error = %v", err)
+	}
+	want, err := ResolveKubernetesResourceIdentity(bundle, testResourceGroup+"/v1alpha1", "NamespacedWidget", "", testResourceName, testWorkloadNS)
+	if err != nil {
+		t.Fatalf("ResolveKubernetesResourceIdentity() error = %v", err)
+	}
+	got, err := resolver.Resolve(testResourceGroup+"/v1alpha1", "NamespacedWidget", "", testResourceName, testWorkloadNS)
+	if err != nil {
+		t.Fatalf("resolver.Resolve() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolver.Resolve() = %+v, want %+v", got, want)
+	}
+}
+
+func TestGeneratedNameRequiresHookLifecycle(t *testing.T) {
+	t.Parallel()
+
+	resource := Value{Kind: Map, Map: []Entry{
+		{Key: "apiVersion", Value: Value{Kind: String, Text: "v1"}},
+		{Key: "kind", Value: Value{Kind: String, Text: testConfigMapKind}},
+		{Key: metadataFieldName, Value: Value{Kind: Map, Map: []Entry{
+			{Key: "generateName", Value: Value{Kind: String, Text: "migration-"}},
+		}}},
+	}}
+	if _, isResource, err := validatedKubernetesResourceIdentityOf(resource); err == nil || !isResource {
+		t.Fatalf("validatedKubernetesResourceIdentityOf() = %t, %v; want missing-name error", isResource, err)
+	}
+
+	identity, isResource, err := validatedKubernetesResourceIdentityOfWithGeneratedName(resource, true)
+	if err != nil || !isResource || !identity.generatedName || identity.name != "migration-" {
+		t.Fatalf("hook generated-name identity = %+v, %t, %v", identity, isResource, err)
+	}
+	artifact := Artifact{Value: resource, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}}
+	if err := rejectDuplicateKubernetesResources([]Artifact{artifact, artifact}, builtinKubernetesResourceDescriptors); err != nil {
+		t.Fatalf("rejectDuplicateKubernetesResources() rejected distinct generated Hook names: %v", err)
+	}
+}
+
+func BenchmarkKubernetesResourceIdentityResolver(b *testing.B) {
+	for _, count := range []int{100, 1_000, 5_000} {
+		bundle := bundleWithConfigMaps(count)
+		b.Run(fmt.Sprintf("resources=%d/rebuild", count), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := ResolveKubernetesResourceIdentity(bundle, "v1", testConfigMapKind, "", "resource-0", testWorkloadNS); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("resources=%d/reuse", count), func(b *testing.B) {
+			resolver, err := NewKubernetesResourceIdentityResolver(bundle)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := resolver.Resolve("v1", testConfigMapKind, "", "resource-0", testWorkloadNS); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func bundleWithConfigMaps(count int) Bundle {
+	bundle := Bundle{Artifacts: make([]Artifact, count)}
+	for index := range count {
+		bundle.Artifacts[index] = Artifact{Value: Value{Kind: Map, Map: []Entry{
+			{Key: "apiVersion", Value: Value{Kind: String, Text: "v1"}},
+			{Key: "kind", Value: Value{Kind: String, Text: testConfigMapKind}},
+			{Key: metadataFieldName, Value: Value{Kind: Map, Map: []Entry{
+				{Key: "name", Value: Value{Kind: String, Text: fmt.Sprintf("resource-%d", index)}},
+			}}},
+		}}}
+	}
+
+	return bundle
 }

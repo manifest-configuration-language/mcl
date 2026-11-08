@@ -31,6 +31,11 @@ type KubernetesResourceIdentity struct {
 	Scope     KubernetesResourceScope
 }
 
+// KubernetesResourceIdentityResolver resolves identities using a snapshot of a Bundle's CRDs and descriptors.
+type KubernetesResourceIdentityResolver struct {
+	scopes kubernetesResourceScopeIndex
+}
+
 // KubernetesResourceDescriptorはResourceのAPI identityとnamespace scopeを表します。
 type KubernetesResourceDescriptor struct {
 	APIGroup     string
@@ -188,8 +193,26 @@ func KubernetesResourceScopeForBundle(bundle Bundle, catalog KubernetesResourceC
 	return KubernetesResourceScopeNamespaced, true, nil
 }
 
-// ResolveKubernetesResourceIdentity normalizes a resource identity using its Bundle's CRDs and the Argo CD destination namespace.
-func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespace, name, destinationNamespace string) (KubernetesResourceIdentity, error) {
+// NewKubernetesResourceIdentityResolver builds the Bundle's Kubernetes scope index once for repeated lookups.
+func NewKubernetesResourceIdentityResolver(bundle Bundle) (*KubernetesResourceIdentityResolver, error) {
+	return NewKubernetesResourceIdentityResolverWithCatalog(bundle, DefaultKubernetesResourceCatalog())
+}
+
+// NewKubernetesResourceIdentityResolverWithCatalog builds a reusable resolver with an explicit Resource catalog.
+func NewKubernetesResourceIdentityResolverWithCatalog(bundle Bundle, catalog KubernetesResourceCatalog) (*KubernetesResourceIdentityResolver, error) {
+	scopes, err := newKubernetesResourceScopeIndexForBundle(bundle, catalog)
+	if err != nil {
+		return nil, err
+	}
+
+	return &KubernetesResourceIdentityResolver{scopes: scopes}, nil
+}
+
+// Resolve normalizes one resource identity using the resolver's immutable Bundle snapshot.
+func (resolver *KubernetesResourceIdentityResolver) Resolve(apiVersion, kind, namespace, name, destinationNamespace string) (KubernetesResourceIdentity, error) {
+	if resolver == nil || resolver.scopes == nil {
+		return KubernetesResourceIdentity{}, errors.New("Kubernetes Resource identity resolver is nil")
+	}
 	if kind == "" || name == "" {
 		return KubernetesResourceIdentity{}, errors.New("kubernetes resource kind and name must not be empty")
 	}
@@ -210,11 +233,7 @@ func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespac
 		return KubernetesResourceIdentity{}, fmt.Errorf("invalid Kubernetes resource kind %q", kind)
 	}
 
-	index, err := newKubernetesResourceScopeIndexForBundle(bundle, DefaultKubernetesResourceCatalog())
-	if err != nil {
-		return KubernetesResourceIdentity{}, err
-	}
-	descriptor, known := index[kubernetesResourceKey{group: group, kind: kind}]
+	descriptor, known := resolver.scopes[kubernetesResourceKey{group: group, kind: kind}]
 	scope := KubernetesResourceScopeUnknown
 	if known {
 		if descriptor.scope == kubernetesResourceCluster {
@@ -239,6 +258,16 @@ func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespac
 	}
 
 	return KubernetesResourceIdentity{APIGroup: group, Kind: kind, Namespace: namespace, Name: name, Scope: scope}, nil
+}
+
+// ResolveKubernetesResourceIdentity normalizes a resource identity using its Bundle's CRDs and the Argo CD destination namespace.
+func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespace, name, destinationNamespace string) (KubernetesResourceIdentity, error) {
+	resolver, err := NewKubernetesResourceIdentityResolver(bundle)
+	if err != nil {
+		return KubernetesResourceIdentity{}, err
+	}
+
+	return resolver.Resolve(apiVersion, kind, namespace, name, destinationNamespace)
 }
 
 func kubernetesResourceKeyName(key kubernetesResourceKey) string {

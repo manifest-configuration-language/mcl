@@ -78,6 +78,8 @@ const KubernetesResourceScopeUnknown = engine.KubernetesResourceScopeUnknown
 
 type KubernetesResourceIdentity = engine.KubernetesResourceIdentity
 
+type KubernetesResourceIdentityResolver = engine.KubernetesResourceIdentityResolver
+
 type KubernetesResourceDescriptor = engine.KubernetesResourceDescriptor
 
 type KubernetesResourceCatalog = engine.KubernetesResourceCatalog
@@ -90,6 +92,16 @@ func DefaultKubernetesResourceCatalog() KubernetesResourceCatalog {
 // NewKubernetesResourceCatalogは現在の組み込みCatalogに追加Descriptorを設定して返します。
 func NewKubernetesResourceCatalog(additionalResources ...KubernetesResourceDescriptor) KubernetesResourceCatalog {
 	return engine.NewKubernetesResourceCatalog(additionalResources...)
+}
+
+// NewKubernetesResourceIdentityResolver builds a reusable identity resolver for one Bundle snapshot.
+func NewKubernetesResourceIdentityResolver(bundle Bundle) (*KubernetesResourceIdentityResolver, error) {
+	return engine.NewKubernetesResourceIdentityResolver(bundle)
+}
+
+// NewKubernetesResourceIdentityResolverWithCatalog builds a reusable resolver with an explicit Resource catalog.
+func NewKubernetesResourceIdentityResolverWithCatalog(bundle Bundle, catalog KubernetesResourceCatalog) (*KubernetesResourceIdentityResolver, error) {
+	return engine.NewKubernetesResourceIdentityResolverWithCatalog(bundle, catalog)
 }
 
 // ResolveKubernetesResourceIdentity applies Kubernetes scope and Argo CD namespace defaults to a resource identity.
