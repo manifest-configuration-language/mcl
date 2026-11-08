@@ -20,6 +20,8 @@ Language Serviceのproject FS経路では、読み込んだsource一式を`Proje
 
 LSPでは、document versionと`stateGeneration`に対応するsource集合を保持し、同じsource内容のASTと`SemanticIndex`をリクエスト間で共有します。編集中documentのoverlay、import閉包、workspaceの完全snapshotを別々に保持し、通常の補完やDefinitionが無関係な不正sourceに依存しないようにします。workspace-wideなReferencesとRenameでは、source indexが返した対象モジュールとtransitive importerの範囲を維持しながら、完全snapshotの解析結果を再利用します。source indexのrefreshでソース内容、import関係、root、探索範囲が一致する場合は、既存の不変`WorkspaceSnapshot`を再利用します。
 
+Typed IR解析キャッシュでは、`inferType()`のcache hitが`TypeAnalysisFacts`全体を複製せず、利用する`ResolvedType`だけを独立コピーして返します。`inferAnalysis()`のcache hitとmiss保存で行うFactsのコピーは維持します。参照式の解析結果は静的bindingの型・Factsを共有することがあり、Typed IR特殊化はFactsのmap・sliceを書き換えるため、キャッシュ全体を不変化するまではこの境界を外せません。
+
 ## 今回変更しない項目
 
 Dependency Module indexの差分更新は、import解決がファイル探索結果にも依存するため、source hashだけで再解決を省く設計にはしません。現状は重複処理を共通化する余地を追加調査し、依存解決のキャッシュキーと無効化条件が明確になるまで挙動を変更しません。
@@ -32,8 +34,8 @@ Dependency Lockの3モードは、キャッシュ破損時の回復動作、外�
 
 ## 検証
 
-前回の変更では`go test ./internal/syntax`、`go test ./internal/engine -count=1`、`go test ./...`が成功しました。今回のLSP Snapshot接続では`go test ./internal/lsp ./internal/languageservice ./internal/engine -count=1`と、最終確認の`go test ./... -count=1`が成功しました。性能改善幅は専用benchmarkを比較するまで数値として主張しません。
+前回の変更では`go test ./internal/syntax`、`go test ./internal/engine -count=1`、`go test ./...`が成功しました。LSP Snapshot接続では`go test ./internal/lsp ./internal/languageservice ./internal/engine -count=1`と、最終確認の`go test ./... -count=1`が成功しました。Typed IR cache変更では`go test ./internal/engine -count=1`が成功しました。Apple M5 Pro / darwin arm64でnested Map/Listを使うcache-hit benchmarkを比較すると、type-only hitは`601.7 ns/op`・`1568 B/op`・`4 allocs/op`、Facts込みhitは`2120 ns/op`・`5520 B/op`・`13 allocs/op`でした。この値は機種とGoバージョンに依存する一回のローカル測定です。
 
 ## 状態
 
-Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言を実装しました。Language ServiceとLSPでは、request generationごとにASTとSemanticIndexを再利用するSnapshot経路を追加し、workspace-wideな参照・Rename検索でも従来の対象source範囲と結果順序を保ちながら既存解析を共有します。Typed IR解析キャッシュ、Typed IR評価器、CLIフラグ、Dependency Lockは、既存の所有権・診断・コマンドごとの挙動を保つ具体的な変更単位を確認してから着手します。
+Source Map、CRD判定、Formatter、Schema補完、Parserの`type`・`param`宣言、LSP Snapshot共有を実装しました。Typed IR解析キャッシュでは`inferType()` cache hit時の不要なFacts複製を除きました。`inferAnalysis()`のcopyはbinding aliasと型特殊化の所有権を維持するため残しています。Typed IR評価器、CLIフラグ、Dependency Lockは、既存の所有権・診断・コマンドごとの挙動を保つ具体的な変更単位を確認してから着手します。

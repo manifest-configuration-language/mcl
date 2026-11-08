@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -34,20 +33,82 @@ func TestTypedAnalysisCacheIsScopedToStaticBindings(t *testing.T) {
 	}
 }
 
+func TestTypedAnalysisCacheTypeHitDoesNotCopyOrExposeFacts(t *testing.T) {
+	t.Parallel()
+
+	module, err := ParseAST("let value =\n  name: \"api\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expression := module.Nodes[0].(*LetDeclaration).Expression
+	context := typedEvaluationContext{analysis: newTypedAnalysisCache()}
+	if _, known, err := context.inferAnalysis(expression); err != nil || !known {
+		t.Fatalf("inferAnalysis() = (known %t, error %v), want known analysis", known, err)
+	}
+	typeResult, known, err := context.inferType(expression)
+	if err != nil || !known || len(typeResult.Fields) != 1 {
+		t.Fatalf("cached inferType() = (%#v, %t, %v), want one-field type", typeResult, known, err)
+	}
+	typeResult.Fields[0].Name = "mutated"
+
+	analysis, known, err := context.inferAnalysis(expression)
+	if err != nil || !known {
+		t.Fatalf("cached inferAnalysis() = (known %t, error %v), want known analysis", known, err)
+	}
+	if got := analysis.Type.Fields[0].Name; got != "name" {
+		t.Errorf("cached analysis type field = %q, want name", got)
+	}
+	if got := analysis.Facts.Fields["name"].ConstantString; got != "api" {
+		t.Errorf("cached field constant = %q, want api", got)
+	}
+}
+
 func BenchmarkTypedAnalysisCache(b *testing.B) {
-	const elements = 128
-	source := "let value = " + strings.Repeat("1 + ", elements) + "1\n"
+	const source = `let value =
+  spec:
+    endpoints:
+      - name: "web"
+        targetPort: 8080
+      - name: "admin"
+        targetPort: 8081
+`
 	module, err := ParseAST(source)
 	if err != nil {
 		b.Fatal(err)
 	}
 	expression := module.Nodes[0].(*LetDeclaration).Expression
 	state := &EvaluationState{
-		Environment: make(map[string]RuntimeValue),
-		StaticTypes: make(map[string]TypeAnalysis),
-		Types:       make(map[string]ResolvedType),
-		Stack:       make(map[string]bool),
+		EvaluationSession: &EvaluationSession{},
+		Environment:       make(map[string]RuntimeValue),
+		StaticTypes:       make(map[string]TypeAnalysis),
+		Types:             make(map[string]ResolvedType),
+		Stack:             make(map[string]bool),
 	}
+
+	b.Run("cache-hit-type", func(b *testing.B) {
+		b.ReportAllocs()
+		context := typedEvaluationContextFromState(state)
+		if _, _, err := context.inferAnalysis(expression); err != nil {
+			b.Fatal(err)
+		}
+		for b.Loop() {
+			if _, _, err := context.inferType(expression); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("cache-hit-analysis", func(b *testing.B) {
+		b.ReportAllocs()
+		context := typedEvaluationContextFromState(state)
+		if _, _, err := context.inferAnalysis(expression); err != nil {
+			b.Fatal(err)
+		}
+		for b.Loop() {
+			if _, _, err := context.inferAnalysis(expression); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 
 	b.Run("shared-analysis", func(b *testing.B) {
 		b.ReportAllocs()

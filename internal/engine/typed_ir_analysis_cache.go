@@ -36,6 +36,11 @@ func (context typedEvaluationContext) inferAnalysis(expression Expr) (TypeAnalys
 }
 
 func (context typedEvaluationContext) inferType(expression Expr) (ResolvedType, bool, error) {
+	cache := context.analysisCache()
+	if result, exists := cache.results[expression]; exists {
+		return cloneResolvedType(result.analysis.Type), result.known, result.err
+	}
+
 	analysis, known, err := context.inferAnalysis(expression)
 
 	return analysis.Type, known, err
