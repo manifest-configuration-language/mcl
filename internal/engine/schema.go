@@ -52,16 +52,16 @@ func compileSchema(source, projectRoot, modulePath string, dependencies *depende
 		if filepath.IsAbs(source) {
 			return nil, errors.New("schema() accepts only local relative paths or HTTPS URLs")
 		}
-		path := filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(source))
-		path, err := files.resolveReadPath(path)
+		requestedPath := filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(source))
+		path, err := files.resolveReadPath(requestedPath)
 		if err != nil {
-			if errors.Is(err, safepath.ErrOutsideRoot) || !pathWithin(projectRoot, filepath.Clean(filepath.Join(filepath.Dir(modulePath), filepath.FromSlash(source)))) {
+			if errors.Is(err, safepath.ErrOutsideRoot) || !pathWithin(projectRoot, filepath.Clean(requestedPath)) {
 				return nil, fmt.Errorf("schema %q escapes the project directory", source)
 			}
 
 			return nil, fmt.Errorf("resolve Schema %q: %w", source, err)
 		}
-		data, err = files.readLimitedFile(path)
+		data, err = files.readLimitedFile(requestedPath)
 		if err != nil {
 			return nil, fmt.Errorf("read Schema %q: %w", source, err)
 		}
@@ -103,12 +103,13 @@ func (loader *projectSchemaLoader) Load(source string) (any, error) {
 	if parsed.Scheme != "file" || parsed.Host != "" {
 		return nil, fmt.Errorf("schema reference %q is not a local file", source)
 	}
-	path, err := loader.resolveFileURLPath(filepath.FromSlash(parsed.Path))
+	requestedPath := filepath.FromSlash(parsed.Path)
+	path, err := loader.resolveFileURLPath(requestedPath)
 	if err != nil {
 		return nil, err
 	}
 	files := projectFilesystemFor(loader.root, []*projectFilesystem{loader.files})
-	data, err := files.readLimitedFile(path)
+	data, err := files.readLimitedFile(requestedPath)
 	if err != nil {
 		return nil, err
 	}

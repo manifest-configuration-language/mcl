@@ -209,20 +209,9 @@ func (filesystem *Filesystem) ResolveModuleImport(importer, modulePath string) (
 
 			return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
 		}
-		current := filesystem.root
-		prefix := ""
-		for component := range strings.SplitSeq(joined, "/") {
-			prefix = path.Join(prefix, component)
-			current = filepath.Join(current, filepath.FromSlash(component))
-			info, err := os.Lstat(current)
-			if err != nil {
-				return "", fmt.Errorf("inspect module path %q: %w", modulePath, err)
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				filesystem.RecordRead(prefix)
-			}
+		if err := filesystem.recordReadPath(joined); err != nil {
+			return "", fmt.Errorf("inspect module path %q: %w", modulePath, err)
 		}
-		filesystem.RecordRead(joined)
 
 		return canonical, nil
 	}
@@ -235,6 +224,10 @@ func (filesystem *Filesystem) ResolveModuleImport(importer, modulePath string) (
 
 // ReadLimitedFile reads an absolute project file up to maximum bytes.
 func (filesystem *Filesystem) ReadLimitedFile(filename string, maximum int64) ([]byte, error) {
+	requestedRelative, err := filesystem.RelativePath(filename)
+	if err != nil {
+		return nil, err
+	}
 	resolved, err := filesystem.ResolveReadPath(filename)
 	if err != nil {
 		return nil, err
@@ -247,6 +240,9 @@ func (filesystem *Filesystem) ReadLimitedFile(filename string, maximum int64) ([
 	if err != nil {
 		return nil, err
 	}
+	if err := filesystem.recordReadPath(requestedRelative); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
 	data, readErr := io.ReadAll(io.LimitReader(file, maximum+1))
 	closeErr := file.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
@@ -257,6 +253,27 @@ func (filesystem *Filesystem) ReadLimitedFile(filename string, maximum int64) ([
 	}
 
 	return data, nil
+}
+
+func (filesystem *Filesystem) recordReadPath(name string) error {
+	if filesystem.osBacked {
+		current := filesystem.root
+		prefix := ""
+		for component := range strings.SplitSeq(name, "/") {
+			prefix = path.Join(prefix, component)
+			current = filepath.Join(current, filepath.FromSlash(component))
+			info, err := os.Lstat(current)
+			if err != nil {
+				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				filesystem.RecordRead(prefix)
+			}
+		}
+	}
+	filesystem.RecordRead(name)
+
+	return nil
 }
 
 func validProjectPath(name string) bool {
