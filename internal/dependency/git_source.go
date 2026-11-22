@@ -84,6 +84,12 @@ type GitCredentials struct {
 type GitCredentialProvider func(context.Context, string) (GitCredentials, error)
 
 func fetchGitTreeWithCredentials(ctx context.Context, source, revision, directory string, provider GitCredentialProvider) ([]byte, error) {
+	return fetchGitTreeWithCredentialsUsingTransportFactory(ctx, source, revision, directory, provider, func() (http.RoundTripper, error) {
+		return netpolicy.NewExternalHTTPTransport()
+	})
+}
+
+func fetchGitTreeWithCredentialsUsingTransportFactory(ctx context.Context, source, revision, directory string, provider GitCredentialProvider, transportFactory func() (http.RoundTripper, error)) ([]byte, error) {
 	if err := ValidateGitSource(source); err != nil {
 		return nil, err
 	}
@@ -100,12 +106,12 @@ func fetchGitTreeWithCredentials(ctx context.Context, source, revision, director
 	if err := fetchContext.Err(); err != nil {
 		return nil, fmt.Errorf("prepare HTTPS Git transport: %w", err)
 	}
-	transport, err := netpolicy.NewExternalHTTPTransport()
+	baseTransport, err := transportFactory()
 	if err != nil {
 		return nil, err
 	}
 	strictHTTP := &http.Client{
-		Transport: &gitFetchLimitTransport{base: transport, limit: maxGitFetchResponseBytes},
+		Transport: &gitFetchLimitTransport{base: baseTransport, limit: maxGitFetchResponseBytes},
 		Timeout:   maxGitFetchDuration,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("HTTPS Git redirects are not supported")
