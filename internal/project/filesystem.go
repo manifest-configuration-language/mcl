@@ -209,6 +209,7 @@ func (filesystem *Filesystem) ResolveModuleImport(importer, modulePath string) (
 
 			return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
 		}
+		filesystem.RecordRead(joined)
 
 		return canonical, nil
 	}
