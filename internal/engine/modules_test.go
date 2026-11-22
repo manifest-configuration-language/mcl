@@ -82,6 +82,52 @@ emit resource
 	}
 }
 
+func TestEvaluationTracksSymlinkedSchemaFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "schemas"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "schemas", "resource.json"), []byte(`{"type":"object"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("schemas/resource.json", filepath.Join(root, "schema.json")); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		projectConfigFileName: "",
+		"main.mcl": `type Resource = schema("./schema.json")
+let resource: Resource =
+  apiVersion: "v1"
+  kind: "ConfigMap"
+  metadata:
+    name: "schema-input"
+emit resource
+`,
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	bundle, paths, err := EvaluateFileForOperationWithParametersAndOptionsAndReadFilesContext(
+		t.Context(), filepath.Join(root, "main.mcl"), "create", nil, EvaluationOptions{},
+	)
+	if err != nil {
+		t.Fatalf("evaluate with symlinked schema: %v", err)
+	}
+	if len(bundle.Artifacts) != 1 {
+		t.Fatalf("bundle artifact count = %d, want 1", len(bundle.Artifacts))
+	}
+	for _, want := range []string{"main.mcl", "schema.json", "schemas/resource.json", projectConfigFileName} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("read paths %v do not contain %q", paths, want)
+		}
+	}
+}
+
 func TestTypedResourceMapAcceptsIntOrStringNetworkPolicyPort(t *testing.T) {
 	t.Parallel()
 
