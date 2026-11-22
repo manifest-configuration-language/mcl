@@ -209,6 +209,19 @@ func (filesystem *Filesystem) ResolveModuleImport(importer, modulePath string) (
 
 			return "", fmt.Errorf("resolve module %q: %w", modulePath, err)
 		}
+		current := filesystem.root
+		prefix := ""
+		for component := range strings.SplitSeq(joined, "/") {
+			prefix = path.Join(prefix, component)
+			current = filepath.Join(current, filepath.FromSlash(component))
+			info, err := os.Lstat(current)
+			if err != nil {
+				return "", fmt.Errorf("inspect module path %q: %w", modulePath, err)
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				filesystem.RecordRead(prefix)
+			}
+		}
 		filesystem.RecordRead(joined)
 
 		return canonical, nil
