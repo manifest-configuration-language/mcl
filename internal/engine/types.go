@@ -865,7 +865,7 @@ func equivalentTypeProvenance(origin TypeProvenance, typeExpr ResolvedType, type
 	left, leftKnown := resolveStaticAlias(origin.Type, origin.Types, make(map[string]bool))
 	right, rightKnown := resolveStaticAlias(typeExpr, types, make(map[string]bool))
 
-	return leftKnown && rightKnown && equalStaticTypes(left, right)
+	return leftKnown && rightKnown && semtypes.Equal(left, right)
 }
 
 func schemaValidationMultipleCause(validation *jsonschema.ValidationError) *jsonschema.ValidationError {

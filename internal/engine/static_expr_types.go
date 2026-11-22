@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 )
 
 func inferStaticExprType(expression Expr, bindings map[string]TypeAnalysis, types map[string]ResolvedType) (ResolvedType, bool, error) {
@@ -482,7 +484,7 @@ func inferStaticExprCallFacts(call *CallExpr, bindings map[string]TypeAnalysis, 
 
 func joinTypeAnalysisFacts(left, right TypeAnalysisFacts) TypeAnalysisFacts {
 	var facts TypeAnalysisFacts
-	if left.Replacement != nil && right.Replacement != nil && equalStaticTypes(*left.Replacement, *right.Replacement) {
+	if left.Replacement != nil && right.Replacement != nil && semtypes.Equal(*left.Replacement, *right.Replacement) {
 		replacement := *left.Replacement
 		facts.Replacement = &replacement
 	}
@@ -1288,7 +1290,7 @@ func inferStaticExprBinary(expression Expr, bindings map[string]TypeAnalysis, ty
 		if rightKnown && right.Name != typeInt && right.Name != typeDecimal && right.Name != typeString {
 			return ResolvedType{}, false, fmt.Errorf("%s values cannot be ordered", staticTypeName(right))
 		}
-		if leftKnown && rightKnown && len(left.Options) == 0 && len(right.Options) == 0 && !equalStaticTypes(left, right) {
+		if leftKnown && rightKnown && len(left.Options) == 0 && len(right.Options) == 0 && !semtypes.Equal(left, right) {
 			return ResolvedType{}, false, fmt.Errorf("cannot compare %s with %s", staticTypeName(left), staticTypeName(right))
 		}
 
@@ -1419,7 +1421,7 @@ func inferStaticUnionBinary(operator string, left, right ResolvedType, sameOpera
 		return ResolvedType{}, false, nil
 	}
 	if sameOperand {
-		if !equalStaticTypes(left, right) || len(leftOptions) != len(rightOptions) {
+		if !semtypes.Equal(left, right) || len(leftOptions) != len(rightOptions) {
 			return ResolvedType{}, false, nil
 		}
 		rightOptions = leftOptions

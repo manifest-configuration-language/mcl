@@ -11,6 +11,15 @@ import (
 )
 
 func specializeTypedExpression(expression typedExpression, substitutions map[string]ResolvedType, types map[string]ResolvedType) (typedExpression, error) {
+	if expression.arenaUnit != nil {
+		spread := expression.spread
+		arenaExpression, ok := expression.arenaUnit.expression(expression.arenaID)
+		if !ok {
+			return typedExpression{}, fmt.Errorf("invalid typed arena expression ID %d", expression.arenaID)
+		}
+		expression = arenaExpression
+		expression.spread = spread
+	}
 	expression.resolvedType = semtypes.Substitute(expression.resolvedType, substitutions)
 	var err error
 	expression.analysisFacts, err = specializeTypeAnalysisFacts(expression.analysisFacts, substitutions, types)

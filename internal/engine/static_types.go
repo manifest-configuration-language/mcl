@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -593,7 +594,7 @@ func joinStaticTypes(left, right ResolvedType) ResolvedType {
 	if right.Name == typeNever {
 		return left
 	}
-	if equalStaticTypes(left, right) {
+	if semtypes.Equal(left, right) {
 		return left
 	}
 	options := make([]ResolvedType, 0, 2)
@@ -611,7 +612,7 @@ func joinStaticTypes(left, right ResolvedType) ResolvedType {
 	for _, option := range options {
 		found := false
 		for _, previous := range unique {
-			if equalStaticTypes(option, previous) {
+			if semtypes.Equal(option, previous) {
 				found = true
 
 				break
@@ -634,52 +635,6 @@ func preserveBundleProvenance(inferred TypeAnalysis, declared ResolvedType, type
 	}
 
 	return result
-}
-
-func equalStaticTypes(left, right ResolvedType) bool {
-	if left.Name != right.Name || left.StringLiteral != right.StringLiteral || left.StringLiteralKnown != right.StringLiteralKnown || left.SchemaPath != right.SchemaPath || left.SchemaID != right.SchemaID || left.ScopeID != right.ScopeID || left.Optional != right.Optional || left.OpenRecord != right.OpenRecord || len(left.TypeParameters) != len(right.TypeParameters) || len(left.Arguments) != len(right.Arguments) || len(left.Fields) != len(right.Fields) || len(left.Options) != len(right.Options) || len(left.Parameters) != len(right.Parameters) || (left.ReturnType == nil) != (right.ReturnType == nil) || (left.AdditionalProperties == nil) != (right.AdditionalProperties == nil) {
-		return false
-	}
-	for index, parameter := range left.TypeParameters {
-		if parameter != right.TypeParameters[index] {
-			return false
-		}
-	}
-	for index, argument := range left.Arguments {
-		if !equalStaticTypes(argument, right.Arguments[index]) {
-			return false
-		}
-	}
-	if left.ReturnType != nil && !equalStaticTypes(*left.ReturnType, *right.ReturnType) {
-		return false
-	}
-	if left.AdditionalProperties != nil && !equalStaticTypes(*left.AdditionalProperties, *right.AdditionalProperties) {
-		return false
-	}
-	for index, parameter := range left.Parameters {
-		if parameter.Name != right.Parameters[index].Name || parameter.Optional != right.Parameters[index].Optional || !equalStaticTypes(parameter.Type, right.Parameters[index].Type) {
-			return false
-		}
-	}
-	if (left.Element == nil) != (right.Element == nil) {
-		return false
-	}
-	if left.Element != nil && !equalStaticTypes(*left.Element, *right.Element) {
-		return false
-	}
-	for index, field := range left.Fields {
-		other := right.Fields[index]
-		if field.Name != other.Name || field.Optional != other.Optional || !equalStaticTypes(field.Type, other.Type) {
-			return false
-		}
-	}
-	for index, option := range left.Options {
-		if !equalStaticTypes(option, right.Options[index]) {
-			return false
-		}
-	}
-
-	return true
 }
 
 func staticField(typeExpr ResolvedType, name string, types map[string]ResolvedType, resolving map[string]bool) (ResolvedType, bool, bool, bool) {

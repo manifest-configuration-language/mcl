@@ -14,7 +14,7 @@ func (expression typedExpression) evaluateBinary(context typedEvaluationContext)
 		return RuntimeValue{}, err
 	}
 	if left.IsDeferred() && (expression.operator == typedOperatorAnd || expression.operator == typedOperatorOr || expression.operator == typedOperatorCoalesce) {
-		rightExpression := cloneTypedExpression(*expression.right)
+		rightExpression := newTypedExpressionRef(*expression.right)
 
 		return RuntimeValue{
 			Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},

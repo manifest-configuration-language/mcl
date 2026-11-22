@@ -87,9 +87,9 @@ func (value *runtimeValueData) ensureTyping() *ValueTyping {
 type typedLambda struct {
 	Parameters     []string
 	ParameterSpans []SourceSpan
-	Defaults       []*typedExpression
+	Defaults       []typedExpressionRef
 	Locals         []typedLocalBinding
-	Body           typedExpression
+	Body           typedExpressionRef
 	Scope          map[string]RuntimeValue
 	Frame          *runtimeFrame
 	ScopeSpan      SourceSpan
@@ -99,7 +99,7 @@ type typedLambda struct {
 
 type typedLocalBinding struct {
 	Name       string
-	Expression typedExpression
+	Expression typedExpressionRef
 	Annotation *ResolvedType
 	Span       SourceSpan
 }
@@ -228,15 +228,40 @@ type typedBinaryContinuation struct {
 	Operator        typedOperator
 	Left            RuntimeValue
 	Right           RuntimeValue
-	RightExpression *typedExpression
+	RightExpression *typedExpressionRef
 	Frame           *runtimeFrame
 }
 
 type typedConditionalContinuation struct {
 	Condition  RuntimeValue
-	ThenBranch typedExpression
-	ElseBranch typedExpression
+	ThenBranch typedExpressionRef
+	ElseBranch typedExpressionRef
 	Frame      *runtimeFrame
+}
+
+type typedExpressionRef struct {
+	Unit *typedUnit
+	ID   ExprID
+}
+
+func newTypedExpressionRef(expression typedExpression) typedExpressionRef {
+	if expression.arenaUnit != nil {
+		return typedExpressionRef{Unit: expression.arenaUnit, ID: expression.arenaID}
+	}
+	unit, id := newTypedUnit(expression)
+
+	return typedExpressionRef{Unit: unit, ID: id}
+}
+
+func (reference typedExpressionRef) expression() (typedExpression, bool) {
+	if reference.Unit == nil {
+		return typedExpression{}, false
+	}
+	if _, ok := reference.Unit.node(reference.ID); !ok {
+		return typedExpression{}, false
+	}
+
+	return typedExpression{arenaUnit: reference.Unit, arenaID: reference.ID}, true
 }
 
 type runtimeListOperationContinuation struct {
@@ -553,7 +578,7 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 				binary.Right = state.clone(binary.Right)
 				binary.Frame = state.cloneFrame(binary.Frame)
 				if binary.RightExpression != nil {
-					expression := cloneTypedExpression(*binary.RightExpression)
+					expression := *binary.RightExpression
 					binary.RightExpression = &expression
 				}
 				deferred.Binary = &binary
@@ -561,8 +586,6 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 			if deferred.Conditional != nil {
 				conditional := *deferred.Conditional
 				conditional.Condition = state.clone(conditional.Condition)
-				conditional.ThenBranch = cloneTypedExpression(conditional.ThenBranch)
-				conditional.ElseBranch = cloneTypedExpression(conditional.ElseBranch)
 				conditional.Frame = state.cloneFrame(conditional.Frame)
 				deferred.Conditional = &conditional
 			}
@@ -643,7 +666,14 @@ func (state *runtimeValueCloneState) clone(value RuntimeValue) RuntimeValue {
 			state.lambdas[value.Lambda] = &lambda
 			lambda.Parameters = slices.Clone(lambda.Parameters)
 			lambda.ParameterSpans = slices.Clone(lambda.ParameterSpans)
-			lambda.Body = cloneTypedExpression(lambda.Body)
+			lambda.Defaults = slices.Clone(lambda.Defaults)
+			lambda.Locals = slices.Clone(lambda.Locals)
+			for index := range lambda.Locals {
+				if lambda.Locals[index].Annotation != nil {
+					annotation := semtypes.Clone(*lambda.Locals[index].Annotation)
+					lambda.Locals[index].Annotation = &annotation
+				}
+			}
 			lambda.Scope = maps.Clone(lambda.Scope)
 			for name, captured := range lambda.Scope {
 				lambda.Scope[name] = state.clone(captured)
@@ -756,7 +786,7 @@ func cloneTypedExpression(expression typedExpression) typedExpression {
 
 type RuntimeEntry struct {
 	Key                string
-	KeyExpression      *typedExpression
+	KeyExpression      *typedExpressionRef
 	KeyFrame           *runtimeFrame
 	KeySpan            SourceSpan
 	KeySourcePath      string
@@ -919,6 +949,32 @@ func evaluateTypedContinuation(continuation *typedContinuation, state *Evaluatio
 	return evaluateTypedExpressionRuntimeInScope(continuation.Expression, state, environment, frame)
 }
 
+func evaluateTypedExpressionReference(reference typedExpressionRef, state *EvaluationState, frame *runtimeFrame) (RuntimeValue, error) {
+	if state == nil {
+		return RuntimeValue{}, errors.New("evaluation state is nil")
+	}
+	expression, ok := reference.expression()
+	if !ok {
+		return RuntimeValue{}, errors.New("invalid deferred typed expression ID")
+	}
+	environment := state.Environment
+	if frame != nil {
+		environment = nil
+	}
+
+	return evaluateTypedExpressionRuntimeInScope(expression, state, environment, frame)
+}
+
+// specializeTypedExpressionReference creates a per-call specialization from a shared immutable arena reference.
+func specializeTypedExpressionReference(reference typedExpressionRef, substitutions map[string]ResolvedType, types map[string]ResolvedType) (typedExpression, error) {
+	expression, ok := reference.expression()
+	if !ok {
+		return typedExpression{}, errors.New("invalid typed Lambda expression ID")
+	}
+
+	return specializeTypedExpression(expression, substitutions, types)
+}
+
 func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string, state *EvaluationState) (RuntimeValue, error) {
 	if lambda.Lambda == nil || state == nil {
 		return RuntimeValue{}, errors.New("invalid typed Lambda call")
@@ -927,7 +983,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	definition := lambda.Lambda
 	parameters := make([]FunctionTypeParameter, len(definition.Parameters))
 	for index, name := range definition.Parameters {
-		parameters[index] = FunctionTypeParameter{Name: name, Optional: index < len(definition.Defaults) && definition.Defaults[index] != nil}
+		parameters[index] = FunctionTypeParameter{Name: name, Optional: index < len(definition.Defaults) && definition.Defaults[index].Unit != nil}
 	}
 	ordered, assigned, ok := functionCallRuntimeArguments(parameters, args, names)
 	if !ok {
@@ -984,10 +1040,10 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 			continue
 		}
 
-		if index >= len(definition.Defaults) || definition.Defaults[index] == nil {
+		if index >= len(definition.Defaults) || definition.Defaults[index].Unit == nil {
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, fmt.Errorf("missing required argument %q", parameter))
 		}
-		defaultExpression, err := specializeTypedExpression(*definition.Defaults[index], substitutions, lambdaTypes)
+		defaultExpression, err := specializeTypedExpressionReference(definition.Defaults[index], substitutions, lambdaTypes)
 		if err != nil {
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, defaultExpression.span, err)
 		}
@@ -1026,7 +1082,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 		}
 	}
 	types := lambdaTypes
-	body, err := specializeTypedExpression(definition.Body, substitutions, types)
+	body, err := specializeTypedExpressionReference(definition.Body, substitutions, types)
 	if err != nil {
 		return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, definition.ScopeSpan, err)
 	}
@@ -1047,7 +1103,7 @@ func callRuntimeLambda(lambda RuntimeValue, args []RuntimeValue, names []string,
 	}
 
 	for _, local := range definition.Locals {
-		expression, err := specializeTypedExpression(local.Expression, substitutions, types)
+		expression, err := specializeTypedExpressionReference(local.Expression, substitutions, types)
 		if err != nil {
 			return RuntimeValue{}, sourceDiagnostic(lambda.Value.SourcePath, expression.span, err)
 		}
@@ -1260,7 +1316,7 @@ func inferRuntimeValueStaticType(value RuntimeValue) (TypeAnalysis, bool) {
 			if index < len(value.Lambda.Typing.ParameterTypes) {
 				parameterType = value.Lambda.Typing.ParameterTypes[index]
 			}
-			parameters[index] = FunctionTypeParameter{Name: name, Type: parameterType, Optional: index < len(value.Lambda.Defaults) && value.Lambda.Defaults[index] != nil}
+			parameters[index] = FunctionTypeParameter{Name: name, Type: parameterType, Optional: index < len(value.Lambda.Defaults) && value.Lambda.Defaults[index].Unit != nil}
 		}
 		function := ResolvedType{Name: typeFunction, Parameters: parameters, ReturnType: value.Lambda.Typing.ReturnType}
 		facts := TypeAnalysisFacts{}

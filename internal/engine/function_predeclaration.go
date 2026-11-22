@@ -300,7 +300,7 @@ func compileFunctionDeclaration(declaration *FunctionDeclaration, state *Evaluat
 	parameterTypes := make([]ResolvedType, len(definition.Parameters))
 	parameterNames := make([]string, len(definition.Parameters))
 	parameterSpans := make([]SourceSpan, len(definition.Parameters))
-	defaults := make([]*typedExpression, len(definition.Parameters))
+	defaults := make([]typedExpressionRef, len(definition.Parameters))
 	defaultBindings := maps.Clone(state.StaticTypes)
 	if defaultBindings == nil {
 		defaultBindings = make(map[string]TypeAnalysis)
@@ -329,7 +329,7 @@ func compileFunctionDeclaration(declaration *FunctionDeclaration, state *Evaluat
 			if !supported {
 				return RuntimeValue{}, TypeAnalysis{}, sourceDiagnostic(declaration.SourcePath, parameter.Default.ExprSpan(), fmt.Errorf("expression type %T is not supported by the typed evaluator", parameter.Default))
 			}
-			defaults[index] = &typed
+			defaults[index] = newTypedExpressionRef(typed)
 		}
 		bindings[parameter.Name] = TypeAnalysis{Type: parameterType}
 		defaultBindings[parameter.Name] = TypeAnalysis{Type: parameterType}
@@ -368,7 +368,7 @@ func compileFunctionDeclaration(declaration *FunctionDeclaration, state *Evaluat
 			analysis = preserveBundleProvenance(analysis, *annotation, state.Types)
 		}
 		bindings[local.Name] = analysis
-		locals = append(locals, typedLocalBinding{Name: local.Name, Expression: typed, Annotation: annotation, Span: local.Span})
+		locals = append(locals, typedLocalBinding{Name: local.Name, Expression: newTypedExpressionRef(typed), Annotation: annotation, Span: local.Span})
 	}
 	bodyType := *signature.Type.ReturnType
 	bodyType.Span = SourceSpan{}
@@ -389,7 +389,7 @@ func compileFunctionDeclaration(declaration *FunctionDeclaration, state *Evaluat
 	}
 	lambda := RuntimeValue{
 		Value:  runtimeValueData{Kind: Lambda, Span: functionBodySpan(definition), SourcePath: declaration.SourcePath},
-		Lambda: &typedLambda{Parameters: parameterNames, ParameterSpans: parameterSpans, Defaults: defaults, Locals: locals, Body: body, Scope: maps.Clone(state.Environment), ScopeSpan: functionBodySpan(definition), Typing: lambdaTyping, ModuleContext: state.Module},
+		Lambda: &typedLambda{Parameters: parameterNames, ParameterSpans: parameterSpans, Defaults: defaults, Locals: locals, Body: newTypedExpressionRef(body), Scope: maps.Clone(state.Environment), ScopeSpan: functionBodySpan(definition), Typing: lambdaTyping, ModuleContext: state.Module},
 	}
 	lambda.Lambda.Scope[declaration.Name] = state.Environment[declaration.Name]
 

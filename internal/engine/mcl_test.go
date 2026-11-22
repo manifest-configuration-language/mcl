@@ -928,11 +928,21 @@ func TestDeferredExpressionsCaptureLexicalRuntimeFrames(t *testing.T) {
   enabled: true
   items:
     - "x"
+  label: "v"
   key: "picked"
 fn expand(prefix: String) -> List<String> =
   for item in ref(config).items:
     prefix + item
 let deferredFor = expand("p")
+fn chooseNested(condition: Bool, value: String) -> String =
+  if condition:
+    value
+  else:
+    "wrong"
+fn expandWithNestedDeferredExpressions(prefix: String) -> List<String> =
+  for item in ref(config).items:
+    chooseNested(ref(config).enabled, ref(config).label + prefix + item)
+let deferredForWithNestedExpressions = expandWithNestedDeferredExpressions("p")
 fn choose(prefix: String) -> String =
   if ref(config).enabled:
     prefix
@@ -947,6 +957,7 @@ fn keyed(prefix: String) -> Map<String, String> =
 let deferredKey = keyed("k")
 emit config
 emit deferredFor[0]
+emit deferredForWithNestedExpressions[0]
 emit deferredConditional
 emit deferredBinary
 emit deferredKey
@@ -959,7 +970,7 @@ emit deferredKey
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	for _, expected := range []string{"px", `"c"`, "true", `picked: "k"`} {
+	for _, expected := range []string{"px", "vpx", `"c"`, "true", `picked: "k"`} {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("rendered output does not contain %q:\n%s", expected, output)
 		}
@@ -1083,7 +1094,7 @@ func TestListTransformationsReturnOrdinaryListsForAdapterBundles(t *testing.T) {
 	}
 	lambda := RuntimeValue{
 		Value:  runtimeValueData{Kind: Lambda},
-		Lambda: &typedLambda{Parameters: []string{paramValue}, Scope: map[string]RuntimeValue{}, Body: typedExpression{kind: typedExpressionReference, text: paramValue}},
+		Lambda: &typedLambda{Parameters: []string{paramValue}, Scope: map[string]RuntimeValue{}, Body: newTypedExpressionRef(typedExpression{kind: typedExpressionReference, text: paramValue})},
 	}
 	state := &EvaluationState{EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}}}
 	mapped, err := callRuntimeStandard(fnMap, []RuntimeValue{bundle, lambda}, nil, state)

@@ -65,6 +65,53 @@ func Clone(typeExpression ResolvedType) ResolvedType {
 	return typeExpression
 }
 
+// Equal reports whether two resolved types have the same semantic structure.
+// Source spans are intentionally excluded because they describe occurrences,
+// not the type represented by those occurrences.
+func Equal(left, right ResolvedType) bool {
+	if left.Name != right.Name || left.StringLiteral != right.StringLiteral || left.StringLiteralKnown != right.StringLiteralKnown || left.SchemaPath != right.SchemaPath || left.SchemaID != right.SchemaID || left.ScopeID != right.ScopeID || left.Optional != right.Optional || left.OpenRecord != right.OpenRecord || len(left.TypeParameters) != len(right.TypeParameters) || len(left.Arguments) != len(right.Arguments) || len(left.Fields) != len(right.Fields) || len(left.Options) != len(right.Options) || len(left.Parameters) != len(right.Parameters) || (left.ReturnType == nil) != (right.ReturnType == nil) || (left.AdditionalProperties == nil) != (right.AdditionalProperties == nil) || (left.Element == nil) != (right.Element == nil) {
+		return false
+	}
+	for index, parameter := range left.TypeParameters {
+		if parameter != right.TypeParameters[index] {
+			return false
+		}
+	}
+	for index, argument := range left.Arguments {
+		if !Equal(argument, right.Arguments[index]) {
+			return false
+		}
+	}
+	if left.ReturnType != nil && !Equal(*left.ReturnType, *right.ReturnType) {
+		return false
+	}
+	if left.AdditionalProperties != nil && !Equal(*left.AdditionalProperties, *right.AdditionalProperties) {
+		return false
+	}
+	for index, parameter := range left.Parameters {
+		other := right.Parameters[index]
+		if parameter.Name != other.Name || parameter.Optional != other.Optional || !Equal(parameter.Type, other.Type) {
+			return false
+		}
+	}
+	if left.Element != nil && !Equal(*left.Element, *right.Element) {
+		return false
+	}
+	for index, field := range left.Fields {
+		other := right.Fields[index]
+		if field.Name != other.Name || field.Optional != other.Optional || !Equal(field.Type, other.Type) {
+			return false
+		}
+	}
+	for index, option := range left.Options {
+		if !Equal(option, right.Options[index]) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func cloneTypes(types []ResolvedType) []ResolvedType {
 	cloned := slices.Clone(types)
 	for index := range cloned {

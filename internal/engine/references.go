@@ -57,7 +57,7 @@ func resolveRuntimeBundle(bundle *RuntimeBundle, state *EvaluationState) error {
 			}
 			if entry.KeyExpression != nil && states[index] != 2 {
 				states[index] = 1
-				key, err := evaluateTypedContinuation(&typedContinuation{Expression: *entry.KeyExpression, Frame: entry.KeyFrame}, state)
+				key, err := evaluateTypedExpressionReference(*entry.KeyExpression, state, entry.KeyFrame)
 				if err != nil {
 					states[index] = 0
 
@@ -481,7 +481,7 @@ func resolveTypedBinaryContinuation(continuation *typedBinaryContinuation, state
 	right := continuation.Right
 	if continuation.RightExpression != nil {
 		var err error
-		right, err = evaluateTypedContinuation(&typedContinuation{Expression: *continuation.RightExpression, Frame: continuation.Frame}, state)
+		right, err = evaluateTypedExpressionReference(*continuation.RightExpression, state, continuation.Frame)
 		if err != nil {
 			return RuntimeValue{}, err
 		}
@@ -509,7 +509,7 @@ func resolveTypedConditionalContinuation(continuation *typedConditionalContinuat
 	if condition.BoolValue() {
 		branch = continuation.ThenBranch
 	}
-	resolved, err := evaluateTypedContinuation(&typedContinuation{Expression: branch, Frame: continuation.Frame}, state)
+	resolved, err := evaluateTypedExpressionReference(branch, state, continuation.Frame)
 	if err != nil {
 		return RuntimeValue{}, err
 	}
@@ -551,8 +551,7 @@ func resolveTypedIndexContinuation(continuation *typedIndexContinuation, resolve
 }
 
 func resolveTypedForContinuation(continuation *typedForContinuation, state *EvaluationState, resolve func(*RuntimeValue) error) (RuntimeValue, error) {
-	body, ok := continuation.Unit.node(continuation.Body)
-	if !ok {
+	if _, ok := continuation.Unit.node(continuation.Body); !ok {
 		return RuntimeValue{}, errors.New("invalid deferred for body expression")
 	}
 	source := continuation.Source
@@ -576,6 +575,7 @@ func resolveTypedForContinuation(continuation *typedForContinuation, state *Eval
 			return RuntimeValue{}, err
 		}
 		frame := parentFrame.childBinding(continuation.LoopName, item)
+		body := typedExpression{arenaUnit: continuation.Unit, arenaID: continuation.Body}
 		value, err := evaluateTypedExpressionRuntimeInScope(body, state, environment, frame)
 		if err != nil {
 			return RuntimeValue{}, err

@@ -719,7 +719,7 @@ func typeCallExpression(expression Expr, inferred ResolvedType, context typedEva
 			firstParameter := functionType.Parameters[firstParameterIndex].Type
 			for optionIndex, option := range resolvedOptions[1:] {
 				parameterIndex := argumentParameters[optionIndex+1][index]
-				if !equalStaticTypes(firstParameter, option.Parameters[parameterIndex].Type) {
+				if !semtypes.Equal(firstParameter, option.Parameters[parameterIndex].Type) {
 					return typedExpression{}, false
 				}
 			}
@@ -908,7 +908,7 @@ func typePrimitiveConditionalExpression(expression Expr, inferred ResolvedType, 
 			activeBranch = 0
 		}
 		activeType := branchTypes[activeBranch]
-		if isPrimitiveScalarType(activeType) && equalStaticTypes(activeType, inferred) {
+		if isPrimitiveScalarType(activeType) && semtypes.Equal(activeType, inferred) {
 			branchTypes = []ResolvedType{activeType}
 		}
 	}

@@ -101,6 +101,50 @@ func TestCloningDeferredForSharesImmutableTypedUnit(t *testing.T) {
 	}
 }
 
+func TestTypedUnitStoresChildrenAsArenaIDsAndEvaluatesDeferredBody(t *testing.T) {
+	body := typedExpression{
+		kind: typedExpressionMap,
+		entries: []typedMapEntry{{
+			key: "result", value: typedExpression{
+				kind: typedExpressionBinary, operator: typedOperatorAdd,
+				left:  &typedExpression{kind: typedExpressionReference, text: "item"},
+				right: &typedExpression{kind: typedExpressionInteger, text: "2"},
+			},
+		}},
+	}
+	unit, bodyID := newTypedUnit(body)
+	if len(unit.nodes) != 4 {
+		t.Fatalf("arena node count = %d, want map, binary, and two operands", len(unit.nodes))
+	}
+	root, ok := unit.node(bodyID)
+	if !ok || len(root.entries) != 1 || root.entries[0].value == bodyID {
+		t.Fatalf("arena root = %#v, want an entry linked to a distinct child ID", root)
+	}
+	binary, ok := unit.node(root.entries[0].value)
+	if !ok || binary.kind != typedExpressionBinary || !binary.left.present || !binary.right.present {
+		t.Fatalf("arena binary = %#v, want two ExprID child edges", binary)
+	}
+	if _, err := (typedExpression{arenaUnit: unit, arenaID: ExprID(len(unit.nodes))}).evaluate(typedEvaluationContext{}); err == nil {
+		t.Fatal("evaluation accepted an ExprID outside the typed arena")
+	}
+
+	state := &EvaluationState{
+		EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}},
+		Types:             make(map[string]ResolvedType),
+	}
+	continuation := &typedForContinuation{
+		Source: RuntimeValue{Value: runtimeValueData{Kind: List}, List: []RuntimeValue{{Value: runtimeValueData{Kind: Integer, Text: "3"}}}},
+		Unit:   unit, Body: bodyID, LoopName: "item",
+	}
+	result, err := resolveTypedForContinuation(continuation, state, func(*RuntimeValue) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind() != List || len(result.List) != 1 || len(result.List[0].Map) != 1 || result.List[0].Map[0].Value.TextValue() != "5" {
+		t.Fatalf("deferred body result = %#v, want a one element list containing result=5", result)
+	}
+}
+
 func TestCloningDeferredFramePreservesCyclesAndNodeIdentity(t *testing.T) {
 	identity := &NodeIdentity{}
 	frame := &runtimeFrame{bindings: make(map[string]RuntimeValue)}
@@ -132,9 +176,10 @@ func TestCloningDynamicKeyFramePreservesNodeIdentity(t *testing.T) {
 		"target": {Value: runtimeValueData{Kind: Node, NodeID: identity}},
 	})
 	expression := typedExpression{kind: typedExpressionReference, text: "target"}
+	expressionRef := newTypedExpressionRef(expression)
 	value := RuntimeValue{
 		Value: runtimeValueData{Kind: Map},
-		Map:   []RuntimeEntry{{KeyExpression: &expression, KeyFrame: frame}},
+		Map:   []RuntimeEntry{{KeyExpression: &expressionRef, KeyFrame: frame}},
 	}
 
 	cloned := cloneRuntimeValueGraph(value, nil)

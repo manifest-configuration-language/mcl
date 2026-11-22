@@ -207,6 +207,13 @@ func appendRuntimeValueSourceLocations(locations *[]SourceDiagnosticLocation, va
 }
 
 func (expression typedExpression) evaluate(context typedEvaluationContext) (RuntimeValue, error) {
+	if expression.arenaUnit != nil {
+		arenaExpression, ok := expression.arenaUnit.expression(expression.arenaID)
+		if !ok {
+			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, SourceSpan{}, errors.New("invalid typed arena expression ID"))
+		}
+		return arenaExpression.evaluate(context)
+	}
 	if err := context.allocations.consume(1); err != nil {
 		return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, err)
 	}
@@ -304,7 +311,7 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 				}
 				value.Value.OmitSourceSnippet = value.Value.OmitSourceSnippet || key.Metadata().OmitSourceSnippet
 				if key.IsDeferred() {
-					keyExpression := cloneTypedExpression(*entry.keyExpression)
+					keyExpression := newTypedExpressionRef(*entry.keyExpression)
 					result.KeyExpression = &keyExpression
 					result.KeyFrame = context.captureRuntimeFrame()
 				} else if key.Kind() == String {
@@ -376,8 +383,8 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			return RuntimeValue{
 				Value: runtimeValueData{Kind: Null, Span: expression.span, SourcePath: context.sourcePath},
 				Deferred: &typedContinuation{Conditional: &typedConditionalContinuation{
-					Condition: condition, ThenBranch: cloneTypedExpression(*expression.thenBranch),
-					ElseBranch: cloneTypedExpression(*expression.elseBranch), Frame: context.captureRuntimeFrame(),
+					Condition: condition, ThenBranch: newTypedExpressionRef(*expression.thenBranch),
+					ElseBranch: newTypedExpressionRef(*expression.elseBranch), Frame: context.captureRuntimeFrame(),
 				}},
 			}, nil
 		}
@@ -406,13 +413,18 @@ func (expression typedExpression) evaluate(context typedEvaluationContext) (Runt
 			return RuntimeValue{}, sourceDiagnostic(context.sourcePath, expression.span, errors.New("invalid Lambda expression"))
 		}
 		scope, frame := context.captureLambdaScope()
+		body := newTypedExpressionRef(*expression.operand)
+		typing := *expression.lambdaTyping
+		if typing.InferenceBody != nil {
+			typing.InferenceBody = &typedExpression{arenaUnit: body.Unit, arenaID: body.ID}
+		}
 
 		return RuntimeValue{
 			Value: runtimeValueData{Kind: Lambda, Span: expression.span, SourcePath: context.sourcePath},
 			Lambda: &typedLambda{
 				Parameters: slices.Clone(expression.parameters), ParameterSpans: slices.Clone(expression.paramSpans),
-				Body: *expression.operand, Scope: scope, Frame: frame, ScopeSpan: expression.span,
-				Typing: expression.lambdaTyping, ModuleContext: context.module,
+				Body: body, Scope: scope, Frame: frame, ScopeSpan: expression.span,
+				Typing: &typing, ModuleContext: context.module,
 			},
 		}, nil
 	case typedExpressionCall:

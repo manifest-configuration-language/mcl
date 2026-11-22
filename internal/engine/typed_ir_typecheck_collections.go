@@ -1,6 +1,10 @@
 package engine
 
-import "slices"
+import (
+	"slices"
+
+	semtypes "github.com/manifest-configuration-language/mcl/internal/types"
+)
 
 func typePrimitiveListExpression(expression Expr, inferred ResolvedType, contexts ...typedEvaluationContext) (typedExpression, bool) {
 	context := typedContext(contexts)
@@ -123,7 +127,7 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 		}
 		if !known {
 			if keyExpression != nil {
-				if dynamicValueType != nil && !equalStaticTypes(*dynamicValueType, fieldType) {
+				if dynamicValueType != nil && !semtypes.Equal(*dynamicValueType, fieldType) {
 					return typedExpression{}, false
 				}
 				if dynamicValueType == nil {
@@ -139,7 +143,7 @@ func typePrimitiveMapExpression(expression Expr, inferred ResolvedType, contexts
 			continue
 		}
 		if keyExpression != nil {
-			if dynamicValueType != nil && !equalStaticTypes(*dynamicValueType, valueType) {
+			if dynamicValueType != nil && !semtypes.Equal(*dynamicValueType, valueType) {
 				return typedExpression{}, false
 			}
 			if dynamicValueType == nil {
