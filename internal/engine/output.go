@@ -39,8 +39,10 @@ func RenderPhaseWithSourceMap(bundle Bundle, phase string) ([]byte, ManifestSour
 
 type BundleOutputPlan = outputpkg.BundleOutputPlan
 
-type RenderedFile = outputpkg.RenderedFile
-type RenderedArtifact = outputpkg.RenderedArtifact
+type (
+	RenderedFile     = outputpkg.RenderedFile
+	RenderedArtifact = outputpkg.RenderedArtifact
+)
 
 type indexedArtifact struct {
 	index    int
@@ -81,8 +83,6 @@ func RenderOperation(bundle Bundle, operation string) ([]RenderedFile, error) {
 	}
 	return NewBundleOutputPlan(bundle).RenderOperation(operation)
 }
-
-func stableArtifactIDs(artifacts []Artifact) []string { return outputpkg.StableArtifactIDs(artifacts) }
 
 func validLifecycleEvent(event string) bool { return outputpkg.ValidLifecycleEvent(event) }
 func validOperation(operation string) bool  { return outputpkg.ValidOperation(operation) }

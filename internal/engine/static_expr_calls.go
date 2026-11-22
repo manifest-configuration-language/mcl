@@ -234,6 +234,17 @@ func containsLambdaTypeVariableType(typeExpr ResolvedType) bool {
 	return slices.ContainsFunc(typeExpr.Options, containsLambdaTypeVariableType)
 }
 
+func inferStaticLifecycleWithIdentity(_ []Expr, argumentTypes []ResolvedType, known []bool, _ map[string]ResolvedType) (ResolvedType, bool, error) {
+	if len(argumentTypes) != 2 || len(known) != 2 || !known[0] {
+		return ResolvedType{}, false, nil
+	}
+	if known[1] && argumentTypes[1].Name != typeString {
+		return ResolvedType{}, false, errors.New("lifecycle.withIdentity identity must be a String")
+	}
+
+	return argumentTypes[0], true, nil
+}
+
 func inferStaticLifecycleAttachBuiltin(_ []Expr, argumentTypes []ResolvedType, known []bool, types map[string]ResolvedType) (ResolvedType, bool, error) {
 	if len(argumentTypes) != 5 || len(known) != 5 || !known[0] {
 		return ResolvedType{}, false, nil

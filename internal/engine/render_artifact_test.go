@@ -5,8 +5,10 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -43,8 +45,8 @@ emit hook
 	if resource["kind"] != "Lease" || artifacts[0].Lifecycle.Priority != 4 || len(artifacts[0].Lifecycle.Cleanup) != 1 || artifacts[0].Lifecycle.Cleanup[0] != cleanupOnSuccess {
 		t.Fatalf("unexpected structured artifact: resource=%v lifecycle=%+v", resource, artifacts[0].Lifecycle)
 	}
-	if artifacts[0].ArtifactID == "" {
-		t.Fatal("RenderPhaseArtifacts() returned no stable artifact identity for source-backed resource")
+	if artifacts[0].ArtifactID != "" {
+		t.Fatal("RenderPhaseArtifacts() returned an identity without an explicit key")
 	}
 	afterArtifacts, err := RenderPhaseArtifacts(bundle, phaseAfterCreate)
 	if err != nil {
@@ -55,21 +57,71 @@ emit hook
 	}
 }
 
-func TestStableArtifactIDsLeaveAmbiguousProvenanceUnidentified(t *testing.T) {
+func TestExplicitArtifactIdentityAcrossEvaluations(t *testing.T) {
 	t.Parallel()
-
-	bundle := Bundle{Artifacts: []Artifact{
-		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
-		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 1, End: 3}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
-		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 4, End: 6}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
-		{Value: Value{Kind: Map, SourcePath: projectFileEntrypoint, Span: SourceSpan{Start: 0, End: 1}}, Lifecycle: Lifecycle{Events: []string{phaseBeforeCreate}}},
-	}}
-	rendered, err := RenderPhaseArtifacts(bundle, phaseBeforeCreate)
-	if err != nil {
-		t.Fatal(err)
+	const source = `import "std:list" as lists
+fn hook(id: String) = lifecycle.withIdentity(lifecycle.attach({apiVersion: "batch/v1", kind: "Job", metadata: {generateName: "job-", labels: {id: id}}}, ["before.create", "before.update"], 0, false, []), id)
+let resources = lists.map(ITEMS, hook)
+emit each resources
+`
+	path := filepath.Join(t.TempDir(), "main.mcl")
+	for _, tc := range []struct{ operation, items string }{
+		{"create", `["a", "b"]`},
+		{"update", `["b", "a"]`},
+	} {
+		if err := os.WriteFile(path, []byte(strings.Replace(source, "ITEMS", tc.items, 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := EvaluateFileForOperation(path, tc.operation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, phase := range []string{phaseBeforeCreate, phaseBeforeUpdate} {
+			artifacts, err := RenderPhaseArtifacts(bundle, phase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(artifacts) != 2 {
+				t.Fatalf("got %d artifacts", len(artifacts))
+			}
+			seen := map[string]bool{}
+			for _, artifact := range artifacts {
+				var resource struct {
+					Metadata struct {
+						Labels map[string]string `json:"labels"`
+					} `json:"metadata"`
+				}
+				if err := json.Unmarshal(artifact.Resource, &resource); err != nil {
+					t.Fatal(err)
+				}
+				id := resource.Metadata.Labels["id"]
+				if artifact.ArtifactID != id || seen[id] {
+					t.Fatalf("identity for %q = %q", id, artifact.ArtifactID)
+				}
+				seen[id] = true
+			}
+		}
 	}
-	if rendered[0].ArtifactID != "" || rendered[1].ArtifactID != "" || rendered[2].ArtifactID == "" || rendered[3].ArtifactID == "" {
-		t.Fatalf("RenderPhaseArtifacts() identities = %q, want ambiguous identities empty and unique identities present", []string{rendered[0].ArtifactID, rendered[1].ArtifactID, rendered[2].ArtifactID, rendered[3].ArtifactID})
+}
+
+func TestExplicitArtifactIdentityValidation(t *testing.T) {
+	t.Parallel()
+	const source = `import "std:list" as lists
+fn hook(id: String) = lifecycle.withIdentity(lifecycle.attach({apiVersion: "batch/v1", kind: "Job", metadata: {generateName: "job-"}}, ["before.create"], 0, false, []), id)
+let resources = lists.map(ITEMS, hook)
+emit each resources
+`
+	for _, tc := range []struct{ items, message string }{
+		{`["same", "same"]`, "repeats lifecycle identity"},
+		{`[""]`, "identity must be a non-empty String"},
+	} {
+		bundle, err := EvaluateSource(filepath.Join(t.TempDir(), "main.mcl"), strings.Replace(source, "ITEMS", tc.items, 1))
+		if err == nil {
+			_, err = RenderPhaseArtifacts(bundle, phaseBeforeCreate)
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.message) {
+			t.Errorf("identity validation for %s: %v; want %q", tc.items, err, tc.message)
+		}
 	}
 }
 

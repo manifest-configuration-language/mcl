@@ -2,8 +2,6 @@ package output
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -64,7 +62,8 @@ type RenderedFile struct {
 type RenderedArtifact struct {
 	Resource  jsontext.Value
 	Lifecycle value.Lifecycle
-	// ArtifactID identifies an artifact by its unique source location across evaluations; it is empty when provenance is absent or ambiguous.
+	// ArtifactID is the explicit logical key supplied by the caller, or empty when none was supplied.
+	// Use the same key across operations for the same artifact and distinct keys for distinct generated-name hooks.
 	ArtifactID string
 	// BundleIndex is the artifact's position in this evaluated Bundle and is only stable within that Bundle.
 	BundleIndex int
@@ -90,7 +89,6 @@ type lifecycleDocumentReference struct {
 
 // NewBundleOutputPlan groups artifacts by lifecycle phase while retaining the scope snapshot used for validation.
 func NewBundleOutputPlan(artifacts []value.Artifact, scopes kubernetes.ScopeIndex, scopeErr error) *BundleOutputPlan {
-	artifactIDs := StableArtifactIDs(artifacts)
 	plan := &BundleOutputPlan{
 		artifacts:      artifacts,
 		phaseArtifacts: make(map[string][]indexedArtifact),
@@ -111,7 +109,7 @@ func NewBundleOutputPlan(artifacts []value.Artifact, scopes kubernetes.ScopeInde
 				plan.phases = append(plan.phases, phase)
 				plan.phaseArtifacts[phase] = nil
 			}
-			plan.phaseArtifacts[phase] = append(plan.phaseArtifacts[phase], indexedArtifact{index: index, artifact: artifact, artifactID: artifactIDs[index]})
+			plan.phaseArtifacts[phase] = append(plan.phaseArtifacts[phase], indexedArtifact{index: index, artifact: artifact, artifactID: artifact.Lifecycle.Identity})
 		}
 	}
 	for _, artifacts := range plan.phaseArtifacts {
@@ -363,8 +361,15 @@ func (plan *BundleOutputPlan) renderOperation(operation, format string) ([]Rende
 }
 
 func ValidateLifecycleMetadata(artifacts []value.Artifact) error {
+	identities := make(map[string]bool, len(artifacts))
 	for index, artifact := range artifacts {
 		lifecycle := artifact.Lifecycle
+		if lifecycle.Identity != "" {
+			if identities[lifecycle.Identity] {
+				return fmt.Errorf("artifact %d repeats lifecycle identity %q", index+1, lifecycle.Identity)
+			}
+			identities[lifecycle.Identity] = true
+		}
 		if len(lifecycle.Events) == 0 {
 			return fmt.Errorf("artifact %d has no lifecycle events", index+1)
 		}
@@ -415,31 +420,6 @@ func ValidOperation(operation string) bool {
 	default:
 		return false
 	}
-}
-
-// StableArtifactIDs returns source-location IDs for unambiguous artifacts in a Bundle.
-func StableArtifactIDs(artifacts []value.Artifact) []string {
-	ids := make([]string, len(artifacts))
-	keys := make([]string, len(artifacts))
-	counts := make(map[string]int, len(artifacts))
-	for index, artifact := range artifacts {
-		path, span := artifact.Value.SourcePath, artifact.Value.Span
-		if path == "" || span.Start < 0 || span.End <= span.Start {
-			continue
-		}
-		key := fmt.Sprintf("%s\x00%d\x00%d", path, span.Start, span.End)
-		keys[index] = key
-		counts[key]++
-	}
-	for index, key := range keys {
-		if key == "" || counts[key] != 1 {
-			continue
-		}
-		digest := sha256.Sum256([]byte(key))
-		ids[index] = "artifact-" + hex.EncodeToString(digest[:12])
-	}
-
-	return ids
 }
 
 func combineYAMLDocuments(chunks [][]byte) []byte {

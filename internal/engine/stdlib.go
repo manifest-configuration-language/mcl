@@ -116,6 +116,7 @@ var builtinRegistry = []builtin{
 	{name: fnManifestLoad, module: "std:manifest", exportName: "load", parameters: []string{paramSource}, documentation: "指定したソースからManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnManifestLoadOne, module: "std:manifest", exportName: "loadOne", parameters: []string{paramSource}, documentation: "指定したソースから単一のManifestを読み込みます。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
 	{name: fnHelmRender, module: "std:helm", exportName: "render", parameters: []string{paramSource, "options"}, documentation: "指定したHelmチャートをレンダリングします。", inference: builtinInferenceAdapter, evaluation: builtinEvaluationAdapter},
+	{name: "lifecycle.withIdentity", module: "std:lifecycle", exportName: "withIdentity", parameters: []string{paramValue, "identity"}, documentation: "Lifecycleが設定された値に操作間で共通の論理キーを設定します。同じArtifactには同じキー、異なるArtifactには異なるキーを指定してください。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleWithIdentity, pureEvaluation: lifecycleWithIdentity},
 	{name: fnLifecycleAttach, module: "std:lifecycle", exportName: "attach", parameters: []string{paramValue, "events", "priority", "wait", "cleanup"}, documentation: "値にLifecycleイベントを関連付けます。", inference: builtinInferenceStatic, evaluation: builtinEvaluationPure, staticInference: inferStaticLifecycleAttachBuiltin, pureEvaluation: lifecycleAttach},
 }
 
@@ -780,6 +781,28 @@ func mergeByKey(base, overrides, key RuntimeValue) (RuntimeValue, error) {
 	}
 
 	return result, nil
+}
+
+func lifecycleWithIdentity(arguments []RuntimeValue) (RuntimeValue, error) {
+	if len(arguments) != 2 {
+		return RuntimeValue{}, errors.New("lifecycle.withIdentity expects 2 arguments")
+	}
+	value := arguments[0]
+	lifecycle := value.Metadata().lifecycleMetadata()
+	if lifecycle == nil {
+		return RuntimeValue{}, errors.New("lifecycle.withIdentity requires lifecycle metadata")
+	}
+	if arguments[1].Kind() != String || arguments[1].Value.Text == "" {
+		return RuntimeValue{}, errors.New("lifecycle.withIdentity identity must be a non-empty String")
+	}
+	if lifecycle.Identity != "" {
+		return RuntimeValue{}, errors.New("lifecycle.withIdentity cannot replace an existing identity")
+	}
+	updatedLifecycle := *lifecycle
+	updatedLifecycle.Identity = arguments[1].Value.Text
+	value.Value.setLifecycleMetadata(&updatedLifecycle)
+
+	return value, nil
 }
 
 func lifecycleAttach(arguments []RuntimeValue) (RuntimeValue, error) {

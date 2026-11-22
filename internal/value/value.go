@@ -60,6 +60,8 @@ type Artifact struct {
 }
 
 type Lifecycle struct {
+	// Identity is a caller-provided logical key, unique within a Bundle and reused for the same artifact across evaluations.
+	Identity string
 	Events   []string
 	Priority int
 	Cleanup  []string
