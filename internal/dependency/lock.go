@@ -239,7 +239,7 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 	if content.Version < 1 || content.Version > 4 {
 		return nil, fmt.Errorf("unsupported dependency lock version %d", content.Version)
 	}
-		for source, digest := range content.Manifests {
+	for source, digest := range content.Manifests {
 		if _, err := ValidatedManifestURL(source); err != nil {
 			return nil, fmt.Errorf("invalid URL in dependency lock: %w", err)
 		}
