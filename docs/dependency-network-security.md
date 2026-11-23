@@ -2,7 +2,7 @@
 
 MCLは依存取得時にDNSを解決し、プライベート、Loopback、Link-Local、Multicastなどの制限対象IPへの接続を拒否します。この制限は依存URLを使ったServer-Side Request Forgeryから実行環境を保護します。Proxy環境変数は依存取得に使いません。
 
-信頼できるプライベートGit ServerやSchema Serverへ接続する場合は、運用者が`MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS`へ許可するRFC 1918 CIDRとPortを`CIDR:port`形式でカンマ区切り指定します。例えば`10.96.0.123/32:8443`は、そのIPv4アドレスの8443番Portだけを許可します。CIDRはRFC 1918の範囲内である必要があり、LoopbackとLink-Localは許可されません。未設定時の既定動作は拒否です。
+信頼できるプライベートGit ServerやSchema Serverへ接続する場合は、運用者が`MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS`へ許可するRFC 1918 CIDRとPortを`CIDR:port`形式でカンマ区切り指定します。例えば`10.96.0.123/32:8443`は、そのIPv4アドレスの8443番Portだけを許可します。Loopbackを許可する場合は`127.0.0.1/32:8443`のように単一アドレスとPortを指定できます。Link-Localは許可できず、未設定時はLoopbackを含む制限対象アドレスへの接続を拒否します。
 
 プライベート依存先が社内CAで署名されている場合は、運用者が`MCL_EXTERNAL_CA_FILE`にPEM形式のCA証明書ファイルを指定できます。MCLはシステムCAを維持したまま指定CAを追加します。両方の設定はPluginのパラメータではなく、MCLを実行する信頼された環境の設定として管理してください。
 

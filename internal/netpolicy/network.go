@@ -61,17 +61,14 @@ func allowedExternalIP(address netip.Addr, port int, allowedPrivateDestinations 
 		return false
 	}
 	address = address.Unmap()
-	if address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
+	if address.IsLoopback() {
+		return allowedDestination(allowedPrivateDestinations, address, port)
+	}
+	if address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
 		return false
 	}
 	if address.IsPrivate() {
-		for _, destination := range allowedPrivateDestinations {
-			if destination.port == port && destination.prefix.Contains(address) {
-				return true
-			}
-		}
-
-		return false
+		return allowedDestination(allowedPrivateDestinations, address, port)
 	}
 	if !address.IsGlobalUnicast() {
 		return false
@@ -86,6 +83,16 @@ func allowedExternalIP(address netip.Addr, port int, allowedPrivateDestinations 
 	}
 
 	return true
+}
+
+func allowedDestination(destinations []allowedPrivateDestination, address netip.Addr, port int) bool {
+	for _, destination := range destinations {
+		if destination.port == port && destination.prefix.Contains(address) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func externalDialContext(ctx context.Context, network, address string, allowedPrivateDestinations []allowedPrivateDestination) (net.Conn, error) {
@@ -193,16 +200,16 @@ func configuredPrivateDestinations(value string) ([]allowedPrivateDestination, e
 			return nil, fmt.Errorf("parse MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS CIDR: %w", err)
 		}
 		prefix = prefix.Masked()
-		allowed := false
+		allowed := prefix.Bits() == prefix.Addr().BitLen() && prefix.Addr().IsLoopback()
 		for _, privatePrefix := range privateIPv4Prefixes {
-			if privatePrefix.Contains(prefix.Addr()) && prefix.Bits() >= privatePrefix.Bits() {
+			if !allowed && privatePrefix.Contains(prefix.Addr()) && prefix.Bits() >= privatePrefix.Bits() {
 				allowed = true
 
 				break
 			}
 		}
 		if !allowed {
-			return nil, fmt.Errorf("MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS CIDR %q is not within an RFC 1918 network", network)
+			return nil, fmt.Errorf("MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS CIDR %q must be within an RFC 1918 network or an exact loopback address", network)
 		}
 		destinations = append(destinations, allowedPrivateDestination{prefix: prefix, port: port})
 	}
