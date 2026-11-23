@@ -95,21 +95,26 @@ func testToolchainIdentity() ToolchainIdentity {
 	}
 }
 
-func TestOpenRejectsMismatchedToolchainForCurrentLockVersions(t *testing.T) {
+func TestOpenAcceptsSupportedLockFormatsAcrossToolchains(t *testing.T) {
 	t.Parallel()
 
-	for _, version := range []int{3, 4} {
+	for _, version := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("version-%d", version), func(t *testing.T) {
 			t.Parallel()
-			lockData, err := json.Marshal(lockFile{Version: version, Toolchain: toolchainLock{}})
+			lockData, err := json.Marshal(lockFile{
+				Version: version,
+				Toolchain: toolchainLock{
+					MCL: "v0.1.0", Go: "go1.20.0", Helm: "v3.0.0",
+					KustomizeAPI: "v0.10.0", KustomizeKYAML: "v0.10.0",
+				},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = OpenWithFS(t.Context(), "/virtual/project", false, testToolchainIdentity(), fstest.MapFS{
+			if _, err := OpenWithFS(t.Context(), "/virtual/project", false, testToolchainIdentity(), fstest.MapFS{
 				testLockFilename: {Data: lockData},
-			})
-			if err == nil || !strings.Contains(err.Error(), "toolchain does not match") {
-				t.Fatalf("OpenWithFS() error = %v, want toolchain mismatch", err)
+			}); err != nil {
+				t.Fatalf("a supported lock format must not depend on its generating toolchain: %v", err)
 			}
 		})
 	}

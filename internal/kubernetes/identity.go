@@ -31,7 +31,7 @@ func NewIdentityResolver(index ScopeIndex) *IdentityResolver { return &IdentityR
 
 func (resolver *IdentityResolver) Resolve(apiVersion, kind, namespace, name, destinationNamespace string) (ResourceIdentity, error) {
 	if resolver == nil || resolver.scopes == nil {
-		return ResourceIdentity{}, errors.New("Kubernetes Resource identity resolver is nil")
+		return ResourceIdentity{}, errors.New("kubernetes resource identity resolver is nil")
 	}
 	if kind == "" || name == "" {
 		return ResourceIdentity{}, errors.New("kubernetes resource kind and name must not be empty")

@@ -84,18 +84,7 @@ func ResolveKubernetesResourceIdentity(bundle Bundle, apiVersion, kind, namespac
 	return resolver.Resolve(apiVersion, kind, namespace, name, destinationNamespace)
 }
 
-func kubernetesResourceKeyName(key kubernetesResourceKey) string {
-	if key.Group == "" {
-		return key.Kind
-	}
-	return key.Group + "/" + key.Kind
-}
-
 func validKubernetesAPIVersion(version string) bool { return kubernetespkg.ValidAPIVersion(version) }
-
-func resourceScopeIndexFromCatalog(entries []kubernetespkg.CatalogEntry) kubernetesResourceScopeIndex {
-	return kubernetespkg.ScopeIndexFromCatalog(entries)
-}
 
 func parseKubernetesResourceIdentity(value value.Value, allowGeneratedName bool) (kubernetesResourceIdentity, bool, error) {
 	identity, isResource, err := kubernetespkg.ParseResourceIdentity(value, allowGeneratedName)

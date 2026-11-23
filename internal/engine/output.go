@@ -44,11 +44,6 @@ type (
 	RenderedArtifact = outputpkg.RenderedArtifact
 )
 
-type indexedArtifact struct {
-	index    int
-	artifact Artifact
-}
-
 type kubernetesResourceIdentity struct {
 	group         string
 	kind          string
@@ -86,10 +81,6 @@ func RenderOperation(bundle Bundle, operation string) ([]RenderedFile, error) {
 
 func validLifecycleEvent(event string) bool { return outputpkg.ValidLifecycleEvent(event) }
 func validOperation(operation string) bool  { return outputpkg.ValidOperation(operation) }
-func validateLifecycleMetadata(artifacts []Artifact) error {
-	return outputpkg.ValidateLifecycleMetadata(artifacts)
-}
-
 func lifecycleAllowsGeneratedName(lifecycle Lifecycle) bool {
 	return kubernetespkg.AllowsGeneratedName(lifecycle)
 }

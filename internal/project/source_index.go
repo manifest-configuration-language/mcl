@@ -714,8 +714,7 @@ func (index *DependentMCLSourceIndex) applySnapshotChangesWithContext(ctx contex
 			}
 		}
 	}
-	generation := uint64(1)
-	generation = index.snapshot.Generation() + 1
+	generation := index.snapshot.Generation() + 1
 	matches, err := workspaceSnapshotMatches(ctx, index.snapshot, index.snapshot.Root(), index.snapshot.SearchRoots(), sources, dependencies)
 	if err != nil {
 		return err

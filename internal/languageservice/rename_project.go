@@ -280,14 +280,6 @@ func renameFunctionParameterForProjectSnapshot(target ReferenceTarget, newName s
 	return result
 }
 
-func renameImportAlias(sourcePath, source string, declarationSpan syntax.SourceSpan, newName string) *RenameResult {
-	index, err := AnalyzeSource(source)
-	if err != nil {
-		return nil
-	}
-	return renameImportAliasWithIndex(sourcePath, source, declarationSpan, newName, index)
-}
-
 func renameImportAliasWithIndex(sourcePath, source string, declarationSpan syntax.SourceSpan, newName string, index *SemanticIndex) *RenameResult {
 	var declaration *syntax.ImportDeclaration
 	for _, node := range index.Module.Nodes {
