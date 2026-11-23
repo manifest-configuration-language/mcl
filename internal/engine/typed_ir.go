@@ -63,7 +63,10 @@ type typedNode struct {
 }
 
 func (unit *typedUnit) add(expression typedExpression) ExprID {
-	id := ExprID(len(unit.nodes))
+	if uint64(len(unit.nodes)) > uint64(^uint32(0)) {
+		panic("typed expression arena exceeds the ExprID address range")
+	}
+	id := ExprID(len(unit.nodes)) // #nosec G115 -- the node count is checked against the uint32 limit before conversion.
 	unit.nodes = append(unit.nodes, typedNode{})
 	node := typedNode{
 		kind: expression.kind, builtinID: expression.builtinID, span: expression.span,

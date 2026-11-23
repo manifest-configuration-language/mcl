@@ -124,7 +124,7 @@ func TestTypedUnitStoresChildrenAsArenaIDsAndEvaluatesDeferredBody(t *testing.T)
 	if !ok || binary.kind != typedExpressionBinary || !binary.left.present || !binary.right.present {
 		t.Fatalf("arena binary = %#v, want two ExprID child edges", binary)
 	}
-	if _, err := (typedExpression{arenaUnit: unit, arenaID: ExprID(len(unit.nodes))}).evaluate(typedEvaluationContext{}); err == nil {
+	if _, err := (typedExpression{arenaUnit: unit, arenaID: ExprID(len(unit.nodes)) /* #nosec G115 -- this test constructs fewer than ten arena nodes. */}).evaluate(typedEvaluationContext{}); err == nil {
 		t.Fatal("evaluation accepted an ExprID outside the typed arena")
 	}
 

@@ -17,7 +17,6 @@ linters:
     - forbidigo
     - gocheckcompilerdirectives
     - gochecksumtype
-    - goconst
     - gosec
     - govet
     - grouper
@@ -27,14 +26,10 @@ linters:
     - makezero
     - mirror
     - misspell
-    - modernize
     - nilerr
-    - nlreturn
     - noctx
     - nolintlint
     - nosprintfhostport
-    - paralleltest
-    - perfsprint
     - prealloc
     - predeclared
     - reassign
@@ -46,14 +41,9 @@ linters:
     - thelper
     - tparallel
     - unconvert
-    - unparam
     - unused
     - usestdlibvars
-    - usetesting
   settings:
-    goconst:
-      min-len: 5
-      min-occurrences: 4
     revive:
       rules:
         - name: comment-spacings
@@ -64,13 +54,6 @@ linters:
       # switchにdefaultがある場合は、全列挙値をケースとして列挙しなくても網羅とみなす。
       # mcl.Kindのような30種類を超える列挙型では、全ケースの明示は可読性を大きく損なうため。
       default-signifies-exhaustive: true
-    usetesting:
-      os-chdir: true
-      context-background: true
-      context-todo: true
-    modernize:
-      disable:
-        - embedlit
   exclusions:
     generated: lax
     presets:
@@ -91,7 +74,6 @@ linters:
 formatters:
   enable:
     - gofmt
-    - gofumpt
     - goimports
   exclusions:
     generated: lax

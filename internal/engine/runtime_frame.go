@@ -29,21 +29,6 @@ func (frame *runtimeFrame) lookup(name string) (RuntimeValue, bool) {
 	return RuntimeValue{}, false
 }
 
-func (frame *runtimeFrame) flatten() map[string]RuntimeValue {
-	var chain []*runtimeFrame
-	for current := frame; current != nil; current = current.parent {
-		chain = append(chain, current)
-	}
-	bindings := make(map[string]RuntimeValue)
-	for index := len(chain) - 1; index >= 0; index-- {
-		for name, value := range chain[index].bindings {
-			bindings[name] = value
-		}
-	}
-
-	return bindings
-}
-
 func cloneRuntimeBindings(bindings map[string]RuntimeValue) map[string]RuntimeValue {
 	if len(bindings) == 0 {
 		return nil

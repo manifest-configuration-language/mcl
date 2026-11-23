@@ -21,16 +21,6 @@ import (
 
 const maxMCLSourceBytes = syntax.MaxSourceBytes
 
-// resolveModuleLinkはモジュールファイルのシンボリックリンクを解決する。解決できない場合はfalseを返す。
-func resolveModuleLink(path string) (string, bool) {
-	modulePath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", false
-	}
-
-	return modulePath, true
-}
-
 const (
 	maxProjectMCLFiles    = project.MaxSourceFiles
 	maxProjectMCLBytes    = project.MaxSourceTotal

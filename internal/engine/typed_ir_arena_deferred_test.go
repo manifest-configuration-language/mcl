@@ -77,7 +77,7 @@ func TestDeferredExpressionContinuationsRetainArenaIDsOnClone(t *testing.T) {
 	}
 
 	state := &EvaluationState{EvaluationSession: &EvaluationSession{Budget: &functionBudget{}, Allocations: &runtimeAllocationBudget{}}}
-	if _, err := evaluateTypedExpressionReference(typedExpressionRef{Unit: unit, ID: ExprID(len(unit.nodes))}, state, nil); err == nil {
+	if _, err := evaluateTypedExpressionReference(typedExpressionRef{Unit: unit, ID: ExprID(len(unit.nodes)) /* #nosec G115 -- this test constructs fewer than ten arena nodes. */}, state, nil); err == nil {
 		t.Fatal("evaluation accepted an invalid arena reference")
 	}
 }
@@ -92,7 +92,7 @@ func TestDeferredArenaOperatorsUseCapturedFrameAndResolveNestedValues(t *testing
 		t.Fatalf("arena root = %#v, want two child IDs", root)
 	}
 	frame := newRuntimeRootFrame(map[string]RuntimeValue{
-		"right": RuntimeValue{Value: runtimeValueData{Kind: Bool, Bool: true}},
+		"right": {Value: runtimeValueData{Kind: Bool, Bool: true}},
 		"selected": {Deferred: &typedContinuation{
 			Expression: typedExpression{kind: typedExpressionString, text: "captured"},
 		}},
@@ -127,7 +127,7 @@ func TestDeferredArenaOperatorsUseCapturedFrameAndResolveNestedValues(t *testing
 	}
 	shortCircuited, err := resolveTypedBinaryContinuation(&typedBinaryContinuation{
 		Operator: typedOperatorAnd, Left: RuntimeValue{Deferred: falsePending},
-		RightExpression: &typedExpressionRef{Unit: unit, ID: ExprID(len(unit.nodes))}, Frame: frame,
+		RightExpression: &typedExpressionRef{Unit: unit, ID: ExprID(len(unit.nodes)) /* #nosec G115 -- this test constructs fewer than ten arena nodes. */}, Frame: frame,
 	}, state, resolve)
 	if err != nil || shortCircuited.Kind() != Bool || shortCircuited.BoolValue() {
 		t.Fatalf("short-circuited deferred binary = (%#v, %v), want false without evaluating its invalid RHS", shortCircuited, err)
@@ -135,7 +135,7 @@ func TestDeferredArenaOperatorsUseCapturedFrameAndResolveNestedValues(t *testing
 	conditional, err := resolveTypedConditionalContinuation(&typedConditionalContinuation{
 		Condition:  RuntimeValue{Deferred: conditionPending},
 		ThenBranch: newTypedExpressionRef(typedExpression{arenaUnit: unit, arenaID: root.items[1].id}),
-		ElseBranch: typedExpressionRef{Unit: unit, ID: ExprID(len(unit.nodes))},
+		ElseBranch: typedExpressionRef{Unit: unit, ID: ExprID(len(unit.nodes)) /* #nosec G115 -- this test constructs fewer than ten arena nodes. */},
 		Frame:      frame,
 	}, state, resolve)
 	if err != nil || conditional.Kind() != String || conditional.TextValue() != "captured" {

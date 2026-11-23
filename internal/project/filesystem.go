@@ -128,10 +128,6 @@ func (filesystem *Filesystem) relativePath(filename string) (string, error) {
 	return filesystem.RelativePath(filename)
 }
 
-func (filesystem *Filesystem) resolveReadPath(filename string) (string, error) {
-	return filesystem.ResolveReadPath(filename)
-}
-
 func (filesystem *Filesystem) readLimitedFile(filename string) ([]byte, error) {
 	return filesystem.ReadLimitedFile(filename, MaxSourceBytes)
 }
