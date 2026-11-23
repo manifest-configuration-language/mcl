@@ -42,6 +42,11 @@ var privateIPv4Prefixes = mustParsePrefixes([]string{
 	"192.168.0.0/16",
 })
 
+type allowedPrivateDestination struct {
+	prefix netip.Prefix
+	port   int
+}
+
 func mustParsePrefixes(prefixes []string) []netip.Prefix {
 	parsed := make([]netip.Prefix, 0, len(prefixes))
 	for _, prefix := range prefixes {
@@ -51,7 +56,7 @@ func mustParsePrefixes(prefixes []string) []netip.Prefix {
 	return parsed
 }
 
-func allowedExternalIP(address netip.Addr, allowedPrivateNetworks []netip.Prefix) bool {
+func allowedExternalIP(address netip.Addr, port int, allowedPrivateDestinations []allowedPrivateDestination) bool {
 	if !address.IsValid() || address.Zone() != "" {
 		return false
 	}
@@ -60,7 +65,13 @@ func allowedExternalIP(address netip.Addr, allowedPrivateNetworks []netip.Prefix
 		return false
 	}
 	if address.IsPrivate() {
-		return prefixContainsAddress(allowedPrivateNetworks, address)
+		for _, destination := range allowedPrivateDestinations {
+			if destination.port == port && destination.prefix.Contains(address) {
+				return true
+			}
+		}
+
+		return false
 	}
 	if !address.IsGlobalUnicast() {
 		return false
@@ -77,17 +88,7 @@ func allowedExternalIP(address netip.Addr, allowedPrivateNetworks []netip.Prefix
 	return true
 }
 
-func prefixContainsAddress(prefixes []netip.Prefix, address netip.Addr) bool {
-	for _, prefix := range prefixes {
-		if prefix.Contains(address) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func externalDialContext(ctx context.Context, network, address string, allowedPrivateNetworks []netip.Prefix) (net.Conn, error) {
+func externalDialContext(ctx context.Context, network, address string, allowedPrivateDestinations []allowedPrivateDestination) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, fmt.Errorf("parse external dependency address: %w", err)
@@ -110,7 +111,7 @@ func externalDialContext(ctx context.Context, network, address string, allowedPr
 		return nil, fmt.Errorf("external dependency host %q has no IP addresses", host)
 	}
 	for _, resolved := range addresses {
-		if !allowedExternalIP(resolved, allowedPrivateNetworks) {
+		if !allowedExternalIP(resolved, portNumber, allowedPrivateDestinations) {
 			return nil, fmt.Errorf("external dependency host %q resolves to a restricted IP address %s", host, resolved)
 		}
 	}
@@ -129,10 +130,10 @@ func externalDialContext(ctx context.Context, network, address string, allowedPr
 }
 
 // NewExternalHTTPTransportは外部依存取得向けの送信先IP制限付きHTTP transportを作成します。
-// MCL_DANGEROUS_ALLOWED_PRIVATE_NETWORKSは、接続を許可するRFC 1918 CIDRのカンマ区切り一覧です。
+// MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONSは、接続を許可するRFC 1918 CIDRとPortのカンマ区切り一覧です。
 // MCL_EXTERNAL_CA_FILEは、システムCAへ追加するPEM証明書ファイルです。
 func NewExternalHTTPTransport() (*http.Transport, error) {
-	allowedPrivateNetworks, err := configuredPrivateNetworks(os.Getenv("MCL_DANGEROUS_ALLOWED_PRIVATE_NETWORKS"))
+	allowedPrivateDestinations, err := configuredPrivateDestinations(os.Getenv("MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS"))
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +144,7 @@ func NewExternalHTTPTransport() (*http.Transport, error) {
 	transport := base.Clone()
 	transport.Proxy = nil
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return externalDialContext(ctx, network, address, allowedPrivateNetworks)
+		return externalDialContext(ctx, network, address, allowedPrivateDestinations)
 	}
 	transport.DialTLSContext = nil
 	if caFile := strings.TrimSpace(os.Getenv("MCL_EXTERNAL_CA_FILE")); caFile != "" {
@@ -173,15 +174,23 @@ func NewExternalHTTPTransport() (*http.Transport, error) {
 	return transport, nil
 }
 
-func configuredPrivateNetworks(value string) ([]netip.Prefix, error) {
+func configuredPrivateDestinations(value string) ([]allowedPrivateDestination, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
 	}
-	var prefixes []netip.Prefix
+	var destinations []allowedPrivateDestination
 	for raw := range strings.SplitSeq(value, ",") {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		network, portString, found := strings.CutLast(strings.TrimSpace(raw), ":")
+		if !found {
+			return nil, fmt.Errorf("MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS entry %q must use CIDR:port format", raw)
+		}
+		port, err := strconv.Atoi(portString)
+		if err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS entry %q has an invalid port", raw)
+		}
+		prefix, err := netip.ParsePrefix(network)
 		if err != nil {
-			return nil, fmt.Errorf("parse MCL_DANGEROUS_ALLOWED_PRIVATE_NETWORKS: %w", err)
+			return nil, fmt.Errorf("parse MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS CIDR: %w", err)
 		}
 		prefix = prefix.Masked()
 		allowed := false
@@ -193,10 +202,10 @@ func configuredPrivateNetworks(value string) ([]netip.Prefix, error) {
 			}
 		}
 		if !allowed {
-			return nil, fmt.Errorf("MCL_DANGEROUS_ALLOWED_PRIVATE_NETWORKS prefix %q is not within an RFC 1918 network", raw)
+			return nil, fmt.Errorf("MCL_DANGEROUS_ALLOWED_PRIVATE_DESTINATIONS CIDR %q is not within an RFC 1918 network", network)
 		}
-		prefixes = append(prefixes, prefix)
+		destinations = append(destinations, allowedPrivateDestination{prefix: prefix, port: port})
 	}
 
-	return prefixes, nil
+	return destinations, nil
 }
