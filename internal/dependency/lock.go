@@ -239,13 +239,7 @@ func openWithFilesystem(ctx context.Context, root string, update bool, identity 
 	if content.Version < 1 || content.Version > 4 {
 		return nil, fmt.Errorf("unsupported dependency lock version %d", content.Version)
 	}
-	if content.Version < 3 && !update {
-		return nil, errors.New("dependency lock does not record the complete toolchain identity; run mcl update")
-	}
-	if content.Version >= 3 && !lock.identity.compatibleWith(content.Toolchain) && !update {
-		return nil, errors.New("dependency lock toolchain does not match this mcl build; run mcl update")
-	}
-	for source, digest := range content.Manifests {
+		for source, digest := range content.Manifests {
 		if _, err := ValidatedManifestURL(source); err != nil {
 			return nil, fmt.Errorf("invalid URL in dependency lock: %w", err)
 		}
@@ -693,10 +687,6 @@ func (lock *Lock) Save() error {
 
 func (identity ToolchainIdentity) lock() toolchainLock {
 	return toolchainLock(identity)
-}
-
-func (identity ToolchainIdentity) compatibleWith(locked toolchainLock) bool {
-	return identity.MCL == locked.MCL && identity.Go == locked.Go && identity.Helm == locked.Helm && identity.KustomizeAPI == locked.KustomizeAPI && identity.KustomizeKYAML == locked.KustomizeKYAML
 }
 
 func (lock *Lock) IsUpdate() bool { return lock.update }

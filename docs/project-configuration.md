@@ -25,6 +25,8 @@ HTTPS sources point to a YAML file and must not include a query or fragment. Git
 
 Run `mcl update` to fetch remote sources and record their content or archive digests in `mcl.lock`. Normal evaluation reads the locked cache and works offline. MCL compiles the schemas with Kubernetes validation libraries and checks emitted custom resources, structural list constraints, and CEL rules. Repeated file selections and conflicting schemas for the same group, version, and kind are errors.
 
+The `mcl.lock` format version determines whether the lock can be read. Recorded MCL, Go, Helm, and Kustomize versions provide provenance only; they do not restrict which runtime may consume a supported lock format. Remote dependencies remain bound to their recorded digests and are verified independently of the generating toolchain. Language syntax and semantics follow the MCL runtime used for evaluation.
+
 Run `mcl fetch --locked main.mcl` to populate the cache from dependencies already recorded in `mcl.lock`. This command verifies each fetched artifact against its locked digest and does not update the lock. Normal `render`, `check`, and other evaluation commands do not fetch missing remote dependencies.
 
 ## Kubernetes schema version
